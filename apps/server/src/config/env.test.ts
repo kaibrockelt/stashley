@@ -99,3 +99,18 @@ describe('loadConfig', () => {
     expect(config.smtp).toEqual({ host: 'smtp.example.com', port: 587, from: 'a@b.c' })
   })
 })
+
+describe('empty values', () => {
+  it('treats empty variables as unset', () => {
+    const config = loadConfig({
+      ...base,
+      SMTP_HOST: '',
+      SMTP_PORT: '',
+      CACHE_MAX_MB: '',
+      TRUST_PROXY: '',
+    })
+    expect(config.smtp).toBeUndefined()
+    expect(config.cacheMaxMb).toBe(256)
+    expect(config.trustProxy).toBeUndefined()
+  })
+})

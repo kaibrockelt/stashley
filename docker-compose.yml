@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Stashley contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+services:
+  stashley:
+    image: stashley:local
+    build: .
+    env_file: .env
+    ports:
+      - '8080:8080'
+    volumes:
+      - stashley-data:/data
+    restart: unless-stopped
+    stop_grace_period: 40s
+
+volumes:
+  stashley-data:

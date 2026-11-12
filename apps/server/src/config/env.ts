@@ -118,7 +118,9 @@ export function loadConfig(
   env: Env = process.env,
   readFile: (file: string) => string = (file) => readFileSync(file, 'utf8'),
 ): AppConfig {
-  const [resolved, fileIssues] = resolveSecretFiles(env, readFile)
+  // Empty values (e.g. `SMTP_HOST=` in an env file) count as unset.
+  const present = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ''))
+  const [resolved, fileIssues] = resolveSecretFiles(present, readFile)
   const result = schema.safeParse(resolved)
   const issues = [...fileIssues]
   if (!result.success) {
