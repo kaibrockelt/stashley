@@ -1,46 +1,26 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import { Outlet } from '@tanstack/react-router'
-import { ToggleButton, ToggleButtonGroup, type Key } from 'react-aria-components'
+import { Link, Outlet } from '@tanstack/react-router'
+import type { ReactNode } from 'react'
+import { useUser } from '../api/session.ts'
 import { Logo } from '../brand/logo.tsx'
-import type { MessageId } from '../i18n/locale.ts'
+import { useSignOut } from '../features/auth/mfa.tsx'
 import { useT } from '../i18n/use-t.ts'
-import { themes, type Theme } from '../ui/theme.ts'
-import { useTheme } from './providers.tsx'
+import { Button } from '../ui/controls.tsx'
 import styles from './shell.module.css'
 
-const themeLabels: Record<Theme, MessageId> = {
-  light: 'theme.light',
-  dark: 'theme.dark',
-  system: 'theme.system',
-}
-
-function ThemeSwitch() {
-  const t = useT()
-  const { theme, setTheme } = useTheme()
+function NavLink(props: { to: string; children: ReactNode }) {
   return (
-    <ToggleButtonGroup
-      aria-label={t('theme.label')}
-      className={styles.segmented}
-      selectionMode="single"
-      disallowEmptySelection
-      selectedKeys={[theme]}
-      onSelectionChange={(keys: Set<Key>) => {
-        const [next] = [...keys]
-        if (next !== undefined) setTheme(next as Theme)
-      }}
-    >
-      {themes.map((value) => (
-        <ToggleButton key={value} id={value} className={styles.segment}>
-          {t(themeLabels[value])}
-        </ToggleButton>
-      ))}
-    </ToggleButtonGroup>
+    <Link to={props.to} className={styles.navLink} activeProps={{ 'aria-current': 'page' }}>
+      {props.children}
+    </Link>
   )
 }
 
 export function Shell() {
   const t = useT()
+  const user = useUser()
+  const signOut = useSignOut()
   return (
     <div className={styles.shell}>
       <a href="#main" className={styles.skip}>
@@ -52,16 +32,26 @@ export function Shell() {
         </div>
         <nav aria-label={t('nav.label')} className={styles.nav}>
           <p className={styles.navEmpty}>{t('nav.empty')}</p>
+          {user.systemRole === 'admin' && (
+            <div className={styles.navGroup}>
+              <p className={styles.navHeading}>{t('nav.administration')}</p>
+              <NavLink to="/admin/users">{t('users.title')}</NavLink>
+              <NavLink to="/admin/identity-providers">{t('providers.title')}</NavLink>
+              <NavLink to="/admin/settings">{t('settings.title')}</NavLink>
+              <NavLink to="/admin/audit">{t('audit.title')}</NavLink>
+            </div>
+          )}
         </nav>
+        <div className={styles.account}>
+          <NavLink to="/profile">{user.displayName}</NavLink>
+          <Button variant="ghost" onPress={signOut}>
+            {t('action.signOut')}
+          </Button>
+        </div>
       </aside>
-      <div className={styles.content}>
-        <header className={styles.header}>
-          <ThemeSwitch />
-        </header>
-        <main id="main" className={styles.main} tabIndex={-1}>
-          <Outlet />
-        </main>
-      </div>
+      <main id="main" className={styles.main} tabIndex={-1}>
+        <Outlet />
+      </main>
     </div>
   )
 }

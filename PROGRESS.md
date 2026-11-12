@@ -1,10 +1,10 @@
 # Progress
 
-**Current milestone:** M2 – Sign-in and accounts (open)
+**Current milestone:** M2 – Sign-in and accounts (in review)
 
-**Next step:** Start M2: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log. Before M2 starts, review M1 in a fresh session with high model strength.
+**Next step:** Push and confirm that CI is green. M2 is done after that, and M3 (connections and table access) can start.
 
-**Recommended model strength for M2:** high.
+**Recommended model strength for M3:** high. Review M2 in a fresh session before M3 starts; sign-in and sessions are security-critical.
 
 ## Milestones
 
@@ -12,7 +12,7 @@
 | --- | --- | --- | --- |
 | M0 | Architecture plan | Strongest, maximum effort | Done |
 | M1 | Scaffold and operations: monorepo, CI, Dockerfile, build script, metadata store, health, logs, backup and restore, i18n and design token foundations | Medium | Done |
-| M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | Open |
+| M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | In review |
 | M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | Open |
 | M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Open |
 | M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | Open |
@@ -25,7 +25,7 @@ Status values: open, in progress, in review, done.
 
 ## Acceptance criteria
 
-- [ ] `docker compose up` with values from `.env.example` installs the instance, and the first admin can sign in.
+- [x] `docker compose up` with values from `.env.example` installs the instance, and the first admin can sign in.
 - [ ] The admin connects the demo database, gets a warning for the deliberately over-privileged user, and grants table access with the demo ceilings.
 - [ ] The admin creates roles and test accounts. A first OIDC sign-in shows up as pending and gets approved.
 - [ ] A manager builds every demo page through the UI alone, checks each one with preview as role, and publishes it.
@@ -64,7 +64,7 @@ All approved on 2026-11-12. Rationale for each is in [`docs/architecture.md` §2
 | D11 | Drafts are saved explicitly, and every save is audited. |
 | D12 | Page filter options are authorized through the page's view right; option lists, lookup columns and display templates through the right of their component. |
 
-Further decisions: npm is removed from the runtime image; dependencies must be at least three days old (`minimumReleaseAge`); the compose host port is configurable with `STASHLEY_PORT`. Earlier decisions: documentation site with VitePress on GitHub Pages; problem types as `urn:stashley:problem:<code>`; images at `ghcr.io/kaibrockelt/stashley`.
+Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an addition to the D8 list; approving a pending account keeps its session, so the user can continue without signing in again; the common-password list is the subset of 12+ characters from SecLists (MIT). npm is removed from the runtime image; dependencies must be at least three days old (`minimumReleaseAge`); the compose host port is configurable with `STASHLEY_PORT`. Earlier decisions: documentation site with VitePress on GitHub Pages; problem types as `urn:stashley:problem:<code>`; images at `ghcr.io/kaibrockelt/stashley`.
 
 ## Log
 
@@ -77,3 +77,12 @@ Further decisions: npm is removed from the runtime image; dependencies must be a
   - Trivy finds no critical issues. Two high findings in Debian's zlib wait for a base image update.
   - Not yet verified: the GitHub Actions run, which needs a push. Release and docs workflows are scheduled for M9.
 - 2026-11-12: M1 done. The first GitHub Actions run on `9a25b20` is green (checks, multi-arch image, Trivy).
+- 2026-11-13: M2 implemented.
+  - Local sign-in, server-side sessions, CSRF, rate limits and account lockout.
+  - TOTP with replay protection and recovery codes; 2FA can be enforced.
+  - Invitations and password reset by email or copyable link.
+  - OIDC sign-in with pending approval and auto-approved domains.
+  - Admin pages for users, identity providers, settings and the audit log; profile with language, format, theme, password and 2FA.
+  - Emergency CLI commands.
+  - Verified with 58 server tests and in the browser against a mock OIDC provider (navikt/mock-oauth2-server): first OIDC sign-in shows as pending and is approved by an admin.
+  - The OIDC part of the role criterion is met; roles themselves come with M4.

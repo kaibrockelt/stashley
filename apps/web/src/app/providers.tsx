@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { SessionResponse, Theme } from '@stashley/shared'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { IntlProvider } from 'react-intl'
-import type { Locale, Messages } from '../i18n/locale.ts'
-import { applyTheme, readStoredTheme, storeTheme, type Theme } from '../ui/theme.ts'
+import { sessionKey } from '../api/session.ts'
+import { fetchSession } from '../api/client.ts'
+import { loadMessages, negotiateLocale, type Locale, type Messages } from '../i18n/locale.ts'
+import { applyTheme, readStoredTheme, storeTheme } from '../ui/theme.ts'
 
-const queryClient = new QueryClient({
+export const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
 })
 
@@ -31,8 +34,38 @@ function storage(): Storage | undefined {
   }
 }
 
-export function Providers(props: { locale: Locale; messages: Messages; children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(() => readStoredTheme(storage()))
+export function userLocale(session: SessionResponse | undefined): Locale {
+  return session?.user?.locale ?? negotiateLocale(navigator.languages)
+}
+
+/**
+ * Applies the signed-in user's language, formatting locale and theme; anonymous visitors
+ * get the browser language and the theme stored on this device.
+ */
+function Preferences(props: {
+  initial: { locale: Locale; messages: Messages }
+  children: ReactNode
+}) {
+  const session = useQuery({ queryKey: sessionKey, queryFn: fetchSession }).data
+  const [loaded, setLoaded] = useState(props.initial)
+  const [localTheme, setLocalTheme] = useState<Theme>(() => readStoredTheme(storage()))
+  const locale = userLocale(session)
+  const theme = session?.user?.theme ?? localTheme
+
+  useEffect(() => {
+    if (locale === loaded.locale) return
+    let cancelled = false
+    void loadMessages(locale).then((messages) => {
+      if (!cancelled) setLoaded({ locale, messages })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [locale, loaded.locale])
+
+  useEffect(() => {
+    document.documentElement.lang = loaded.locale
+  }, [loaded.locale])
 
   useEffect(() => {
     applyTheme(document.documentElement, theme)
@@ -40,14 +73,27 @@ export function Providers(props: { locale: Locale; messages: Messages; children:
 
   const setTheme = (next: Theme) => {
     storeTheme(storage(), next)
-    setThemeState(next)
+    setLocalTheme(next)
   }
 
   return (
-    <IntlProvider locale={props.locale} messages={props.messages} defaultLocale="en">
-      <ThemeContext value={{ theme, setTheme }}>
-        <QueryClientProvider client={queryClient}>{props.children}</QueryClientProvider>
-      </ThemeContext>
+    <IntlProvider
+      locale={session?.user?.formatLocale ?? loaded.locale}
+      messages={loaded.messages}
+      defaultLocale="en"
+    >
+      <ThemeContext value={{ theme, setTheme }}>{props.children}</ThemeContext>
     </IntlProvider>
+  )
+}
+
+export function Providers(props: {
+  initial: { locale: Locale; messages: Messages }
+  children: ReactNode
+}) {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Preferences initial={props.initial}>{props.children}</Preferences>
+    </QueryClientProvider>
   )
 }

@@ -57,7 +57,7 @@ for (const [locale, catalog] of Object.entries(catalogs)) {
 function sources(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name)
-    if (entry.isDirectory()) return entry.name === 'i18n' ? [] : sources(full)
+    if (entry.isDirectory()) return entry.name === 'messages' ? [] : sources(full)
     return /\.(ts|tsx)$/.test(entry.name) ? [readFileSync(full, 'utf8')] : []
   })
 }

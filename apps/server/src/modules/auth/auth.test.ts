@@ -54,7 +54,9 @@ async function setup(options: { smtp?: boolean } = {}): Promise<Setup> {
   const oidc = { claims: { sub: 'subject-1' } as OidcClaims, failExchange: false }
   const oidcClient: OidcClient = {
     authorizationUrl: (_provider, params) =>
-      Promise.resolve(new URL(`https://idp.example.com/authorize?${new URLSearchParams(params).toString()}`)),
+      Promise.resolve(
+        new URL(`https://idp.example.com/authorize?${new URLSearchParams(params).toString()}`),
+      ),
     exchange: () =>
       oidc.failExchange ? Promise.reject(new Error('denied')) : Promise.resolve(oidc.claims),
     check: () => Promise.resolve(),

@@ -35,70 +35,69 @@
 }
 
 .nav {
-  padding: var(--space-2) var(--space-4);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-2);
 }
 
 .navEmpty {
   margin: 0;
+  padding: 0 var(--space-2);
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
 }
 
-.content {
+.navGroup {
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  gap: 2px;
 }
 
-.header {
+.navHeading {
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.navLink {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  height: var(--header-height);
-  padding: 0 var(--space-4);
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-surface);
+  min-height: 1.875rem;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.navLink:hover {
+  background: var(--color-accent-subtle);
+}
+
+.navLink[aria-current='page'] {
+  background: var(--color-accent-subtle);
+  font-weight: 600;
+}
+
+.account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-top: 1px solid var(--color-border);
 }
 
 .main {
-  flex: 1;
+  min-width: 0;
   padding: var(--space-6);
 }
 
 .main:focus {
   outline: none;
-}
-
-.segmented {
-  display: inline-flex;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-
-.segment {
-  min-height: var(--target-min);
-  padding: var(--space-1) var(--space-3);
-  border: 0;
-  background: transparent;
-  color: var(--color-text-muted);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-
-.segment + .segment {
-  border-left: 1px solid var(--color-border);
-}
-
-.segment[data-selected] {
-  background: var(--color-accent-subtle);
-  color: var(--color-text);
-}
-
-.segment[data-focus-visible] {
-  outline: 2px solid var(--color-focus);
-  outline-offset: -2px;
 }
 
 @media (max-width: 767px) {
