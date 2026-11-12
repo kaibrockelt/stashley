@@ -1336,17 +1336,17 @@ The image installs a `stashley` wrapper. The library is commander.
 
 Multi-stage, with digest-pinned `node:26-slim` base images:
 
-1. **base:** enables Corepack. The pnpm version comes from `packageManager`.
+1. **base:** installs pnpm with npm, because Node 26 images no longer ship Corepack. Also installs a native build toolchain as a fallback for modules without prebuilt binaries.
 2. **deps:** `pnpm fetch` from the lockfile.
-3. **build:** `pnpm install --offline --frozen-lockfile`, typecheck, then build the server (`tsc -b`) and the web client (Vite).
-4. **prod:** `pnpm --filter @stashley/server deploy --prod /out`. better-sqlite3 and `@node-rs/argon2` ship prebuilt glibc binaries for amd64 and arm64.
+3. **build:** `pnpm install --offline --frozen-lockfile`, builds the server (`tsc -b`) and the web client (Vite), then `pnpm --filter @stashley/server deploy --prod --legacy /out`.
+4. **check:** typecheck, lint, SPDX and i18n checks, unit tests and the bundle budget. `scripts/build.sh` runs this stage, so checks need no local toolchain.
 5. **runtime:**
-   - `node:26-slim` with `NODE_ENV=production`.
+   - `node:26-slim` with `NODE_ENV=production`. npm and Corepack are removed.
    - The application in `/app` and the `stashley` wrapper in `/usr/local/bin`.
    - Runs as user `node` (uid 1000). `/data` is owned by `node` and declared as a `VOLUME`.
    - `EXPOSE 8080`, the `HEALTHCHECK` from §6.3, OCI labels from build arguments, `ENTRYPOINT ["stashley"]` and `CMD ["serve"]`.
 
-`docker-compose.yml` runs the image with a named volume and `.env`. `.env.example` lists every variable from §6.1.
+`docker-compose.yml` runs the image with a named volume and `.env`. `STASHLEY_PORT` sets the host port (default 8080). `.env.example` lists every variable from §6.1.
 
 ### 25.2 `scripts/build.sh`
 
@@ -1365,7 +1365,9 @@ Multi-stage, with digest-pinned `node:26-slim` base images:
 | `release.yml` | Tag `v*` | Multi-arch build and push to `ghcr.io/kaibrockelt/stashley` (`X.Y.Z`, `X.Y`, `X`, and `latest` for tags on `main`), SBOM and provenance attestations, keyless cosign signature, GitHub release with the changelog section |
 | `docs.yml` | Push to `main` (`docs/**`) | Build the documentation site and publish it to GitHub Pages |
 
-Dependabot keeps npm packages, base images and actions up to date.
+- **Rollout:** M1 adds the `checks` and `image` jobs. The `integration` job follows in M3, `e2e` in M9, and `release.yml` and `docs.yml` in M9.
+- **Actions** are pinned to commit SHAs.
+- **Dependencies:** pnpm installs only releases that are at least three days old (`minimumReleaseAge`). Dependabot keeps npm packages, base images and actions up to date, with the same cooldown for npm.
 
 ### 25.4 Releases
 

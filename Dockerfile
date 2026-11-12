@@ -49,7 +49,10 @@ WORKDIR /app
 COPY --from=build /out /app/server
 COPY --from=build /src/apps/web/dist /app/web
 COPY apps/server/scripts/healthcheck.mjs /app/healthcheck.mjs
-RUN printf '#!/bin/sh\nexec node /app/server/dist/cli/index.js "$@"\n' > /usr/local/bin/stashley \
+# npm is not needed at runtime; removing it shrinks the image and its attack surface.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+      /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+ && printf '#!/bin/sh\nexec node /app/server/dist/cli/index.js "$@"\n' > /usr/local/bin/stashley \
  && chmod 0755 /usr/local/bin/stashley \
  && mkdir -p /data \
  && chown node:node /data

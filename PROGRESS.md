@@ -1,17 +1,17 @@
 # Progress
 
-**Current milestone:** M1 – Scaffold and operations (open)
+**Current milestone:** M1 – Scaffold and operations (in review)
 
-**Next step:** Start M1: monorepo, CI, Dockerfile, `scripts/build.sh`, metadata store with migrations, health endpoints, logs, backup and restore, i18n and design token foundations.
+**Next step:** Push to GitHub and confirm that the first CI run is green. M1 is done after that, and M2 (sign-in and accounts) can start.
 
-**Recommended model strength for M1:** medium.
+**Recommended model strength for M2:** high.
 
 ## Milestones
 
 | Milestone | Scope | Model strength | Status |
 | --- | --- | --- | --- |
 | M0 | Architecture plan | Strongest, maximum effort | Done |
-| M1 | Scaffold and operations: monorepo, CI, Dockerfile, build script, metadata store, health, logs, backup and restore, i18n and design token foundations | Medium | Open |
+| M1 | Scaffold and operations: monorepo, CI, Dockerfile, build script, metadata store, health, logs, backup and restore, i18n and design token foundations | Medium | In review |
 | M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | Open |
 | M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | Open |
 | M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Open |
@@ -41,7 +41,7 @@ Status values: open, in progress, in review, done.
 - [ ] The admin creates a new table from a CSV file encoded in Windows-1252, with semicolons and German dates, adding an `id` column. After the ceiling is adjusted, a second import upserts existing rows by `email`, and its dry run reports the faulty rows beforehand.
 - [ ] The cashier connects an MCP client through OAuth and asks which registrations are still unpaid. The privacy notice appears before the connection and must be confirmed. The assistant receives only components of the cashier page whose tables are exposed to MCP. An admin account cannot set up MCP access.
 - [ ] The configuration is exported and imported into a second instance. After the connection is mapped, the demo works there unchanged.
-- [ ] `scripts/build.sh --platform linux/amd64,linux/arm64` builds both architectures.
+- [x] `scripts/build.sh --platform linux/amd64,linux/arm64` builds both architectures.
 - [ ] The Playwright end-to-end suite covers all criteria above and runs in CI against the demo database.
 - [ ] The UI is complete in English and German, with UI copy written specifically for the product.
 
@@ -64,9 +64,15 @@ All approved on 2026-11-12. Rationale for each is in [`docs/architecture.md` §2
 | D11 | Drafts are saved explicitly, and every save is audited. |
 | D12 | Page filter options are authorized through the page's view right; option lists, lookup columns and display templates through the right of their component. |
 
-Further decisions: documentation site with VitePress on GitHub Pages; problem types as `urn:stashley:problem:<code>`; images at `ghcr.io/kaibrockelt/stashley`.
+Further decisions: npm is removed from the runtime image; dependencies must be at least three days old (`minimumReleaseAge`); the compose host port is configurable with `STASHLEY_PORT`. Earlier decisions: documentation site with VitePress on GitHub Pages; problem types as `urn:stashley:problem:<code>`; images at `ghcr.io/kaibrockelt/stashley`.
 
 ## Log
 
 - 2026-11-12: M0 started. The architecture plan is drafted.
 - 2026-11-12: M0 approved, including D1–D12. D6 (public API write semantics) and D10 (simulated writes) were refined during the review. Brand artwork will be delivered: a hamster in comic style on a colored app icon tile.
+- 2026-11-12: M1 implemented.
+  - Verified locally: typecheck, lint, SPDX, i18n and license checks, 42 unit tests, bundle at 129 KB gzip (budget 300 KB).
+  - `docker compose up` serves the web client, `/healthz` and `/readyz`. Backup, restore with the running-server guard, and graceful shutdown work.
+  - The multi-arch build produces amd64 and arm64 images, both with native SQLite.
+  - Trivy finds no critical issues. Two high findings in Debian's zlib wait for a base image update.
+  - Not yet verified: the GitHub Actions run, which needs a push. Release and docs workflows are scheduled for M9.
