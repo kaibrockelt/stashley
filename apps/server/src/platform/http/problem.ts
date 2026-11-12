@@ -67,6 +67,8 @@ export function errorHandler(
     return sendProblem(reply, problem('bad_request'))
   }
   if (error.statusCode === 429) return sendProblem(reply, problem('rate_limited'))
+  if (error.statusCode === 403) return sendProblem(reply, problem('forbidden'))
+  if (error.statusCode === 404) return sendProblem(reply, problem('not_found'))
   request.log.error({ err: error }, 'unhandled error')
   return sendProblem(reply, problem('internal_error', { errorId: request.id }))
 }

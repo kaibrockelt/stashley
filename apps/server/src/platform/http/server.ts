@@ -82,7 +82,8 @@ export async function createHttpServer(options: HttpOptions): Promise<FastifyIns
       prefix: '/',
       index: false,
       wildcard: true,
-      allowedPath: (pathName) => pathName !== '/index.html',
+      // Directories and index.html go to the web client fallback below.
+      allowedPath: (pathName) => !pathName.endsWith('/') && pathName !== '/index.html',
       setHeaders(res, filePath) {
         const immutable = filePath.includes(`${path.sep}assets${path.sep}`)
         res.header('cache-control', immutable ? 'public, max-age=31536000, immutable' : 'no-cache')
@@ -93,7 +94,8 @@ export async function createHttpServer(options: HttpOptions): Promise<FastifyIns
   app.setNotFoundHandler((request, reply) => {
     const pathName = request.url.split('?')[0] ?? '/'
     const isServerPath = serverPrefixes.some((prefix) => pathName.startsWith(prefix))
-    if (request.method === 'GET' && !isServerPath && indexHtml !== undefined) {
+    const isRead = request.method === 'GET' || request.method === 'HEAD'
+    if (isRead && !isServerPath && indexHtml !== undefined) {
       const nonce = reply.cspNonce.style
       return reply
         .code(200)

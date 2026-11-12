@@ -73,6 +73,11 @@ describe('http conventions', () => {
 
   it('serves the web client with a CSP nonce', async () => {
     const { server } = await started()
+    const root = await server.app.inject('/')
+    expect(root.statusCode).toBe(200)
+    expect(root.body).toContain('csp-nonce')
+    const head = await server.app.inject({ method: 'HEAD', url: '/' })
+    expect(head.statusCode).toBe(200)
     const response = await server.app.inject('/pages/overview')
     expect(response.statusCode).toBe(200)
     const csp = response.headers['content-security-policy']

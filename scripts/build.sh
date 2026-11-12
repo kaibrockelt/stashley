@@ -71,7 +71,7 @@ fi
 
 if [[ "$skip_checks" != true ]]; then
   echo "==> Checks (typecheck, lint, unit tests)"
-  docker buildx build "${no_cache[@]}" --target check --progress plain .
+  docker buildx build ${no_cache[@]+"${no_cache[@]}"} --target check --progress plain .
 fi
 
 output=(--load)
@@ -85,10 +85,10 @@ fi
 
 echo "==> Building $image:$version (${platform:-host platform})"
 docker buildx build \
-  "${no_cache[@]}" \
-  "${platform_args[@]}" \
-  "${tags[@]}" \
-  "${output[@]}" \
+  ${no_cache[@]+"${no_cache[@]}"} \
+  ${platform_args[@]+"${platform_args[@]}"} \
+  ${tags[@]+"${tags[@]}"} \
+  ${output[@]+"${output[@]}"} \
   --build-arg "VERSION=$version" \
   --build-arg "REVISION=$revision" \
   --build-arg "CREATED=$created" \
