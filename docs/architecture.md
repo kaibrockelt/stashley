@@ -1,6 +1,6 @@
 # Stashley architecture
 
-> Status: draft for review (milestone M0). After approval, changes to this document are recorded in [`PROGRESS.md`](../PROGRESS.md).
+> Status: approved on 2026-11-12 (milestone M0). Later changes to this document are recorded in [`PROGRESS.md`](../PROGRESS.md).
 
 ## Contents
 
@@ -32,7 +32,7 @@
 26. [Test strategy](#26-test-strategy)
 27. [Milestone mapping](#27-milestone-mapping)
 28. [Decisions requiring approval](#28-decisions-requiring-approval)
-29. [Open questions](#29-open-questions)
+29. [Resolved questions](#29-resolved-questions)
 
 ---
 
@@ -482,8 +482,8 @@ Every data path passes through one of these functions of the `access` service:
 | Mode | Who | Principals | Reads | Writes |
 | --- | --- | --- | --- | --- |
 | `runtime` | Everyone | Own roles ∪ `authenticated` | Effective rights | Effective rights |
-| `edit` | Admin, manager | n/a | Every component of the draft whose sources are within the ceiling (`read`) | Disabled |
-| `preview` | Admin, manager | Selected roles ∪ `authenticated` | Effective rights of those roles | Rejected (`403 preview_read_only`) |
+| `edit` | Admin, manager | n/a | Every component of the draft whose sources are within the ceiling (`read`) | Simulated against the ceiling (§11.2) |
+| `preview` | Admin, manager | Selected roles ∪ `authenticated` | Effective rights of those roles | Simulated with the rights of those roles (§11.2) |
 
 Admins and managers see every published page in navigation. In `runtime` mode their data rights still come only from their own roles.
 
@@ -746,7 +746,7 @@ sequenceDiagram
   X-->>R: new row, new version token
 ```
 
-1. **Authorize** with the required operation, and reject `preview` mode. The handle carries the writable fields, generated fields, server-side defaults, base filter and lock strategy.
+1. **Authorize** with the required operation. In `edit` and `preview` mode the request continues as a simulation (§11.2). The handle carries the writable fields, generated fields, server-side defaults, base filter and lock strategy.
 2. **Validate the payload** with the Zod schema built by `buildRowSchema(fields, columns, mode)` from `shared`. The client uses the same schema. The schema is strict: fields that are not writable are rejected (`field_not_writable`).
 3. **Apply server values:**
    - Hidden default values from instance variables, the user context or constants.
@@ -782,6 +782,20 @@ sequenceDiagram
 - **The version token** sent with every row is opaque. It holds the lock column value and a hash of the original values of the writable fields, so second-precision timestamps cannot hide concurrent edits.
 
 **Delete** requires `delete` in the effective rights. The UI asks for confirmation. Cascades follow the database's `ON DELETE` rules, and a blocked delete returns `still_referenced`.
+
+### 11.1 Repeated and unchanged writes
+
+An update whose values equal the current row changes nothing. No `UPDATE` is sent, no cache entry is invalidated and no audit event is written; the response is the current row. This makes repeated upserts from integration pipelines harmless.
+
+### 11.2 Simulation
+
+In `edit` and `preview` mode, write requests run as a simulation and never change data:
+
+- **Normal steps:** authorization (the ceiling in `edit` mode, the previewed roles' rights in `preview`), payload validation, server values and foreign key checks run as usual.
+- **Checks instead of writes:** where a real write would send DML, the server uses `SELECT` to find what the database would reject: duplicate primary or unique keys, missing referenced rows, rows outside the base filter, version conflicts.
+- **Response:** the resulting row and any field errors, marked `simulated: true`. Nothing is audited and the cache is not touched.
+- **No rollback trick:** the simulation never runs DML inside a transaction that is rolled back afterwards. Non-transactional tables, triggers and auto-increment counters would leak side effects.
+- **Limits:** checks only the database performs, such as `CHECK` constraints and triggers, are not covered.
 
 ## 12. Query cache
 
@@ -938,7 +952,7 @@ Errors follow RFC 9457, with the stable code catalog from `packages/shared/src/a
 | --- | --- |
 | 400 | Malformed request, unknown query parameter or field |
 | 401 | Not authenticated, expired session or token |
-| 403 | Authenticated but operation not allowed, CSRF failure, preview write, base filter violation |
+| 403 | Authenticated but operation not allowed, CSRF failure, base filter violation |
 | 404 | Unknown resource, or a page or component that is not visible to the caller |
 | 409 | Version or draft revision conflict |
 | 412 | `If-Match` mismatch on the public API |
@@ -1028,10 +1042,11 @@ These are the resource groups of the internal API. The exact contracts are Zod s
   - `fields=a,b`, where excluded and unsupported columns count as unknown.
   - `filter[column][op]=value` with `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in` (comma-separated), `like` and `null` (`true` or `false`).
 - **Writes** use the write executor from §11, with the token as the actor and no base filter.
-  - `PATCH` updates the given fields.
-  - `PUT /:id` replaces all writable fields. Missing fields take the column default, or null.
-  - `PUT /` with `?on=<column>` upserts on the primary key or a single-column unique key.
-- **Concurrency:** `ETag` is derived from the row's version token. `If-Match` is optional; when it is sent it must match, otherwise the response is `412` (§28, D6).
+  - `POST /` only creates. A duplicate primary or unique key returns `422 unique_violation` on the key's fields.
+  - `PATCH /:id` updates the given fields of an existing row.
+  - `PUT /:id` replaces all writable fields of an existing row. Missing fields take the column default, or null. An unknown ID returns `404`, so `PUT` never creates a row by ID.
+  - `PUT /` with `?on=<column>` upserts on the primary key or a single-column unique key. It is idempotent: a repeated call updates the same row instead of creating a duplicate, and an unchanged repeat writes nothing (§11.1). Integrations whose events can arrive more than once use this endpoint. It needs a unique key from the source system in the target table.
+- **Concurrency:** `ETag` is derived from the row's version token. `If-Match` is an optional request header. When it is sent it must match the current row, otherwise the response is `412` (§28, D6).
 - **OpenAPI 3.1** is generated from table access, the catalog and the enabled endpoints. With a bearer token, it lists only the endpoints that token can use. Generated documents are cached per token and configuration revision.
 - **CORS** is not enabled. The API is meant for server-to-server clients.
 
@@ -1395,26 +1410,28 @@ Releases follow semantic versioning and `docs/CHANGELOG.md` (Keep a Changelog). 
 
 ## 28. Decisions requiring approval
 
-These decisions go beyond what the requirements fix, or interpret them. Approved items move to `PROGRESS.md`.
+These decisions go beyond what the requirements fix, or interpret them. All of them were approved on 2026-11-12 and are recorded in `PROGRESS.md`.
 
 | ID | Decision | Reason |
 | --- | --- | --- |
 | D1 | Beyond the table page export, also allow CSV for the audit log export, the import error list and the CSV upload body (`text/csv`, streamed). Everything else is JSON only. | These CSV features are required elsewhere. Base64 inside JSON would inflate a 50 MB upload by a third and prevents streaming. |
 | D2 | Single-row upserts (forms, public API) use a locked lookup followed by `UPDATE` or `INSERT`, not `INSERT … ON DUPLICATE KEY UPDATE`. | `ON DUPLICATE KEY UPDATE` could change a row outside the base filter, and it does not return the previous values the audit log needs. |
 | D3 | SQL validation adds a function allowlist and rejects all `@` and `@@` variables and executable comments, on top of the listed denials. | Fail-closed validation. MySQL executes code inside `/*! … */` comments that a parser treats as plain comments. |
-| D4 | `*` is allowed only on objects without excluded columns. | Keeps exclusions effective when they are added after a query was saved. |
+| D4 | In stored queries, `SELECT *` and `t.*` are allowed only on objects without excluded columns. | Keeps exclusions effective when they are added after a query was saved. |
 | D5 | The internal API returns `404` for pages and components the caller cannot see, and `403` only for visible ones. The public API returns `403` for operations a token lacks and `404` for disabled endpoints. | No existence probing on the internal API. The `403` the acceptance criteria require on the public API is kept. |
-| D6 | `If-Match` is optional on public API writes. When it is sent, it is enforced (`412`). | Lets integration clients such as n8n write without a prior read, while still offering optimistic locking. |
+| D6 | On the public API, `POST` only creates, `PUT /:id` only replaces existing rows, and `PUT /?on=<column>` is the idempotent upsert for integrations. `If-Match` is optional and enforced when sent (`412`). | Upserts absorb duplicate events from pipelines instead of creating duplicate rows. A mandatory `If-Match` would make a retried update fail after a successful first attempt. |
 | D7 | The row count estimate is used only for unfiltered requests on objects with more than 1,000,000 estimated rows. Filtered counts are exact within the query timeout, and on timeout the count is reported as unknown. | An unfiltered estimate says nothing about a filtered result. |
 | D8 | Libraries beyond the prescribed list: pino (bundled with Fastify), `fastify-type-provider-zod`, `@fastify/cookie`, `@fastify/static`, lru-cache, commander, nodemailer, ipaddr.js; for development: fast-check, `@axe-core/playwright`, ESLint, typescript-eslint, Prettier, VitePress (docs site). Dates use the native Temporal API of Node 26 on the server. | None of these overlap with prescribed libraries. All have licenses compatible with AGPL-3.0, and CI checks them. |
 | D9 | The runtime image is `node:26-slim` rather than distroless. | Native modules need glibc in either case. The slim image keeps the `stashley` CLI usable through `docker compose exec`. |
-| D10 | Admins and managers cannot write in edit mode. They write only in runtime mode, through their own roles. | Building a page should never change data by accident. |
+| D10 | In edit mode and preview, writes to target databases are simulated: full validation and `SELECT`-based checks, no DML (§11.2). Admins and managers write data only in runtime mode, through their own roles. | Building or previewing a page never changes data, yet still shows what a write would do. |
 | D11 | Drafts are saved explicitly, not automatically, and every save is audited. | Keeps the audit log meaningful and conflicts visible. |
 | D12 | Page filter options are authorized through the page's view right. Foreign key option lists, lookup columns and display templates are authorized through the right of their component. All of them are always limited by the ceiling and the column exclusions. | The requirements do not specify how these sources are authorized. They are part of a page or component the manager configured deliberately, like lookup columns. |
 
-## 29. Open questions
+## 29. Resolved questions
 
-1. **Documentation site:** VitePress on GitHub Pages under the repository. Is that acceptable until a domain exists?
-2. **Problem types:** `urn:stashley:problem:<code>` is used until a documentation domain exists. Should it switch to URLs later?
-3. **Registry namespace:** `ghcr.io/kaibrockelt/stashley`, taken from the repository owner, until a GitHub organization exists.
-4. **Brand assets needed:** an SVG mark in full color and in monochrome for light and dark backgrounds, a wordmark, a favicon tuned for 16 and 32 px, and mascot illustrations for empty and error states.
+All questions from the M0 review are resolved:
+
+1. **Documentation site:** VitePress, published to GitHub Pages.
+2. **Problem types:** the `type` member of an error response is a URI naming the kind of error. Stashley uses `urn:stashley:problem:<code>`. A URN never has to change when the documentation moves, and the API reference lists every code.
+3. **Registry namespace:** `ghcr.io/kaibrockelt/stashley`.
+4. **Brand:** a frightened hamster drawn in comic style, on a colored app icon tile. Once the artwork arrives, the UI accent color is derived from the tile color. Until then, neutral placeholders are used. Needed files: the icon as SVG, a variant simplified for 16 and 32 px, a monochrome variant for light and dark backgrounds, a wordmark, and mascot drawings for empty and error states.

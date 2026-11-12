@@ -1,16 +1,16 @@
 # Progress
 
-**Current milestone:** M0 – Architecture plan (in review)
+**Current milestone:** M1 – Scaffold and operations (open)
 
-**Next step:** The operator reviews [`docs/architecture.md`](docs/architecture.md), especially §28 (decisions requiring approval) and §29 (open questions). M1 starts after approval.
+**Next step:** Start M1: monorepo, CI, Dockerfile, `scripts/build.sh`, metadata store with migrations, health endpoints, logs, backup and restore, i18n and design token foundations.
 
-**Recommended model strength for M1:** medium. Before M1 starts, review M0 in a fresh session with high model strength.
+**Recommended model strength for M1:** medium.
 
 ## Milestones
 
 | Milestone | Scope | Model strength | Status |
 | --- | --- | --- | --- |
-| M0 | Architecture plan | Strongest, maximum effort | In review |
+| M0 | Architecture plan | Strongest, maximum effort | Done |
 | M1 | Scaffold and operations: monorepo, CI, Dockerfile, build script, metadata store, health, logs, backup and restore, i18n and design token foundations | Medium | Open |
 | M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | Open |
 | M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | Open |
@@ -47,8 +47,26 @@ Status values: open, in progress, in review, done.
 
 ## Deviations from the specification
 
-None approved yet. Proposals D1–D12 await approval in [`docs/architecture.md` §28](docs/architecture.md#28-decisions-requiring-approval).
+All approved on 2026-11-12. Rationale for each is in [`docs/architecture.md` §28](docs/architecture.md#28-decisions-requiring-approval).
+
+| ID | Approved deviation or interpretation |
+| --- | --- |
+| D1 | CSV is also used for the audit log export, the import error list and the CSV upload body, in addition to the table page export. |
+| D2 | Single-row upserts use a locked lookup followed by `UPDATE` or `INSERT`, not `INSERT … ON DUPLICATE KEY UPDATE`. |
+| D3 | SQL validation adds a function allowlist and rejects `@`/`@@` variables and executable comments. |
+| D4 | In stored queries, `SELECT *` and `t.*` are allowed only on objects without excluded columns. |
+| D5 | Invisible pages and components return `404` on the internal API. The public API returns `403` for operations a token lacks. |
+| D6 | Public API: `POST` only creates, `PUT /:id` only replaces existing rows, `PUT /?on=<column>` is the idempotent upsert. `If-Match` is optional and enforced when sent. Unchanged repeats write nothing. |
+| D7 | The row count estimate is used only for unfiltered requests on objects with more than 1,000,000 rows. |
+| D8 | Additional libraries as listed in §28. The server uses the native Temporal API. |
+| D9 | The runtime image is `node:26-slim`. |
+| D10 | Writes to target databases are simulated in edit mode and preview: validation and `SELECT`-based checks, no DML. |
+| D11 | Drafts are saved explicitly, and every save is audited. |
+| D12 | Page filter options are authorized through the page's view right; option lists, lookup columns and display templates through the right of their component. |
+
+Further decisions: documentation site with VitePress on GitHub Pages; problem types as `urn:stashley:problem:<code>`; images at `ghcr.io/kaibrockelt/stashley`.
 
 ## Log
 
-- 2026-11-12: M0 started. The architecture plan is drafted and ready for review.
+- 2026-11-12: M0 started. The architecture plan is drafted.
+- 2026-11-12: M0 approved, including D1–D12. D6 (public API write semantics) and D10 (simulated writes) were refined during the review. Brand artwork will be delivered: a hamster in comic style on a colored app icon tile.
