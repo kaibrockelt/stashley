@@ -1,8 +1,8 @@
 # Progress
 
-**Current milestone:** M1 – Scaffold and operations (in review)
+**Current milestone:** M2 – Sign-in and accounts (open)
 
-**Next step:** Push to GitHub and confirm that the first CI run is green. M1 is done after that, and M2 (sign-in and accounts) can start.
+**Next step:** Start M2: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log. Before M2 starts, review M1 in a fresh session with high model strength.
 
 **Recommended model strength for M2:** high.
 
@@ -11,7 +11,7 @@
 | Milestone | Scope | Model strength | Status |
 | --- | --- | --- | --- |
 | M0 | Architecture plan | Strongest, maximum effort | Done |
-| M1 | Scaffold and operations: monorepo, CI, Dockerfile, build script, metadata store, health, logs, backup and restore, i18n and design token foundations | Medium | In review |
+| M1 | Scaffold and operations: monorepo, CI, Dockerfile, build script, metadata store, health, logs, backup and restore, i18n and design token foundations | Medium | Done |
 | M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | Open |
 | M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | Open |
 | M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Open |
@@ -76,3 +76,4 @@ Further decisions: npm is removed from the runtime image; dependencies must be a
   - The multi-arch build produces amd64 and arm64 images, both with native SQLite.
   - Trivy finds no critical issues. Two high findings in Debian's zlib wait for a base image update.
   - Not yet verified: the GitHub Actions run, which needs a push. Release and docs workflows are scheduled for M9.
+- 2026-11-12: M1 done. The first GitHub Actions run on `9a25b20` is green (checks, multi-arch image, Trivy).
