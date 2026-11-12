@@ -7,8 +7,13 @@ import { backupFileName, backupMetastore, pruneBackups } from './metastore/backu
 import { openMetastore, metastorePath, type Metastore } from './metastore/db.ts'
 import { Heartbeat } from './metastore/heartbeat.ts'
 import { migrateToLatest } from './metastore/migrate.ts'
-import { SettingsRepository } from './metastore/settings.ts'
+import type { SettingsRepository } from './metastore/settings.ts'
+import { systemActor } from './modules/audit/audit-log.ts'
+import { registerAuthRoutes } from './modules/auth/routes.ts'
 import { registerHealthRoutes, type Readiness } from './modules/system/health.ts'
+import { registerAdminRoutes } from './modules/users/routes.ts'
+import { createServices, type ServiceOverrides, type Services } from './services.ts'
+import { registerSecurity } from './platform/http/security.ts'
 import {
   createKeyRing,
   decrypt,
@@ -29,6 +34,7 @@ export interface Server {
   store: Metastore
   keys: KeyRing
   readiness: Readiness
+  services: Services
   /** Runs startup steps and starts listening. */
   start(): Promise<void>
   /** Graceful shutdown: refuse new requests, finish running ones, close the store. */
@@ -66,7 +72,7 @@ export async function verifyKey(settings: SettingsRepository, keys: KeyRing): Pr
 
 export async function createServer(
   config: AppConfig,
-  options: { quiet?: boolean; listen?: boolean } = {},
+  options: { quiet?: boolean; listen?: boolean; overrides?: ServiceOverrides } = {},
 ): Promise<Server> {
   const keys = createKeyRing(config.secretKey)
   const readiness: Readiness = { ready: false }
@@ -77,11 +83,35 @@ export async function createServer(
     ...(options.quiet !== undefined && { quiet: options.quiet }),
   })
   const store = openMetastore(metastorePath(config.dataDir))
-  const settings = new SettingsRepository(store.db)
+  const services = createServices(config, store, keys, app.log, options.overrides)
+  const settings = services.settings
   const heartbeat = new Heartbeat(store.db)
   const scheduler = new Scheduler(store.db, app.log)
 
   registerHealthRoutes(app, { db: store.db, readiness })
+  await registerSecurity(app, {
+    keys,
+    sessions: services.sessions,
+    settings,
+    cookie: services.cookie,
+    origin: services.origin,
+  })
+  registerAuthRoutes(app, {
+    auth: services.auth,
+    oidc: services.oidc,
+    settings,
+    mailer: services.mailer,
+    cookie: services.cookie,
+    timeZone: config.timeZone,
+    baseUrl: config.baseUrl.href.replace(/\/$/, ''),
+  })
+  registerAdminRoutes(app, {
+    users: services.users,
+    usersService: services.usersService,
+    oidc: services.oidc,
+    instanceSettings: services.instanceSettings,
+    audit: services.audit,
+  })
 
   const jobs: JobDefinition[] = [
     {
@@ -95,6 +125,23 @@ export async function createServer(
         app.log.info({ file: path.basename(file) }, 'automatic backup written')
       },
     },
+    {
+      name: 'audit.retention',
+      intervalMs: day,
+      async run() {
+        const { days } = await settings.get('audit.retention')
+        const deleted = await services.audit.deleteOlderThan(Date.now() - days * day)
+        if (deleted > 0) app.log.info({ deleted }, 'audit events past retention deleted')
+      },
+    },
+    {
+      name: 'sessions.cleanup',
+      intervalMs: day / 24,
+      async run() {
+        await services.sessions.cleanup()
+        await services.tokens.cleanup()
+      },
+    },
   ]
 
   let stopping: Promise<void> | undefined
@@ -104,6 +151,7 @@ export async function createServer(
     store,
     keys,
     readiness,
+    services,
     async start() {
       const network = await detectNetworkFilesystem(config.dataDir)
       if (network !== undefined) {
@@ -120,6 +168,8 @@ export async function createServer(
         )
       }
       await verifyKey(settings, keys)
+      const admin = await services.usersService.bootstrapAdmin(systemActor, config.initialAdmin)
+      if (admin !== undefined) app.log.info('initial admin created')
       await heartbeat.start()
       await scheduler.start(jobs)
       if (options.listen !== false) await app.listen({ host: '0.0.0.0', port: config.port })

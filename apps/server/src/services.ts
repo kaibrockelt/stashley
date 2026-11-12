@@ -1,0 +1,98 @@
+// SPDX-FileCopyrightText: 2026 Stashley contributors
+// SPDX-License-Identifier: AGPL-3.0-only
+import type { FastifyBaseLogger } from 'fastify'
+import type { AppConfig } from './config/env.ts'
+import type { Metastore } from './metastore/db.ts'
+import { SettingsRepository } from './metastore/settings.ts'
+import { AuditLog } from './modules/audit/audit-log.ts'
+import { sessionCookieName } from './modules/auth/sessions.ts'
+import { createOidcClient, OidcService, type OidcClient } from './modules/auth/oidc.ts'
+import { AuthService } from './modules/auth/service.ts'
+import { SessionService } from './modules/auth/sessions.ts'
+import { UserTokens } from './modules/auth/user-tokens.ts'
+import { createMailer, type Mailer } from './modules/mail/mailer.ts'
+import { InstanceSettingsService } from './modules/system/instance-settings.ts'
+import { UsersRepository } from './modules/users/repository.ts'
+import { UsersService } from './modules/users/service.ts'
+import { systemClock, type Clock } from './platform/clock.ts'
+import type { KeyRing } from './platform/crypto/keys.ts'
+
+export interface ServiceOverrides {
+  oidcClient?: OidcClient
+  mailer?: Mailer
+  clock?: Clock
+}
+
+/** Composition root shared by the server and the CLI. */
+export function createServices(
+  config: AppConfig,
+  store: Metastore,
+  keys: KeyRing,
+  log: FastifyBaseLogger,
+  overrides: ServiceOverrides = {},
+) {
+  const db = store.db
+  const clock = overrides.clock ?? systemClock
+  const base = config.baseUrl.href.replace(/\/$/, '')
+  const appUrl = (path: string) => `${base}${path}`
+  const settings = new SettingsRepository(db)
+  const audit = new AuditLog(db, clock)
+  const users = new UsersRepository(db)
+  const sessions = new SessionService(db, keys, settings, clock)
+  const tokens = new UserTokens(db, clock)
+  const mailer = overrides.mailer ?? createMailer(config, log)
+  const auth = new AuthService({
+    db,
+    users,
+    sessions,
+    tokens,
+    settings,
+    keys,
+    audit,
+    mailer,
+    appUrl,
+    clock,
+  })
+  const oidc = new OidcService({
+    db,
+    users,
+    sessions,
+    settings,
+    keys,
+    audit,
+    appUrl,
+    clock,
+    client:
+      overrides.oidcClient ??
+      createOidcClient({ keys, allowHttp: config.baseUrl.protocol === 'http:' }),
+  })
+  const usersService = new UsersService({
+    db,
+    users,
+    sessions,
+    tokens,
+    auth,
+    audit,
+    mailer,
+    appUrl,
+    clock,
+  })
+  const instanceSettings = new InstanceSettingsService(db, settings, audit)
+  return {
+    settings,
+    audit,
+    users,
+    sessions,
+    tokens,
+    mailer,
+    auth,
+    oidc,
+    usersService,
+    instanceSettings,
+    cookie: { name: sessionCookieName(config.secureCookies), secure: config.secureCookies },
+    origin: config.baseUrl.origin,
+    clock,
+  }
+}
+
+export type Services = ReturnType<typeof createServices>

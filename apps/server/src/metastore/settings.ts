@@ -14,6 +14,29 @@ export const settingDefinitions = {
     schema: z.string(),
     defaultValue: undefined,
   },
+  'auth.localLogin': {
+    schema: z.object({ enabled: z.boolean() }),
+    defaultValue: { enabled: true },
+  },
+  'auth.twoFactor': {
+    schema: z.object({ enforced: z.boolean() }),
+    defaultValue: { enforced: false },
+  },
+  'auth.session': {
+    schema: z.object({
+      idleMinutes: z
+        .number()
+        .int()
+        .min(5)
+        .max(60 * 24 * 30),
+      maxAgeDays: z.number().int().min(1).max(90),
+    }),
+    defaultValue: { idleMinutes: 12 * 60, maxAgeDays: 7 },
+  },
+  'audit.retention': {
+    schema: z.object({ days: z.number().int().min(30).max(3650) }),
+    defaultValue: { days: 365 },
+  },
 } as const
 
 type Definitions = typeof settingDefinitions

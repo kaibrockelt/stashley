@@ -45,6 +45,8 @@ const fastifyErrorCodes: Record<string, ErrorCode> = {
   FST_ERR_CTP_EMPTY_JSON_BODY: 'bad_request',
   FST_ERR_CTP_INVALID_CONTENT_LENGTH: 'bad_request',
   FST_ERR_VALIDATION: 'validation_failed',
+  FST_CSRF_MISSING_SECRET: 'csrf_failed',
+  FST_CSRF_INVALID_TOKEN: 'csrf_failed',
 }
 
 export function errorHandler(

@@ -7,6 +7,7 @@ const purposes = {
   session: 'stashley/session/v1',
   cursor: 'stashley/cursor/v1',
   state: 'stashley/state/v1',
+  csrf: 'stashley/csrf/v1',
   oauthCookies: 'stashley/oauth-cookies/v1',
 } as const
 

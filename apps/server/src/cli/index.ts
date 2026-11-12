@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { Command, Option } from 'commander'
 import { backupDir, createServer } from '../app.ts'
@@ -9,6 +10,11 @@ import { backupMetastore, restoreMetastore, RestoreError } from '../metastore/ba
 import { metastorePath, openMetastore } from '../metastore/db.ts'
 import { isServerRunning } from '../metastore/heartbeat.ts'
 import { knownMigrationNames, migrateToLatest } from '../metastore/migrate.ts'
+import { cliActor } from '../modules/audit/audit-log.ts'
+import { AppError } from '../platform/http/problem.ts'
+import { createKeyRing } from '../platform/crypto/keys.ts'
+import { createServices, type Services } from '../services.ts'
+import { verifyKey } from '../app.ts'
 
 const shutdownGraceMs = 30_000
 
@@ -94,6 +100,40 @@ async function migrate(): Promise<void> {
   }
 }
 
+const cliLog = {
+  level: 'warn',
+  fatal: console.error,
+  error: console.error,
+  warn: console.warn,
+  info: () => undefined,
+  debug: () => undefined,
+  trace: () => undefined,
+  silent: () => undefined,
+  child() {
+    return cliLog
+  },
+} as unknown as Parameters<typeof createServices>[3]
+
+/** Opens the store, applies migrations and runs `fn` with the application services. */
+async function withServices<T>(fn: (services: Services) => Promise<T>): Promise<T> {
+  const cfg = config()
+  const store = openMetastore(metastorePath(cfg.dataDir))
+  try {
+    await migrateToLatest(store, backupDir(cfg))
+    const keys = createKeyRing(cfg.secretKey)
+    const services = createServices(cfg, store, keys, cliLog)
+    await verifyKey(services.settings, keys)
+    return await fn(services)
+  } finally {
+    await store.close()
+  }
+}
+
+function readPassword(file: string | undefined): string | undefined {
+  if (file === undefined) return undefined
+  return readFileSync(file === '-' ? 0 : file, 'utf8').replace(/\r?\n$/, '')
+}
+
 const program = new Command('stashley')
   .description('Dashboards, forms and table views on MariaDB and MySQL databases')
   .showHelpAfterError()
@@ -115,9 +155,59 @@ program
 
 program.command('migrate').description('Apply pending metadata store migrations').action(migrate)
 
+const user = program.command('user').description('Manage accounts')
+
+user
+  .command('create')
+  .description('Create an account')
+  .requiredOption('--email <email>', 'email address')
+  .requiredOption('--admin', 'create the account with the admin system role')
+  .option('--name <name>', 'display name')
+  .requiredOption('--password-file <file>', 'file with the password, or - for stdin')
+  .action(async (options: { email: string; name?: string; passwordFile: string }) => {
+    const password = readPassword(options.passwordFile) ?? ''
+    await withServices(async (services) => {
+      await services.usersService.createAdmin(cliActor, options.email, password, options.name)
+    })
+    console.log(`Created admin ${options.email}`)
+  })
+
+user
+  .command('reset-password')
+  .description('Set a new password, or print a reset link when no password file is given')
+  .requiredOption('--email <email>', 'email address')
+  .option('--password-file <file>', 'file with the new password, or - for stdin')
+  .action(async (options: { email: string; passwordFile?: string }) => {
+    const result = await withServices((services) =>
+      services.usersService.resetPassword(
+        cliActor,
+        options.email,
+        readPassword(options.passwordFile),
+      ),
+    )
+    console.log(result.link === null ? `Password reset for ${options.email}` : result.link)
+  })
+
+program
+  .command('auth')
+  .description('Sign-in settings')
+  .command('enable-local')
+  .description('Turn password sign-in back on')
+  .action(async () => {
+    const changed = await withServices((services) =>
+      services.instanceSettings.enableLocalLogin(cliActor),
+    )
+    console.log(changed ? 'Password sign-in enabled' : 'Password sign-in was already enabled')
+  })
+
 program.parseAsync().catch((error: unknown) => {
   if (error instanceof ConfigError || error instanceof RestoreError) {
     console.error(error.message)
+  } else if (error instanceof AppError) {
+    const fields = error.errors?.map((e) => `${e.field}: ${e.code}`).join(', ')
+    console.error(
+      fields === undefined || fields === '' ? error.message : `${error.message} (${fields})`,
+    )
   } else {
     console.error(error)
   }
