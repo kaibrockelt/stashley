@@ -1,0 +1,86 @@
+/* SPDX-FileCopyrightText: 2026 Stashley contributors */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* Design tokens. The accent hue is a placeholder until it is derived from the brand artwork. */
+:root {
+  --accent-hue: 245;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.8125rem;
+  --font-size-md: 0.875rem;
+  --font-size-lg: 1rem;
+  --font-size-xl: 1.25rem;
+  --line-height: 1.45;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  --sidebar-width: 15rem;
+  --header-height: 3rem;
+  --target-min: 24px;
+
+  --color-bg: oklch(98.5% 0.003 var(--accent-hue));
+  --color-surface: #ffffff;
+  --color-surface-raised: #ffffff;
+  --color-border: oklch(91% 0.006 var(--accent-hue));
+  --color-text: oklch(22% 0.01 var(--accent-hue));
+  --color-text-muted: oklch(47% 0.012 var(--accent-hue));
+  --color-accent: oklch(50% 0.2 var(--accent-hue));
+  --color-accent-hover: oklch(45% 0.2 var(--accent-hue));
+  --color-accent-contrast: #ffffff;
+  --color-accent-subtle: oklch(95% 0.03 var(--accent-hue));
+  --color-focus: oklch(55% 0.2 var(--accent-hue));
+  --color-danger: oklch(52% 0.2 27);
+  --color-warning: oklch(62% 0.15 75);
+  --color-success: oklch(52% 0.13 150);
+  --shadow-popover: 0 4px 16px oklch(0% 0 0 / 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --color-bg: oklch(17% 0.008 var(--accent-hue));
+    --color-surface: oklch(20.5% 0.009 var(--accent-hue));
+    --color-surface-raised: oklch(24% 0.01 var(--accent-hue));
+    --color-border: oklch(30% 0.012 var(--accent-hue));
+    --color-text: oklch(94% 0.005 var(--accent-hue));
+    --color-text-muted: oklch(72% 0.012 var(--accent-hue));
+    --color-accent: oklch(72% 0.15 var(--accent-hue));
+    --color-accent-hover: oklch(78% 0.13 var(--accent-hue));
+    --color-accent-contrast: oklch(17% 0.02 var(--accent-hue));
+    --color-accent-subtle: oklch(28% 0.05 var(--accent-hue));
+    --color-focus: oklch(75% 0.14 var(--accent-hue));
+    --color-danger: oklch(70% 0.17 27);
+    --color-warning: oklch(80% 0.13 75);
+    --color-success: oklch(72% 0.13 150);
+    --shadow-popover: 0 4px 16px oklch(0% 0 0 / 0.5);
+  }
+}
+
+:root[data-theme='dark'] {
+  --color-bg: oklch(17% 0.008 var(--accent-hue));
+  --color-surface: oklch(20.5% 0.009 var(--accent-hue));
+  --color-surface-raised: oklch(24% 0.01 var(--accent-hue));
+  --color-border: oklch(30% 0.012 var(--accent-hue));
+  --color-text: oklch(94% 0.005 var(--accent-hue));
+  --color-text-muted: oklch(72% 0.012 var(--accent-hue));
+  --color-accent: oklch(72% 0.15 var(--accent-hue));
+  --color-accent-hover: oklch(78% 0.13 var(--accent-hue));
+  --color-accent-contrast: oklch(17% 0.02 var(--accent-hue));
+  --color-accent-subtle: oklch(28% 0.05 var(--accent-hue));
+  --color-focus: oklch(75% 0.14 var(--accent-hue));
+  --color-danger: oklch(70% 0.17 27);
+  --color-warning: oklch(80% 0.13 75);
+  --color-success: oklch(72% 0.13 150);
+  --shadow-popover: 0 4px 16px oklch(0% 0 0 / 0.5);
+}

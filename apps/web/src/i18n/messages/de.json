@@ -1,0 +1,15 @@
+{
+  "app.skipToContent": "Zum Inhalt springen",
+  "error.reference": "Fehler-ID: {errorId}",
+  "error.reload": "Neu laden",
+  "error.title": "Etwas ist schiefgelaufen",
+  "home.empty.title": "Noch keine Seiten",
+  "nav.empty": "Keine Seiten",
+  "nav.label": "Hauptnavigation",
+  "notFound.action": "Zur Startseite",
+  "notFound.title": "Seite nicht gefunden",
+  "theme.dark": "Dunkel",
+  "theme.label": "Darstellung",
+  "theme.light": "Hell",
+  "theme.system": "System"
+}

@@ -1,0 +1,5 @@
+*.md
+pnpm-lock.yaml
+LICENSE
+dist
+coverage

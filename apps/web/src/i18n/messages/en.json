@@ -1,0 +1,15 @@
+{
+  "app.skipToContent": "Skip to content",
+  "error.reference": "Error ID: {errorId}",
+  "error.reload": "Reload",
+  "error.title": "Something went wrong",
+  "home.empty.title": "No pages yet",
+  "nav.empty": "No pages",
+  "nav.label": "Main",
+  "notFound.action": "Go to start",
+  "notFound.title": "Page not found",
+  "theme.dark": "Dark",
+  "theme.label": "Appearance",
+  "theme.light": "Light",
+  "theme.system": "System"
+}

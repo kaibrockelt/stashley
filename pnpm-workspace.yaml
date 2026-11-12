@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+# Do not install releases younger than three days.
+minimumReleaseAge: 4320
+minimumReleaseAgeStrict: true
+onlyBuiltDependencies:
+  - better-sqlite3
+  - esbuild
