@@ -2,7 +2,7 @@
 
 **Current milestone:** M3 – Connections and table access (in review)
 
-**Next step:** Close M3 and start M4 in a fresh session with the strongest model at maximum effort. The M3 review's blocking and should-fix findings are fixed; its nice-to-have findings are open.
+**Next step:** Close M3 and start M4 in a fresh session with the strongest model at maximum effort. The M3 review's findings are fixed, except three carried into later milestones (see the log).
 
 **Recommended model strength for M4:** strongest model, maximum effort.
 
@@ -126,3 +126,33 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Snapshots of unacknowledged drifts are no longer pruned, so those drifts stay.
   - Verified with 103 server unit tests and 72 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7.
   - Open: the review's nice-to-have findings.
+- 2026-11-13: M3 review, nice-to-have findings fixed:
+  - Grants:
+    - MySQL partial revokes are taken off global privileges.
+    - `WITH ADMIN OPTION` on roles is a warning.
+    - Update and delete need SELECT for the write user.
+    - The read user needs only SELECT; SHOW VIEW is checked per exposed view, which shows `view_dependencies_unknown` when the view's base tables are unknown. This replaces the decision to always require SHOW VIEW.
+  - Catalog:
+    - Prefix and functional indexes no longer count as unique keys.
+    - View base tables leave out CTE names and unknown objects.
+    - Every schema read stores its outcome on the connection (migration `0004_schema_check`), so a failed daily check shows on the connection page.
+    - The writes of a schema read run in one transaction.
+  - Table access:
+    - A nullable view key shows `view_key_nullable`.
+    - Relations need matching value kinds.
+    - A view key used by a relation cannot change.
+    - A display template naming a source column with two targets must name the target.
+    - Listing table access no longer decrypts passwords.
+  - Runtime:
+    - Concurrent first requests share one pool.
+    - A failed call rolls back before its connection is reused.
+    - Impossible legacy dates are flagged instead of failing.
+    - Hosts may contain underscores.
+    - The connection dialog warns when TLS does not verify the certificate.
+    - `rotate-key` reminds that the backup still holds the old key.
+  - Tests check that rotation covers every column holding a ciphertext, and that a failed rotation changes nothing.
+  - Carried forward:
+    - `KILL QUERY` on a client timeout (§9.2) belongs to the M4 execution path.
+    - Column-level write grants limit writable fields in M6.
+    - The default API alias equals the table name, while the requirements say the real table name is not disclosed. M7 decides whether enabling an endpoint asks for an alias.
+  - Verified with 112 server unit tests and 76 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7.
