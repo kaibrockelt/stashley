@@ -324,7 +324,7 @@ The lists below give each table's columns. Encrypted columns use the format desc
 | Table | Purpose and main columns |
 | --- | --- |
 | `connections` | `id`, `name` (unique, also the reference in configuration exports), `host`, `port`, `database_name`, `engine` (`mariadb`, `mysql`), `server_version`, `tls` (JSON: mode, CA PEM, server name), `timezone` (IANA), `query_timeout_ms`, timestamps |
-| `connection_credentials` | `connection_id`, `purpose` (`read`, `write`, `schema`), `username`, `password` (encrypted), `grant_report` (JSON), `checked_at` |
+| `connection_credentials` | `id`, `connection_id`, `purpose` (`read`, `write`, `schema`; unique per connection), `username`, `password` (encrypted, AAD `connection_credentials:<id>:password`), `grant_report` (JSON), `checked_at` |
 | `schema_snapshots` | `id`, `connection_id`, `captured_at`, `content_hash`, `content` (JSON, §9.3), `trigger` (`manual`, `scheduled`, `import`) |
 | `schema_drifts` | `id`, `connection_id`, `snapshot_id`, `detected_at`, `diff` (JSON), `acknowledged_at`, `acknowledged_by` |
 
@@ -333,7 +333,7 @@ The lists below give each table's columns. Encrypted columns use the format desc
 | Table | Purpose and main columns |
 | --- | --- |
 | `table_access` | `id`, `connection_id`, `object_name`, `object_type` (`table`, `view`), `ops` (bitmask), `key_column` (the primary key for tables, a chosen unique column for views, or null), `display_template`, `api_resource` (unique alias), `mcp_enabled`, `state` (`active`, `pending_grants`), timestamps; unique (`connection_id`, `object_name`) |
-| `column_exclusions` | `table_access_id`, `column_name`, `scope` (`all`, `mcp`) |
+| `column_exclusions` | `table_access_id`, `column_name` (primary key together), `scope` (`all`, `mcp`; `all` wins) |
 | `virtual_relations` | `id`, `connection_id`, `source_object`, `source_column`, `target_object`, `target_column`, `kind` (`many_to_one`, `one_to_one`) |
 
 **Queries and variables**
@@ -517,6 +517,9 @@ The admin overview is computed with the same algebra over every published page. 
   - Only TCP is allowed; there is no socket path.
   - Before each pool is created, the host is resolved. Addresses are rejected if they are loopback, unspecified or link-local, or belong to one of the container's own interfaces.
   - The check repeats whenever a pool is recreated, which defends against DNS rebinding.
+  - The socket connects to the address that was checked, while the driver keeps the host name, so TLS still verifies the certificate against the name (or the configured server name).
+  - Integration tests on a developer machine reach databases through loopback; only the test server relaxes the check there (`STASHLEY_TEST_ALLOW_LOOPBACK`). CI runs them with the check on.
+- **Errors:** driver errors become a failure code (`unreachable`, `timeout`, `access_denied`, `unknown_database`, `tls_failed`, `host_not_allowed`, `failed`). Server messages are never logged or returned, because they can contain user names, addresses or values.
 
 ### 9.2 Session setup
 
@@ -536,14 +539,17 @@ The admin overview is computed with the same algebra over every published page. 
   - `KEY_COLUMN_USAGE` and `REFERENTIAL_CONSTRAINTS` (foreign keys).
   - `VIEWS` (definitions, which need `SHOW VIEW`).
   - On MySQL, also `VIEW_TABLE_USAGE`.
-- **View dependencies:** on MariaDB, base tables are found by parsing view definitions with node-sql-parser, recursively through nested views.
+- **View dependencies:** on MariaDB, base tables are found by parsing view definitions with node-sql-parser, recursively through nested views. MariaDB stores definitions with nested parentheses the parser does not always accept; then the schema-qualified table names in the definition are used, which MariaDB always writes.
+- **Key candidates** of a view are columns named like the single-column primary key of a base table (`id`) or `<table>_id`. The admin picks the key column; candidates are only suggestions.
 - **Snapshot document:** for each object it records:
   - The type and the estimated row count.
   - Every column: name, position, data type, full column type, nullability, default, extra (`auto_increment`, `on update`), length, precision and scale, enum or set values, generated flag.
   - The primary key, unique keys and foreign keys.
   - For views: the base tables and the key candidate.
 - **Diff:** a refresh compares the new snapshot with the stored one. It lists added, changed and removed objects and columns, and collects every affected query, component, relation, display template and API endpoint into an impact report.
-- **Scheduled check:** every 24 h. If the diff is not empty, it is stored as a drift and shown to admins.
+- **Scheduled check:** every 24 h. If the diff is not empty, it is stored as a drift and shown to admins until one of them marks it as seen.
+- **Snapshots:** a new one is stored only when the structure changed; row estimates are not part of the comparison. The last 20 per connection are kept.
+- **Table access state:** after every read, exposed objects the read user no longer sees switch to `pending_grants`, and back to `active` when they reappear.
 
 ### 9.4 Grant inspection
 
@@ -553,7 +559,9 @@ The admin overview is computed with the same algebra over every published page. 
   - **Required privileges:** for read, `SELECT` and `SHOW VIEW`; for write, `SELECT`, `INSERT`, `UPDATE` and optionally `DELETE`; for schema, `CREATE` and `INSERT`.
   - **Missing privileges.**
   - **Excess privileges, shown as warnings:** any global privilege other than `USAGE`; access to other schemas; `DROP`, `ALTER`, `FILE`, `GRANT OPTION`, `SUPER`, `PROCESS`, `CREATE USER`, `RELOAD`, `SHUTDOWN`, `EXECUTE`, routine, trigger and event privileges; write privileges on the read user; `ALTER` or `DROP` on the schema user.
-- **Effect on access:** per object, the report feeds `dbGrants` in §8.3. If the write user lacks `DELETE` on a table, delete is never offered there.
+- **Effect on access:** per object, the report feeds `dbGrants` in §8.3. If the write user lacks `DELETE` on a table, delete is never offered there. The table access API shows these as `grantedOps` next to the ceiling.
+- **Roles:** all roles granted to the user count, recursively. MySQL reads them with `SHOW GRANTS FOR CURRENT_USER() USING …`, MariaDB with `SHOW GRANTS FOR <role>` per role.
+- **Parsing:** the report never stores raw grant lines except unrecognized ones, and `IDENTIFIED BY …` clauses are removed first. Schema patterns with an unescaped `%` count as access to other schemas.
 
 ### 9.5 Value encoding
 
@@ -1017,7 +1025,7 @@ These are the resource groups of the internal API. The exact contracts are Zod s
 | Components | Under `/internal/pages/:pageId/components/:componentId`: `POST …/query` · `POST …/count` · `GET …/rows/:key` · `POST …/rows` · `PATCH …/rows/:key` · `DELETE …/rows/:key` · `POST …/fields/:fieldId/options` · `POST …/export` (CSV) · `POST …/refresh` |
 | Page filters | `POST /internal/pages/:pageId/filters/:filterId/options` |
 | Design | `/internal/design/sections` · `/internal/design/pages` · `…/pages/:id/draft` · `…/pages/:id/publish` · `…/pages/:id/versions[/:version[/restore]]` · `/internal/design/queries[/:id[/versions]]` · `…/queries/validate` · `…/queries/run` (test run, 100 rows) · `/internal/design/roles` · `/internal/design/variables` · `/internal/design/catalog` · `/internal/design/issues` |
-| Administration | `/internal/admin/connections[/:id[/test, /grants, /schema, /schema/refresh, /schema/drifts]]` · `/internal/admin/table-access` · `/internal/admin/relations` · `/internal/admin/users[/:id[/status, /roles, /links]]` · `/internal/admin/identity-providers` · `/internal/admin/api/endpoints` · `/internal/admin/api/tokens` · `/internal/admin/mcp/{settings, notice, tokens, calls}` · `/internal/admin/permissions` · `/internal/admin/audit[/export]` · `/internal/admin/settings` · `/internal/admin/imports` · `/internal/admin/config/{export, import}` |
+| Administration | `/internal/admin/connections[/test, /:id[/grants, /schema, /schema/refresh, /schema/drifts[/:driftId/acknowledge]]]` · `/internal/admin/table-access` · `/internal/admin/relations` · `/internal/admin/users[/:id[/status, /roles, /links]]` · `/internal/admin/identity-providers` · `/internal/admin/api/endpoints` · `/internal/admin/api/tokens` · `/internal/admin/mcp/{settings, notice, tokens, calls}` · `/internal/admin/permissions` · `/internal/admin/audit[/export]` · `/internal/admin/settings` · `/internal/admin/imports` · `/internal/admin/config/{export, import}` |
 | Profile | `/internal/profile` · `…/password` · `…/mfa` · `…/mcp/connections` · `…/mcp/tokens` |
 | OAuth interaction | `GET /internal/oauth/interactions/:uid` · `POST …/consent` · `POST …/abort` |
 
@@ -1231,6 +1239,8 @@ AAD = "<table>:<row id>:<column>"
 2. In one transaction: decrypt every secret with the current key and encrypt it with the new key, update the key check value, delete all sessions and OAuth sessions.
 3. Print the next step: replace `APP_SECRET_KEY` and start the server.
 
+- **Registry:** `apps/server/src/modules/system/rotate-key.ts` lists every encrypted column. A new encrypted column must be added there, or rotation leaves it unreadable.
+
 ### 21.4 Tokens and hashes
 
 - **Format:** `stl_api_` or `stl_mcp_`, then 32 random bytes in base62, then a 6-character CRC32 checksum. The prefix allows secret scanning.
@@ -1292,7 +1302,7 @@ The image installs a `stashley` wrapper. The library is commander.
 | `stashley auth enable-local` | Running or stopped |
 | `stashley backup [--output <file>]` | Running or stopped |
 | `stashley restore <file>` | Stopped |
-| `stashley rotate-key --new-key-file <file>` | Stopped |
+| `stashley rotate-key --new-key-file <file>` (or `-` for stdin; writes a backup first) | Stopped |
 
 - **Stopped-server check:** commands that need a stopped server read `instance_heartbeat`. A heartbeat younger than 15 s means a server is running, and the command refuses. `--force` overrides the check.
 - **Usage:**
@@ -1387,7 +1397,7 @@ Releases follow semantic versioning and `docs/CHANGELOG.md` (Keep a Changelog). 
 | Unit | Vitest | Pure logic in `shared` and the server: access algebra, SQL validation, builder compiler, table SQL generation, keyset predicates, value encoding, CSV detection and type inference, error translation |
 | Property-based | Vitest + fast-check | Access algebra invariants: restrictions never widen rights, preview never writes, union and intersection laws. Keyset paging: concatenated pages equal the fully sorted result. Value encoding round trips. |
 | Metadata store | Vitest, SQLite in memory | Repositories, migrations, transactions, audit immutability |
-| Target integration | Vitest against the database matrix | Introspection, grant parsing, read-only transactions, timeouts, generated SQL, write paths, error translation |
+| Target integration | Vitest against the database matrix (`apps/server/test`, `STASHLEY_TEST_TARGETS`; locally `scripts/test-integration.sh`) | Introspection, grant parsing, read-only transactions, timeouts, generated SQL, write paths, error translation |
 | API | Fastify `inject()` | Route contracts, authorization, CSRF, rate limits, problem documents, tampered requests (foreign component IDs, extra fields, manipulated parameters and cursors) |
 | End-to-end | Playwright | One suite per acceptance criterion against the image, the seed database and a mock OIDC provider. Desktop and mobile (375 px) projects, axe scan on every visited page. |
 | Non-functional | Scripts in CI | Bundle budget, i18n completeness, licenses, SPDX headers, audit, Trivy. Nightly or manual load test: 50 concurrent users against a container limited to 2 vCPU and 2 GB. |

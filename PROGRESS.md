@@ -1,10 +1,10 @@
 # Progress
 
-**Current milestone:** M2 – Sign-in and accounts (in review)
+**Current milestone:** M3 – Connections and table access (in review)
 
-**Next step:** Push and confirm that CI is green. M2 is done after that. The M3 plan (connections and table access) waits for approval.
+**Next step:** Push and confirm that CI is green, including the new integration job against the four database versions. Then review M3 in a fresh session before M4 starts.
 
-**Recommended model strength for M3:** high. Review M2 in a fresh session before M3 starts; sign-in and sessions are security-critical.
+**Recommended model strength for M4:** strongest model, maximum effort.
 
 ## Milestones
 
@@ -12,8 +12,8 @@
 | --- | --- | --- | --- |
 | M0 | Architecture plan | Strongest, maximum effort | Done |
 | M1 | Scaffold and operations: monorepo, CI, Dockerfile, build script, metadata store, health, logs, backup and restore, i18n and design token foundations | Medium | Done |
-| M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | In review |
-| M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | Open |
+| M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | Done (review fixes in, CI pending) |
+| M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | In review |
 | M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Open |
 | M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | Open |
 | M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export | Medium (write path and base filters: high) | Open |
@@ -26,7 +26,7 @@ Status values: open, in progress, in review, done.
 ## Acceptance criteria
 
 - [x] `docker compose up` with values from `.env.example` installs the instance, and the first admin can sign in.
-- [ ] The admin connects the demo database, gets a warning for the deliberately over-privileged user, and grants table access with the demo ceilings.
+- [x] The admin connects the demo database, gets a warning for the deliberately over-privileged user, and grants table access with the demo ceilings. (Schema and users exist; demo data and `scripts/seed-demo.sh` follow in M9.)
 - [ ] The admin creates roles and test accounts. A first OIDC sign-in shows up as pending and gets approved.
 - [ ] A manager builds every demo page through the UI alone, checks each one with preview as role, and publishes it.
 - [ ] Every test account sees exactly the pages and components of its roles. Components without rights are absent from both the HTML and the API responses.
@@ -97,3 +97,13 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - While password sign-in is off, no change may leave the instance without an admin who can sign in.
   - Linking through `email_verified` stays as specified. Operators are responsible for connecting only providers that verify email addresses; the admin guide (M9) will say so.
   - Verified with 67 server tests and in the browser (invitation and password reset through fragment links).
+- 2026-11-13: M3 implemented.
+  - Connections with read, write and schema users; passwords encrypted per credential; TLS modes with optional CA; one pool per purpose with the session setup of §9.2; the self-connection guard pins the socket to the checked address.
+  - Grant check from `SHOW GRANTS` with roles: required, missing and excess privileges per user. The deliberately over-privileged demo user gets warnings for FILE, PROCESS, INSERT, UPDATE, DELETE, DROP, ALTER and access to `mysql.*`.
+  - Schema reading with keys, foreign keys, enum values and view base tables (MariaDB through the definition, MySQL through `VIEW_TABLE_USAGE`); diff, impact list, daily drift check.
+  - Table access with ceilings, view key columns, column exclusions (all or MCP only), display templates with one relation step, API names and the MCP flag; virtual relations, also one-to-one into views.
+  - `stashley rotate-key`, value encoding (§9.5) and admin pages for databases, sharing and relations.
+  - Verified: 85 server unit tests; 40 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7 (the whole demo schema exposed with its ceilings, TLS on MySQL); a browser run against MariaDB 12.3 with the grant warning, sharing of a table and a view, and a schema change with its impact.
+  - Decisions: the read user's required privileges include SHOW VIEW even for schemas without views; privileges of every granted role count, active or not, so warnings err on the safe side; a schema read stores a new snapshot only when the structure changed.
+  - Not yet verified: the new CI integration job, which needs a push.
+
