@@ -26,8 +26,8 @@ import { detectNetworkFilesystem } from './platform/fs-check.ts'
 import { createHttpServer } from './platform/http/server.ts'
 import { Scheduler, type JobDefinition } from './platform/jobs/scheduler.ts'
 
-const keyCheckPlaintext = 'stashley-key-check'
-const keyCheckAad = 'settings:crypto.keyCheck:value'
+export const keyCheckPlaintext = 'stashley-key-check'
+export const keyCheckAad = 'settings:crypto.keyCheck:value'
 const day = 24 * 60 * 60 * 1000
 
 export interface Server {

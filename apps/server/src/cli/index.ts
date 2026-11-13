@@ -6,7 +6,12 @@ import path from 'node:path'
 import { Command, Option } from 'commander'
 import { backupDir, createServer } from '../app.ts'
 import { ConfigError, loadConfig, type AppConfig } from '../config/env.ts'
-import { backupMetastore, restoreMetastore, RestoreError } from '../metastore/backup.ts'
+import {
+  backupFileName,
+  backupMetastore,
+  restoreMetastore,
+  RestoreError,
+} from '../metastore/backup.ts'
 import { metastorePath, openMetastore } from '../metastore/db.ts'
 import { isServerRunning } from '../metastore/heartbeat.ts'
 import { knownMigrationNames, migrateToLatest } from '../metastore/migrate.ts'
@@ -14,9 +19,18 @@ import { cliActor } from '../modules/audit/audit-log.ts'
 import { AppError } from '../platform/http/problem.ts'
 import { createKeyRing } from '../platform/crypto/keys.ts'
 import { createServices, type Services } from '../services.ts'
-import { verifyKey } from '../app.ts'
+import { keyCheckAad, keyCheckPlaintext, KeyMismatchError, verifyKey } from '../app.ts'
+import { rotateSecrets } from '../modules/system/rotate-key.ts'
 
 const shutdownGraceMs = 30_000
+
+/** A failed command whose message is meant for the operator. */
+class CliError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'CliError'
+  }
+}
 
 function config(): AppConfig {
   return loadConfig()
@@ -87,6 +101,45 @@ async function restore(file: string, options: { force?: boolean }): Promise<void
   console.log(`Restored ${file}`)
 }
 
+async function rotateKey(options: { newKeyFile: string; force?: boolean }): Promise<void> {
+  const cfg = config()
+  const newKey = readFileSync(options.newKeyFile === '-' ? 0 : options.newKeyFile, 'utf8').replace(
+    /\r?\n$/,
+    '',
+  )
+  if (Buffer.byteLength(newKey, 'utf8') < 32) {
+    throw new CliError('The new key must be at least 32 bytes.')
+  }
+  if (newKey === cfg.secretKey) throw new CliError('The new key equals the current key.')
+  const store = openMetastore(metastorePath(cfg.dataDir))
+  try {
+    const running = await isServerRunning(store.db).catch(() => false)
+    if (running && options.force !== true) {
+      throw new CliError('The server is running. Stop it first, or pass --force.')
+    }
+    await migrateToLatest(store, backupDir(cfg))
+    const current = createKeyRing(cfg.secretKey)
+    const services = createServices(cfg, store, current, cliLog)
+    await verifyKey(services.settings, current)
+    const backup = await backupMetastore(store, backupDir(cfg), backupFileName('pre-rotate-key'))
+    console.log(`Backup written to ${backup}`)
+    const result = await rotateSecrets(store.db, current, createKeyRing(newKey), {
+      plaintext: keyCheckPlaintext,
+      aad: keyCheckAad,
+    })
+    await services.audit.record(cliActor, {
+      action: 'settings.key_rotated',
+      details: { secrets: result.secrets, sessions: result.sessions },
+    })
+    console.log(`Re-encrypted ${result.secrets} secrets and ended ${result.sessions} sessions.`)
+    console.log(
+      'Next: set APP_SECRET_KEY (or APP_SECRET_KEY_FILE) to the new key and start the server.',
+    )
+  } finally {
+    await store.close()
+  }
+}
+
 async function migrate(): Promise<void> {
   const cfg = config()
   const store = openMetastore(metastorePath(cfg.dataDir))
@@ -155,6 +208,13 @@ program
 
 program.command('migrate').description('Apply pending metadata store migrations').action(migrate)
 
+program
+  .command('rotate-key')
+  .description('Re-encrypt stored secrets with a new APP_SECRET_KEY (server must be stopped)')
+  .requiredOption('--new-key-file <file>', 'file with the new key, or - for stdin')
+  .option('--force', 'skip the running-server check')
+  .action(rotateKey)
+
 const user = program.command('user').description('Manage accounts')
 
 user
@@ -210,7 +270,12 @@ program
   })
 
 program.parseAsync().catch((error: unknown) => {
-  if (error instanceof ConfigError || error instanceof RestoreError) {
+  if (
+    error instanceof ConfigError ||
+    error instanceof RestoreError ||
+    error instanceof CliError ||
+    error instanceof KeyMismatchError
+  ) {
     console.error(error.message)
   } else if (error instanceof AppError) {
     const fields = error.errors?.map((e) => `${e.field}: ${e.code}`).join(', ')
