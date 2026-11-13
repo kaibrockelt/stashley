@@ -25,6 +25,7 @@ export const errorCodes = {
   local_login_disabled: { status: 403, title: 'Password sign-in disabled' },
   link_invalid: { status: 410, title: 'Link invalid or expired' },
   last_admin: { status: 409, title: 'Last active admin' },
+  last_sign_in_path: { status: 409, title: 'No admin could sign in afterwards' },
   provider_unreachable: { status: 422, title: 'Identity provider unreachable' },
   internal_error: { status: 500, title: 'Internal error' },
   service_unavailable: { status: 503, title: 'Service unavailable' },

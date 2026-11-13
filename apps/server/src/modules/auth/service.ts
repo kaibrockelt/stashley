@@ -3,12 +3,13 @@
 import type { InvitationInfo, MfaSetup, RecoveryCodes } from '@stashley/shared'
 import type { z } from 'zod'
 import type { invitationAccept, profileUpdate } from '@stashley/shared'
+import type { FastifyBaseLogger } from 'fastify'
 import type { Kysely } from 'kysely'
 import { v7 as uuidv7 } from 'uuid'
 import { writeTransaction } from '../../metastore/db.ts'
 import type { Database, SessionState } from '../../metastore/schema.ts'
 import type { SettingsRepository } from '../../metastore/settings.ts'
-import { systemClock, type Clock } from '../../platform/clock.ts'
+import { hour, systemClock, type Clock } from '../../platform/clock.ts'
 import { decrypt, encrypt, type KeyRing } from '../../platform/crypto/keys.ts'
 import { AppError } from '../../platform/http/problem.ts'
 import { fieldError } from '../../platform/http/validation.ts'
@@ -16,7 +17,7 @@ import type { Actor, AuditLog } from '../audit/audit-log.ts'
 import { renderMail, type Mailer } from '../mail/mailer.ts'
 import { normalizeEmail, type UserRow, type UsersRepository } from '../users/repository.ts'
 import type { AuthContext } from './context.ts'
-import { FailureLimiter } from './failure-limiter.ts'
+import { FailureLimiter, WindowLimiter } from './failure-limiter.ts'
 import { checkPasswordPolicy, hashPassword, needsRehash, verifyPassword } from './passwords.ts'
 import type { SessionService } from './sessions.ts'
 import {
@@ -50,6 +51,7 @@ export interface AuthDeps {
   audit: AuditLog
   mailer: Mailer
   appUrl: (path: string) => string
+  log: FastifyBaseLogger
   clock?: Clock
 }
 
@@ -62,12 +64,16 @@ export class AuthService {
   private readonly clock: Clock
   readonly accountLimiter: FailureLimiter
   readonly mfaLimiter: FailureLimiter
+  /** Password reset emails per address. */
+  readonly resetLimiter: WindowLimiter
+  private readonly background = new Set<Promise<void>>()
 
   constructor(deps: AuthDeps) {
     this.deps = deps
     this.clock = deps.clock ?? systemClock
     this.accountLimiter = new FailureLimiter({ clock: this.clock })
     this.mfaLimiter = new FailureLimiter({ clock: this.clock })
+    this.resetLimiter = new WindowLimiter({ max: 3, windowMs: hour, clock: this.clock })
   }
 
   private actor(user: UserRow | undefined, meta: RequestMeta, label?: string): Actor {
@@ -109,19 +115,27 @@ export class AuthService {
     const { enabled } = await this.deps.settings.get('auth.localLogin')
     if (!enabled) throw new AppError('local_login_disabled')
     const key = normalizeEmail(email)
-    if (this.accountLimiter.retryAfter(key) > 0) throw new AppError('rate_limited')
+    const failed = (user: UserRow | undefined, reason: string) =>
+      this.deps.audit.record(this.actor(user, meta, key), {
+        action: 'auth.sign_in.failed',
+        details: { method: 'password', reason },
+      })
+    if (this.accountLimiter.retryAfter(key) > 0) {
+      await failed(undefined, 'rate_limited')
+      throw new AppError('rate_limited')
+    }
 
     const user = await this.deps.users.findByEmail(key)
     const valid = await verifyPassword(user?.password_hash ?? null, password)
     if (user === undefined || !valid) {
       this.accountLimiter.fail(key)
-      await this.deps.audit.record(this.actor(user, meta, key), {
-        action: 'auth.sign_in.failed',
-        details: { method: 'password' },
-      })
+      await failed(user, 'invalid_credentials')
       throw new AppError('invalid_credentials')
     }
-    if (user.status === 'disabled') throw new AppError('account_disabled')
+    if (user.status === 'disabled') {
+      await failed(user, 'account_disabled')
+      throw new AppError('account_disabled')
+    }
     this.accountLimiter.reset(key)
     if (user.password_hash !== null && needsRehash(user.password_hash)) {
       await this.deps.users.update(
@@ -140,7 +154,29 @@ export class AuthService {
     return issued
   }
 
-  /** Accepts a TOTP code or an unused recovery code. */
+  /**
+   * Accepts a TOTP code or an unused recovery code. Failures count per account, so a new
+   * sign-in does not reset them, and the routes that change 2FA settings share the limit.
+   */
+  private async checkSecondFactor(user: UserRow, code: string, meta: RequestMeta): Promise<void> {
+    if (this.mfaLimiter.retryAfter(user.id) > 0) {
+      await this.deps.audit.record(this.actor(user, meta), {
+        action: 'auth.mfa.failed',
+        details: { reason: 'rate_limited' },
+      })
+      throw new AppError('rate_limited')
+    }
+    if (!(await this.verifySecondFactor(user, code))) {
+      this.mfaLimiter.fail(user.id)
+      await this.deps.audit.record(this.actor(user, meta), {
+        action: 'auth.mfa.failed',
+        details: { reason: 'invalid_code' },
+      })
+      throw new AppError('invalid_code')
+    }
+    this.mfaLimiter.reset(user.id)
+  }
+
   private async verifySecondFactor(user: UserRow, code: string): Promise<boolean> {
     const trimmed = code.trim()
     if (/^\d{6}$/.test(trimmed)) {
@@ -148,8 +184,14 @@ export class AuthService {
       const secret = decrypt(this.deps.keys, user.totp_secret, totpAad(user.id))
       const step = await verifyTotp(secret, trimmed, user.totp_last_step)
       if (step === undefined) return false
-      await this.deps.users.update(user.id, { totp_last_step: step }, this.clock())
-      return true
+      // The step only moves forward, so two parallel requests cannot both use one code.
+      const claimed = await this.deps.db
+        .updateTable('users')
+        .set({ totp_last_step: step, updated_at: this.clock() })
+        .where('id', '=', user.id)
+        .where((eb) => eb.or([eb('totp_last_step', 'is', null), eb('totp_last_step', '<', step)]))
+        .executeTakeFirst()
+      return Number(claimed.numUpdatedRows) === 1
     }
     const used = await this.deps.db
       .updateTable('user_recovery_codes')
@@ -162,14 +204,7 @@ export class AuthService {
   }
 
   async completeMfa(auth: AuthContext, code: string, meta: RequestMeta): Promise<IssuedSession> {
-    const key = auth.session.id_hash
-    if (this.mfaLimiter.retryAfter(key) > 0) throw new AppError('rate_limited')
-    if (!(await this.verifySecondFactor(auth.user, code))) {
-      this.mfaLimiter.fail(key)
-      await this.deps.audit.record(this.actor(auth.user, meta), { action: 'auth.mfa.failed' })
-      throw new AppError('invalid_code')
-    }
-    this.mfaLimiter.reset(key)
+    await this.checkSecondFactor(auth.user, code, meta)
     const session = await this.deps.sessions.rotate(auth.session, 'active', meta.ip, meta.userAgent)
     await this.deps.users.update(auth.user.id, { last_login_at: this.clock() }, this.clock())
     await this.deps.audit.record(this.actor(auth.user, meta), {
@@ -183,7 +218,27 @@ export class AuthService {
     await this.deps.sessions.revoke(auth.session.id_hash)
   }
 
-  async requestPasswordReset(email: string, meta: RequestMeta): Promise<void> {
+  /**
+   * Answers at once and sends the email in the background, so the response time does not tell
+   * whether the account exists. Requests per address are limited.
+   */
+  requestPasswordReset(email: string, meta: RequestMeta): void {
+    const key = normalizeEmail(email)
+    if (!this.resetLimiter.hit(key)) return
+    const task = this.sendPasswordReset(key, meta)
+      .catch((error: unknown) => {
+        this.deps.log.error({ err: error }, 'password reset request failed')
+      })
+      .finally(() => this.background.delete(task))
+    this.background.add(task)
+  }
+
+  /** Waits for background work such as reset emails; used on shutdown and in tests. */
+  async idle(): Promise<void> {
+    await Promise.all([...this.background])
+  }
+
+  private async sendPasswordReset(email: string, meta: RequestMeta): Promise<void> {
     const user = await this.deps.users.findByEmail(email)
     if (user === undefined || user.status !== 'active' || !this.deps.mailer.enabled) return
     const token = await this.deps.tokens.issue(user.id, 'password_reset', null)
@@ -192,7 +247,7 @@ export class AuthService {
         'password_reset',
         user.locale,
         user.email,
-        this.deps.appUrl(`/password-reset/${token}`),
+        this.deps.appUrl(`/password-reset#${token}`),
         user.display_name,
       ),
     )
@@ -230,10 +285,10 @@ export class AuthService {
   }
 
   async acceptInvitation(
-    token: string,
     input: z.infer<typeof invitationAccept>,
     meta: RequestMeta,
   ): Promise<IssuedSession> {
+    const { token } = input
     const info = await this.invitationInfo(token)
     checkPasswordPolicy(input.password, info.email)
     const hash = await hashPassword(input.password)
@@ -380,7 +435,7 @@ export class AuthService {
     const { enforced } = await this.deps.settings.get('auth.twoFactor')
     if (enforced) throw new AppError('forbidden')
     if (auth.user.totp_enabled_at === null) throw new AppError('conflict')
-    if (!(await this.verifySecondFactor(auth.user, code))) throw new AppError('invalid_code')
+    await this.checkSecondFactor(auth.user, code, meta)
     await this.clearMfa(auth.user.id)
     await this.deps.audit.record(this.actor(auth.user, meta), {
       action: 'user.mfa_disabled',
@@ -406,7 +461,7 @@ export class AuthService {
     meta: RequestMeta,
   ): Promise<RecoveryCodes> {
     if (auth.user.totp_enabled_at === null) throw new AppError('conflict')
-    if (!(await this.verifySecondFactor(auth.user, code))) throw new AppError('invalid_code')
+    await this.checkSecondFactor(auth.user, code, meta)
     const recoveryCodes = await this.replaceRecoveryCodes(auth.user.id)
     await this.deps.audit.record(this.actor(auth.user, meta), {
       action: 'user.recovery_codes_regenerated',

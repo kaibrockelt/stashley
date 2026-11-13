@@ -24,6 +24,7 @@
   "error.invalidCode": "Ungültiger Code.",
   "error.invalidCredentials": "E-Mail-Adresse oder Passwort falsch.",
   "error.lastAdmin": "Mindestens ein aktiver Admin ist erforderlich.",
+  "error.lastSignInPath": "Die Anmeldung mit Passwort ist ausgeschaltet, und nach dieser Änderung könnte sich kein Admin mehr anmelden. Schalten Sie zuerst die Anmeldung mit Passwort ein oder verknüpfen Sie einen weiteren Admin mit einem Anbieter.",
   "error.linkInvalid": "Dieser Link ist ungültig oder abgelaufen.",
   "error.localLoginDisabled": "Die Anmeldung mit Passwort ist deaktiviert.",
   "error.notFound": "Nicht gefunden.",

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import {
   invitationAccept,
+  invitationLookup,
   loginRequest,
   mfaConfirm,
   mfaRequest,
@@ -43,7 +44,6 @@ function meta(request: FastifyRequest): RequestMeta {
 }
 
 const strictLimit = { rateLimit: { max: 10, timeWindow: '1 minute' } }
-const tokenParams = z.object({ token: z.string().min(16).max(100) })
 const slugParams = z.object({ slug: z.string().regex(/^[a-z0-9-]{1,40}$/) })
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): void {
@@ -92,7 +92,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
 
   app.post('/internal/auth/password-reset', { config: strictLimit }, async (request, reply) => {
     const body = parse(passwordResetRequest, request.body)
-    await deps.auth.requestPasswordReset(body.email, meta(request))
+    deps.auth.requestPasswordReset(body.email, meta(request))
     return reply.code(202).send()
   })
 
@@ -106,15 +106,15 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     },
   )
 
-  app.get('/internal/invitations/:token', { config: strictLimit }, async (request) => {
-    const { token } = parse(tokenParams, request.params)
+  // Tokens come in the body, so they never appear in request logs.
+  app.post('/internal/invitations/lookup', { config: strictLimit }, async (request) => {
+    const { token } = parse(invitationLookup, request.body)
     return deps.auth.invitationInfo(token)
   })
 
-  app.post('/internal/invitations/:token', { config: strictLimit }, async (request, reply) => {
-    const { token } = parse(tokenParams, request.params)
+  app.post('/internal/invitations/accept', { config: strictLimit }, async (request, reply) => {
     const body = parse(invitationAccept, request.body)
-    return issue(reply, await deps.auth.acceptInvitation(token, body, meta(request)))
+    return issue(reply, await deps.auth.acceptInvitation(body, meta(request)))
   })
 
   app.get('/auth/oidc/:slug/start', { config: strictLimit }, async (request, reply) => {

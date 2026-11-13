@@ -46,7 +46,7 @@ export class TestClient {
       url,
       headers: {
         cookie: this.cookieHeader(),
-        ...(method !== 'GET' && { 'x-csrf-token': this.csrf }),
+        ...(method !== 'GET' && { 'x-csrf-token': this.csrf, 'sec-fetch-site': 'same-origin' }),
         ...(body !== undefined && { 'content-type': 'application/json' }),
         ...headers,
       },

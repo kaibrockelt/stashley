@@ -19,6 +19,13 @@ export interface HttpOptions {
   quiet?: boolean
 }
 
+/** Link tokens belong in the URL fragment; a token pasted into a path is still never logged. */
+const tokenPath = /^(\/(?:internal\/)?(?:invitations?|password-reset))\/[^/?]{16,}/
+
+export function logPath(url: string): string {
+  return (url.split('?')[0] ?? '').replace(tokenPath, '$1/[redacted]')
+}
+
 export function loggerOptions(
   level: string,
   quiet = false,
@@ -33,7 +40,7 @@ export function loggerOptions(
     serializers: {
       // Query strings can carry filter values from users; log the path only.
       req(request: { method: string; url: string; ip?: string }) {
-        return { method: request.method, path: request.url.split('?')[0], ip: request.ip }
+        return { method: request.method, path: logPath(request.url), ip: request.ip }
       },
     },
   }

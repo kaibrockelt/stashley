@@ -6,6 +6,7 @@ import type { Kysely } from 'kysely'
 import * as client from 'openid-client'
 import { v7 as uuidv7 } from 'uuid'
 import type { z } from 'zod'
+import { writeTransaction } from '../../metastore/db.ts'
 import type { Database, IdentityProvidersTable } from '../../metastore/schema.ts'
 import type { SettingsRepository } from '../../metastore/settings.ts'
 import { minute, systemClock, type Clock } from '../../platform/clock.ts'
@@ -16,6 +17,7 @@ import type { Actor, AuditLog } from '../audit/audit-log.ts'
 import { normalizeEmail, type UserRow, type UsersRepository } from '../users/repository.ts'
 import type { IssuedSession, RequestMeta } from './service.ts'
 import type { SessionService } from './sessions.ts'
+import { ensureAdminSignInPath } from './sign-in-paths.ts'
 
 export type ProviderRow = IdentityProvidersTable
 
@@ -240,7 +242,6 @@ export class OidcService {
       .where('id', '!=', id)
       .executeTakeFirst()
     if (clash !== undefined) throw fieldError('slug', 'taken')
-    if (!input.enabled && row.enabled === 1) await this.ensureNotLastSignInPath(id)
     const next: ProviderRow = {
       ...row,
       slug: input.slug,
@@ -258,7 +259,12 @@ export class OidcService {
       enabled: input.enabled ? 1 : 0,
       updated_at: this.clock(),
     }
-    await this.deps.db.updateTable('identity_providers').set(next).where('id', '=', id).execute()
+    await writeTransaction(this.deps.db, async (trx) => {
+      if (!input.enabled && row.enabled === 1) {
+        await ensureAdminSignInPath(trx, this.deps.settings, { providerId: id })
+      }
+      await trx.updateTable('identity_providers').set(next).where('id', '=', id).execute()
+    })
     const changes: Record<string, [unknown, unknown]> = {}
     for (const key of [
       'slug',
@@ -288,25 +294,16 @@ export class OidcService {
       .where('id', '=', id)
       .executeTakeFirst()
     if (row === undefined) throw new AppError('not_found')
-    if (row.enabled === 1) await this.ensureNotLastSignInPath(id)
-    await this.deps.db.deleteFrom('identity_providers').where('id', '=', id).execute()
+    await writeTransaction(this.deps.db, async (trx) => {
+      if (row.enabled === 1) {
+        await ensureAdminSignInPath(trx, this.deps.settings, { providerId: id })
+      }
+      await trx.deleteFrom('identity_providers').where('id', '=', id).execute()
+    })
     await this.deps.audit.record(actor, {
       action: 'identity_provider.deleted',
       subject: { kind: 'identity_provider', id, label: row.display_name },
     })
-  }
-
-  /** With password sign-in off, the last enabled provider cannot be removed or disabled. */
-  private async ensureNotLastSignInPath(id: string): Promise<void> {
-    const { enabled } = await this.deps.settings.get('auth.localLogin')
-    if (enabled) return
-    const others = await this.deps.db
-      .selectFrom('identity_providers')
-      .select('id')
-      .where('enabled', '=', 1)
-      .where('id', '!=', id)
-      .execute()
-    if (others.length === 0) throw new AppError('conflict')
   }
 
   private signState(payload: FlowState): string {
@@ -374,6 +371,35 @@ export class OidcService {
     stateCookie: string | undefined,
     meta: RequestMeta,
   ): Promise<IssuedSession> {
+    const seen: { email?: string; user?: UserRow } = {}
+    try {
+      return await this.completeCallback(slug, callbackUrl, stateCookie, meta, seen)
+    } catch (error) {
+      if (error instanceof OidcError) {
+        await this.deps.audit.record(
+          {
+            kind: 'user',
+            id: seen.user?.id ?? null,
+            label: seen.user?.email ?? seen.email ?? null,
+            ip: meta.ip,
+          },
+          {
+            action: 'auth.sign_in.failed',
+            details: { method: 'oidc', provider: slug, reason: error.code },
+          },
+        )
+      }
+      throw error
+    }
+  }
+
+  private async completeCallback(
+    slug: string,
+    callbackUrl: URL,
+    stateCookie: string | undefined,
+    meta: RequestMeta,
+    seen: { email?: string; user?: UserRow },
+  ): Promise<IssuedSession> {
     const flow = this.readState(stateCookie)
     if (flow === undefined || flow.provider !== slug) throw new OidcError('state_invalid')
     const provider = await this.provider(slug)
@@ -383,7 +409,9 @@ export class OidcService {
     } catch {
       throw new OidcError('sign_in_failed')
     }
+    if (typeof claims.email === 'string') seen.email = normalizeEmail(claims.email)
     const user = await this.matchAccount(provider, claims, meta)
+    seen.user = user
     if (user.status === 'disabled') throw new OidcError('account_disabled')
     const session = await this.deps.sessions.create({
       userId: user.id,
@@ -434,6 +462,8 @@ export class OidcService {
     let user = await this.deps.users.findByEmail(email)
     if (user !== undefined) {
       if (!verified) throw new OidcError('email_unverified')
+      // A disabled account gets no new identity.
+      if (user.status === 'disabled') throw new OidcError('account_disabled')
     } else {
       const domain = email.split('@')[1] ?? ''
       const approved = (JSON.parse(provider.auto_approve_domains) as string[]).includes(domain)

@@ -18,6 +18,7 @@ import {
   InvitationPage,
   PasswordResetComplete,
   PasswordResetRequest,
+  useFragmentToken,
 } from '../features/auth/links.tsx'
 import { MfaChallenge, MfaRequiredSetup, Pending } from '../features/auth/mfa.tsx'
 import { SignIn } from '../features/auth/sign-in.tsx'
@@ -53,11 +54,6 @@ function ErrorState(props: ErrorComponentProps) {
       </button>
     </StateView>
   )
-}
-
-/** Token of the invitation and password reset routes; these pages remount on navigation. */
-function lastPathSegment(): string {
-  return decodeURIComponent(window.location.pathname.split('/').at(-1) ?? '')
 }
 
 const session = () => queryClient.ensureQueryData({ queryKey: sessionKey, queryFn: fetchSession })
@@ -121,25 +117,19 @@ const authRoutes = [
   }),
   createRoute({
     getParentRoute: () => authLayout,
-    path: '/invitation/$token',
+    path: '/invitation',
     component: function InvitationRoute() {
-      const token = lastPathSegment()
-      return <InvitationPage token={token} />
+      return <InvitationPage token={useFragmentToken()} />
     },
     beforeLoad: anonymous,
   }),
   createRoute({
     getParentRoute: () => authLayout,
     path: '/password-reset',
-    component: PasswordResetRequest,
-    beforeLoad: anonymous,
-  }),
-  createRoute({
-    getParentRoute: () => authLayout,
-    path: '/password-reset/$token',
+    // With a token in the fragment the page sets the new password, otherwise it requests a link.
     component: function PasswordResetRoute() {
-      const token = lastPathSegment()
-      return <PasswordResetComplete token={token} />
+      const token = useFragmentToken()
+      return token === '' ? <PasswordResetRequest /> : <PasswordResetComplete token={token} />
     },
     beforeLoad: anonymous,
   }),

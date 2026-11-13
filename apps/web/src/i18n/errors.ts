@@ -13,6 +13,7 @@ const errorMessages: Partial<Record<ErrorCode, MessageId>> = {
   local_login_disabled: 'error.localLoginDisabled',
   link_invalid: 'error.linkInvalid',
   last_admin: 'error.lastAdmin',
+  last_sign_in_path: 'error.lastSignInPath',
   provider_unreachable: 'error.providerUnreachable',
   forbidden: 'error.forbidden',
   not_found: 'error.notFound',

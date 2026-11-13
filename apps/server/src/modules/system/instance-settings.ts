@@ -6,6 +6,7 @@ import type { z } from 'zod'
 import type { Database } from '../../metastore/schema.ts'
 import type { SettingsRepository } from '../../metastore/settings.ts'
 import { fieldError } from '../../platform/http/validation.ts'
+import { oidcAdminRemains } from '../auth/sign-in-paths.ts'
 import type { Actor, AuditLog } from '../audit/audit-log.ts'
 
 export class InstanceSettingsService {
@@ -35,36 +36,15 @@ export class InstanceSettingsService {
     }
   }
 
-  /**
-   * Password sign-in can be turned off only while an enabled identity provider exists and at
-   * least one active admin can sign in through it.
-   */
-  private async canDisableLocalLogin(): Promise<boolean> {
-    const provider = await this.db
-      .selectFrom('identity_providers')
-      .select('id')
-      .where('enabled', '=', 1)
-      .executeTakeFirst()
-    if (provider === undefined) return false
-    const admin = await this.db
-      .selectFrom('users')
-      .innerJoin('user_identities', 'user_identities.user_id', 'users.id')
-      .innerJoin('identity_providers', 'identity_providers.id', 'user_identities.provider_id')
-      .select('users.id')
-      .where('users.system_role', '=', 'admin')
-      .where('users.status', '=', 'active')
-      .where('identity_providers.enabled', '=', 1)
-      .executeTakeFirst()
-    return admin !== undefined
-  }
-
   async update(
     actor: Actor,
     input: z.infer<typeof instanceSettingsUpdate>,
   ): Promise<InstanceSettings> {
     const before = await this.get()
     if (input.localLoginEnabled === false && before.localLoginEnabled) {
-      if (!(await this.canDisableLocalLogin()))
+      // Password sign-in can be turned off only while an active admin can sign in through an
+      // enabled identity provider.
+      if (!(await oidcAdminRemains(this.db)))
         throw fieldError('localLoginEnabled', 'requirements_not_met')
     }
     const next: InstanceSettings = {

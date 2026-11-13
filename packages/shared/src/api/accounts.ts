@@ -64,8 +64,12 @@ export interface SessionResponse {
 export const loginRequest = z.object({ email, password })
 export const mfaRequest = z.object({ code })
 export const passwordResetRequest = z.object({ email })
-export const passwordResetComplete = z.object({ token: z.string().min(16), password: newPassword })
+/** One-time link tokens travel in the URL fragment and the request body, never in a path. */
+const linkToken = z.string().min(16).max(100)
+export const passwordResetComplete = z.object({ token: linkToken, password: newPassword })
+export const invitationLookup = z.object({ token: linkToken })
 export const invitationAccept = z.object({
+  token: linkToken,
   password: newPassword,
   displayName: displayName.optional(),
 })

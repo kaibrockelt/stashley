@@ -50,10 +50,12 @@ export class SettingsRepository {
     this.db = db
   }
 
+  /** `db` is a transaction handle when the read is part of one. */
   async get<K extends SettingKey>(
     key: K,
+    db: Kysely<Database> = this.db,
   ): Promise<SettingValue<K> | Definitions[K]['defaultValue']> {
-    const row = await this.db
+    const row = await db
       .selectFrom('settings')
       .select('value')
       .where('key', '=', key)

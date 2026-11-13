@@ -5,6 +5,7 @@ import type { Kysely } from 'kysely'
 import type { z } from 'zod'
 import { writeTransaction } from '../../metastore/db.ts'
 import type { Database } from '../../metastore/schema.ts'
+import type { SettingsRepository } from '../../metastore/settings.ts'
 import { systemClock, type Clock } from '../../platform/clock.ts'
 import { AppError } from '../../platform/http/problem.ts'
 import { fieldError } from '../../platform/http/validation.ts'
@@ -12,12 +13,14 @@ import type { Actor, AuditLog } from '../audit/audit-log.ts'
 import { checkPasswordPolicy, hashPassword } from '../auth/passwords.ts'
 import type { SessionService } from '../auth/sessions.ts'
 import type { AuthService } from '../auth/service.ts'
+import { ensureAdminSignInPath } from '../auth/sign-in-paths.ts'
 import type { UserTokens } from '../auth/user-tokens.ts'
 import { renderMail, type Mailer } from '../mail/mailer.ts'
 import type { UserRow, UsersRepository } from './repository.ts'
 
 export interface UsersDeps {
   db: Kysely<Database>
+  settings: SettingsRepository
   users: UsersRepository
   sessions: SessionService
   tokens: UserTokens
@@ -57,7 +60,7 @@ export class UsersService {
       template === 'invitation' ? 'invitation' : 'password_reset',
       createdBy,
     )
-    const path = template === 'invitation' ? `/invitation/${token}` : `/password-reset/${token}`
+    const path = template === 'invitation' ? `/invitation#${token}` : `/password-reset#${token}`
     const link = this.deps.appUrl(path)
     const emailed = await this.deps.mailer.send(
       renderMail(template, user.locale, user.email, link, user.display_name),
@@ -114,6 +117,7 @@ export class UsersService {
       if (losesAdmin && (await this.deps.users.countActiveAdmins(trx, user.id)) === 0) {
         throw new AppError('last_admin')
       }
+      if (losesAdmin) await ensureAdminSignInPath(trx, this.deps.settings, { userId: user.id })
       const diff: Record<string, [unknown, unknown]> = {}
       if (next.display_name !== user.display_name)
         diff.displayName = [user.display_name, next.display_name]
@@ -166,6 +170,13 @@ export class UsersService {
     return result
   }
 
+  /** CLI: clears 2FA of an account found by email, e.g. when the only admin lost the device. */
+  async resetMfaByEmail(actor: Actor, email: string): Promise<void> {
+    const user = await this.deps.users.findByEmail(email)
+    if (user === undefined) throw new AppError('not_found')
+    await this.resetMfa(actor, user.id)
+  }
+
   async resetMfa(actor: Actor, id: string): Promise<void> {
     const user = await this.require(id)
     await this.deps.auth.clearMfa(user.id)
@@ -175,12 +186,15 @@ export class UsersService {
 
   async removeIdentity(actor: Actor, userId: string, identityId: string): Promise<void> {
     const user = await this.require(userId)
-    const result = await this.deps.db
-      .deleteFrom('user_identities')
-      .where('id', '=', identityId)
-      .where('user_id', '=', userId)
-      .executeTakeFirst()
-    if (Number(result.numDeletedRows) === 0) throw new AppError('not_found')
+    await writeTransaction(this.deps.db, async (trx) => {
+      await ensureAdminSignInPath(trx, this.deps.settings, { identityId })
+      const result = await trx
+        .deleteFrom('user_identities')
+        .where('id', '=', identityId)
+        .where('user_id', '=', userId)
+        .executeTakeFirst()
+      if (Number(result.numDeletedRows) === 0) throw new AppError('not_found')
+    })
     await this.deps.audit.record(actor, {
       action: 'user.identity_removed',
       subject: subject(user),
@@ -238,7 +252,7 @@ export class UsersService {
         action: 'user.password_reset_issued',
         subject: subject(user),
       })
-      return { link: this.deps.appUrl(`/password-reset/${token}`) }
+      return { link: this.deps.appUrl(`/password-reset#${token}`) }
     }
     checkPasswordPolicy(password, user.email)
     await this.deps.users.update(

@@ -24,6 +24,7 @@
   "error.invalidCode": "Invalid code.",
   "error.invalidCredentials": "Incorrect email or password.",
   "error.lastAdmin": "At least one active admin is required.",
+  "error.lastSignInPath": "Password sign-in is off, and no admin could sign in after this change. Turn password sign-in on first, or link another admin to an identity provider.",
   "error.linkInvalid": "This link is invalid or has expired.",
   "error.localLoginDisabled": "Password sign-in is disabled.",
   "error.notFound": "Not found.",

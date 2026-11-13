@@ -188,6 +188,15 @@ user
     console.log(result.link === null ? `Password reset for ${options.email}` : result.link)
   })
 
+user
+  .command('reset-mfa')
+  .description('Turn off two-factor authentication of an account and end its sessions')
+  .requiredOption('--email <email>', 'email address')
+  .action(async (options: { email: string }) => {
+    await withServices((services) => services.usersService.resetMfaByEmail(cliActor, options.email))
+    console.log(`Two-factor authentication reset for ${options.email}`)
+  })
+
 program
   .command('auth')
   .description('Sign-in settings')

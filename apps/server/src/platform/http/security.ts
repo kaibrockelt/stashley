@@ -12,9 +12,17 @@ import { AppError } from './problem.ts'
 
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS'])
 
+/**
+ * The route pattern the router matched. The raw URL is not used for these checks: the router
+ * decodes it, so `/%69nternal/…` would reach an internal route without passing the checks.
+ */
+export function routePath(request: FastifyRequest): string {
+  return request.routeOptions.url ?? request.url
+}
+
 /** Paths whose requests carry the session cookie. */
-function usesSession(url: string): boolean {
-  return url.startsWith('/internal/') || url.startsWith('/auth/')
+function usesSession(path: string): boolean {
+  return path.startsWith('/internal/') || path.startsWith('/auth/')
 }
 
 export function csrfUserInfo(request: FastifyRequest): string {
@@ -44,7 +52,7 @@ export async function registerSecurity(
   app.decorateRequest('auth', null)
 
   app.addHook('onRequest', async (request) => {
-    if (!usesSession(request.url)) return
+    if (!usesSession(routePath(request))) return
     const idHash = deps.sessions.parseCookie(request.cookies[deps.cookie.name])
     if (idHash === undefined) return
     const resolved = await deps.sessions.resolve(idHash)
@@ -54,15 +62,17 @@ export async function registerSecurity(
   })
 
   // Every state-changing internal request needs a same-origin context and a CSRF token
-  // bound to the current session.
+  // bound to the current session. Browsers send `Sec-Fetch-Site` or `Origin` on such
+  // requests; a request with neither is not from the web client.
   app.addHook('preHandler', (request, reply, done) => {
-    if (!request.url.startsWith('/internal/') || safeMethods.has(request.method)) {
+    if (!routePath(request).startsWith('/internal/') || safeMethods.has(request.method)) {
       done()
       return
     }
     const site = request.headers['sec-fetch-site']
     const origin = request.headers.origin
     if (
+      (site === undefined && origin === undefined) ||
       (site !== undefined && site !== 'same-origin') ||
       (origin !== undefined && origin !== deps.origin)
     ) {
@@ -74,6 +84,8 @@ export async function registerSecurity(
   })
 
   app.addHook('onSend', async (request, reply: FastifyReply) => {
-    if (request.url.startsWith('/internal/')) void reply.header('cache-control', 'no-store')
+    if (routePath(request).startsWith('/internal/')) {
+      void reply.header('cache-control', 'no-store')
+    }
   })
 }

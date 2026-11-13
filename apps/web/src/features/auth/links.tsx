@@ -3,13 +3,38 @@
 import type { InvitationInfo } from '@stashley/shared'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api, ApiError } from '../../api/client.ts'
 import { useRefreshSession } from '../../api/session.ts'
 import { useErrorText } from '../../i18n/errors.ts'
 import { useT } from '../../i18n/use-t.ts'
 import { Button, Form, Notice, TextField } from '../../ui/controls.tsx'
 import { AuthText, AuthTitle } from './layout.tsx'
+
+/**
+ * Token of an invitation or password reset link. It travels in the URL fragment, so it never
+ * reaches server logs; it is removed from the address bar once read.
+ */
+export function useFragmentToken(): string {
+  const [token, setToken] = useState(readFragment)
+  useEffect(() => {
+    // Also picks up a link opened while the page is already showing, which only fires `hashchange`.
+    const take = () => {
+      const next = readFragment()
+      if (next === '') return
+      setToken(next)
+      window.history.replaceState(window.history.state, '', window.location.pathname)
+    }
+    take()
+    window.addEventListener('hashchange', take)
+    return () => window.removeEventListener('hashchange', take)
+  }, [])
+  return token
+}
+
+function readFragment(): string {
+  return decodeURIComponent(window.location.hash.slice(1))
+}
 
 /** New password with confirmation; the confirmation is checked on the client only. */
 function usePasswordPair() {
@@ -34,12 +59,13 @@ export function InvitationPage({ token }: { token: string }) {
   const [mismatch, setMismatch] = useState(false)
   const info = useQuery({
     queryKey: ['invitation', token],
-    queryFn: () => api<InvitationInfo>('GET', `/internal/invitations/${token}`),
+    queryFn: () => api<InvitationInfo>('POST', '/internal/invitations/lookup', { token }),
     retry: false,
   })
   const accept = useMutation({
     mutationFn: () =>
-      api('POST', `/internal/invitations/${token}`, {
+      api('POST', '/internal/invitations/accept', {
+        token,
         password: pair.password,
         ...(name !== undefined && { displayName: name }),
       }),

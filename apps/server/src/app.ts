@@ -180,6 +180,7 @@ export async function createServer(
       stopping ??= (async () => {
         readiness.ready = false
         await app.close()
+        await services.auth.idle()
         await scheduler.stop()
         await heartbeat.stop().catch(() => undefined)
         await store.close()

@@ -51,6 +51,7 @@ export function createServices(
     audit,
     mailer,
     appUrl,
+    log,
     clock,
   })
   const oidc = new OidcService({
@@ -68,6 +69,7 @@ export function createServices(
   })
   const usersService = new UsersService({
     db,
+    settings,
     users,
     sessions,
     tokens,
