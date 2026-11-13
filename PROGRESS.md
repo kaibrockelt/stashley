@@ -2,7 +2,7 @@
 
 **Current milestone:** M3 – Connections and table access (in review)
 
-**Next step:** Work through the remaining findings of the M3 review (should fix: S1–S8), then close M3 and start M4.
+**Next step:** Close M3 and start M4 in a fresh session with the strongest model at maximum effort. The M3 review's blocking and should-fix findings are fixed; its nice-to-have findings are open.
 
 **Recommended model strength for M4:** strongest model, maximum effort.
 
@@ -116,3 +116,13 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Route tests for all data routes: roles, CSRF, validation, guard and rate limit.
   - Verified with 94 server unit tests and 52 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7.
   - Open: the should-fix findings S1–S8.
+- 2026-11-13: M3 review, should-fix findings fixed:
+  - MariaDB's global `WITH GRANT OPTION`, written after the authentication clause, is detected again.
+  - The default display template skips excluded columns. A stored template that breaks later (a column excluded or removed, the target unshared) is flagged `template_invalid` and not used; the default takes its place.
+  - JSON values stay raw text (`jsonStrings`).
+  - The catalog marks only virtual and stored columns as generated (not MySQL's `DEFAULT_GENERATED`) and records `ON UPDATE`.
+  - A table replaced by a view of the same name becomes read-only view access, audited and listed in the impact as `type_changed`. Tables whose primary key no longer matches the key column get `key_mismatch`.
+  - A pool that cannot reach its pinned address resolves the host again on the next request; IPv4 addresses come first.
+  - Snapshots of unacknowledged drifts are no longer pruned, so those drifts stay.
+  - Verified with 103 server unit tests and 72 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7.
+  - Open: the review's nice-to-have findings.
