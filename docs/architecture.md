@@ -460,6 +460,7 @@ effective(u, k)  = ( ⋃ over r ∈ principals(u) of compOps(r, k) )
   - Page filter options use the view right of the page.
 
   In every case each object involved must have `read` in its ceiling and none of the columns used may be excluded.
+- **Display templates** are checked on save and again whenever table access is listed. A stored template that no longer passes, because a column was excluded or removed or the target lost `read` or its table access, is flagged (`template_invalid`) and not used; the effective template falls back to the default, the first text column that is not excluded.
 - **Changing a ceiling** takes effect on the next request through this formula. Nothing is rewritten in stored pages. Affected pages are flagged (§8.6).
 
 ### 8.4 Enforcement
@@ -517,7 +518,8 @@ The admin overview is computed with the same algebra over every published page. 
   - Only TCP is allowed; there is no socket path.
   - Before each pool is created, the host is resolved. Every address is normalized first, so IPv4-mapped IPv6 in any notation (`::ffff:7f00:1`) is checked as IPv4.
   - Only public, private (RFC 1918) and carrier-grade NAT IPv4 addresses, global unicast IPv6 (`2000::/3`) and unique local IPv6 (`fc00::/7`) are allowed. Everything else is rejected: loopback, unspecified, link-local, multicast, reserved and documentation ranges, and the IPv6 forms that can embed an IPv4 address (IPv4-compatible, NAT64, 6to4, Teredo). Addresses of the container's own interfaces are rejected too.
-  - The check repeats whenever a pool is recreated, which defends against DNS rebinding.
+  - The check repeats whenever a pool is recreated, which defends against DNS rebinding. A pool whose address cannot be reached (`unreachable`, `timeout`) is dropped, so the next request resolves the host again, e.g. after a database container got a new address.
+  - When a name resolves to several allowed addresses, IPv4 is used first: containers often have no IPv6 route, and the pinned socket cannot fall back to another address.
   - The socket connects to the address that was checked, while the driver keeps the host name, so TLS still verifies the certificate against the name (or the configured server name).
   - Integration tests on a developer machine reach databases through loopback; only the test server relaxes the check there (`STASHLEY_TEST_ALLOW_LOOPBACK`). CI runs them with the check on.
 - **Stored passwords:** a test or save may leave a password empty to keep the stored one, but only while host, port and TLS settings (mode, CA, server name) are unchanged (`sameConnectionTarget` in `packages/shared`). With any other target, every password must be entered again, so stored passwords never reach a server they were not saved for. A test that uses stored passwords is audited as `connection.tested`.
@@ -545,13 +547,14 @@ The admin overview is computed with the same algebra over every published page. 
 - **Key candidates** of a view are columns named like the single-column primary key of a base table (`id`) or `<table>_id`. The admin picks the key column; candidates are only suggestions.
 - **Snapshot document:** for each object it records:
   - The type and the estimated row count.
-  - Every column: name, position, data type, full column type, nullability, default, extra (`auto_increment`, `on update`), length, precision and scale, enum or set values, generated flag.
+  - Every column: name, position, data type, full column type, nullability, default, `auto_increment`, the `ON UPDATE` expression, length, precision and scale, enum or set values, generated flag. Only virtual and stored generated columns count as generated; MySQL's `DEFAULT_GENERATED` (an expression default such as `CURRENT_TIMESTAMP`) does not.
   - The primary key, unique keys and foreign keys.
   - For views: the base tables and the key candidate.
 - **Diff:** a refresh compares the new snapshot with the stored one. It lists added, changed and removed objects and columns, and collects every affected query, component, relation, display template and API endpoint into an impact report.
 - **Scheduled check:** every 24 h. If the diff is not empty, it is stored as a drift and shown to admins until one of them marks it as seen.
-- **Snapshots:** a new one is stored only when the structure changed; row estimates are not part of the comparison. The last 20 per connection are kept.
+- **Snapshots:** a new one is stored only when the structure changed; row estimates are not part of the comparison. The last 20 per connection are kept, plus every snapshot an unacknowledged drift refers to.
 - **Table access state:** after every read, exposed objects the read user no longer sees switch to `pending_grants`, and back to `active` when they reappear.
+- **Type changes:** when an exposed table is replaced by a view of the same name, the table access becomes a view and its ceiling drops to `read`; a former view gets the table's single-column primary key as key column. Both are audited (`table_access.type_changed`) and appear in the impact list as `type_changed`.
 
 ### 9.4 Grant inspection
 
@@ -584,7 +587,7 @@ The rules are defined once in `packages/shared/src/values` and used by every sur
 | `YEAR` | number |
 | `CHAR`, `VARCHAR`, `TEXT`, `ENUM` | string |
 | `SET` | array of strings |
-| `JSON` | string with the raw JSON text |
+| `JSON` | string with the raw JSON text (the driver runs with `jsonStrings`) |
 | `BLOB`, `BINARY`, `VARBINARY`, spatial types | Never selected. The column metadata marks them as unsupported, and tables show a placeholder. |
 
 - **Writes** convert the other way: a UTC instant becomes the connection's wall time for `DATETIME`, using Temporal with `compatible` disambiguation.

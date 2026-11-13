@@ -42,7 +42,9 @@ export function impactOf(diff: SchemaDiff, input: ImpactInput): ImpactItem[] {
     }
     const change = changes.get(access.objectName)
     if (change === undefined) continue
-    if (access.keyColumn !== null && removed(access.objectName, access.keyColumn)) {
+    if (change.typeChanged !== undefined) {
+      items.push({ kind: 'table_access', id: access.id, label, reason: 'type_changed' })
+    } else if (access.keyColumn !== null && removed(access.objectName, access.keyColumn)) {
       items.push({ kind: 'table_access', id: access.id, label, reason: 'column_removed' })
     } else if (change.keysChanged) {
       items.push({ kind: 'table_access', id: access.id, label, reason: 'key_changed' })

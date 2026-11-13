@@ -94,6 +94,32 @@ describe('schema diff', () => {
       'relation:r1:object_removed',
     ])
   })
+
+  it('compares ON UPDATE, but not against snapshots taken before it was recorded', () => {
+    const older = table('person', [id, col('updated_at')])
+    const before = table('person', [id, col('updated_at', { onUpdate: null })])
+    const after = table('person', [id, col('updated_at', { onUpdate: 'current_timestamp()' })])
+    expect(isEmptyDiff(diffSnapshots([older], [after]))).toBe(true)
+    expect(diffSnapshots([before], [after]).changedObjects[0]?.changedColumns).toEqual([
+      { column: 'updated_at', fields: ['onUpdate'] },
+    ])
+  })
+
+  it('reports a table replaced by a view', () => {
+    const diff = diffSnapshots(
+      [table('zahlung', [id])],
+      [{ ...table('zahlung', [id]), type: 'view', primaryKey: [] }],
+    )
+    const impact = impactOf(diff, {
+      accesses: [
+        { id: 'a1', objectName: 'zahlung', keyColumn: 'id', displayTemplate: null, exclusions: [] },
+      ],
+      relations: [],
+    })
+    expect(impact).toEqual([
+      { kind: 'table_access', id: 'a1', label: 'zahlung', reason: 'type_changed' },
+    ])
+  })
 })
 
 describe('display templates', () => {

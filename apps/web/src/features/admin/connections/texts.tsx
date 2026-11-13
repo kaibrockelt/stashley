@@ -66,6 +66,8 @@ const accessWarningLabels: Record<AccessWarning['code'], MessageId> = {
   no_write_user: 'access.warning.noWriteUser',
   view_without_key: 'access.warning.viewWithoutKey',
   not_in_schema: 'access.warning.notInSchema',
+  template_invalid: 'access.warning.templateInvalid',
+  key_mismatch: 'access.warning.keyMismatch',
 }
 
 const impactLabels: Record<ImpactItem['kind'], MessageId> = {
@@ -80,6 +82,7 @@ const reasonLabels: Record<ImpactItem['reason'], MessageId> = {
   column_removed: 'drift.reason.columnRemoved',
   column_changed: 'drift.reason.columnChanged',
   key_changed: 'drift.reason.keyChanged',
+  type_changed: 'drift.reason.typeChanged',
 }
 
 export function GrantSummary(props: { report: GrantReport | null }) {

@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
+import { createServer, type AddressInfo } from 'node:net'
 import { networkInterfaces } from 'node:os'
 import ipaddr from 'ipaddr.js'
 import { describe, expect, it } from 'vitest'
 import { isBlockedAddress, resolveTargetHost } from './address-guard.ts'
 import { decodeDateTime, encodeValue } from './encoding.ts'
 import { toTargetError } from './errors.ts'
+import { TargetPools } from './pools.ts'
 import { parseServerVersion } from './version.ts'
 
 describe('address guard', () => {
@@ -73,6 +75,38 @@ describe('address guard', () => {
       const mapped = ipaddr.IPv4.parse(own.address).toIPv4MappedAddress().toString()
       await expect(resolveTargetHost(mapped)).rejects.toMatchObject(refused)
     }
+  })
+})
+
+describe('pools', () => {
+  it('resolve the host again after the pinned address could not be reached', async () => {
+    // A port that was just free: connections are refused at once.
+    const probe = createServer()
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve))
+    const { port } = probe.address() as AddressInfo
+    await new Promise((resolve) => probe.close(resolve))
+    const resolved: string[] = []
+    const pools = new TargetPools({
+      resolveHost: (host) => {
+        resolved.push(host)
+        return Promise.resolve('127.0.0.1')
+      },
+    })
+    const spec = {
+      host: 'db.example.com',
+      port,
+      database: 'wanderverein',
+      tls: { mode: 'disabled' as const, caPem: null, serverName: null },
+      queryTimeoutMs: 1000,
+    }
+    const user = { purpose: 'read' as const, username: 'u', password: 'p' }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(pools.run('c1', spec, user, () => Promise.resolve())).rejects.toMatchObject({
+        failure: 'unreachable',
+      })
+    }
+    expect(resolved).toEqual(['db.example.com', 'db.example.com'])
+    await pools.closeAll()
   })
 })
 

@@ -9,6 +9,7 @@ const columnFields = [
   'defaultValue',
   'autoIncrement',
   'generated',
+  'onUpdate',
 ] as const satisfies readonly (keyof CatalogColumn)[]
 
 function keysOf(object: CatalogObject): string {
@@ -40,7 +41,10 @@ export function diffSnapshots(before: CatalogObject[], after: CatalogObject[]): 
     for (const [columnName, column] of oldColumns) {
       const updated = newColumns.get(columnName)
       if (updated === undefined) continue
-      const fields = columnFields.filter((field) => column[field] !== updated[field])
+      // A field missing from an older snapshot is unknown there, not changed.
+      const fields = columnFields.filter(
+        (field) => column[field] !== undefined && column[field] !== updated[field],
+      )
       if (fields.length > 0) change.changedColumns.push({ column: columnName, fields })
     }
     if (

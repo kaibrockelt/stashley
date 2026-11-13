@@ -15,6 +15,8 @@ import type {
 import mysql from 'mysql2/promise'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createServer, type Server } from '../src/app.ts'
+import { systemActor } from '../src/modules/audit/audit-log.ts'
+import { encodeValue } from '../src/target/encoding.ts'
 import { TestClient } from '../src/test/client.ts'
 import { testConfig } from '../src/test/helpers.ts'
 
@@ -322,6 +324,31 @@ describe.skipIf(targets.length === 0).each(targets)('target database $name', ({ 
     }
   })
 
+  it('warns about a global grant option behind the authentication clause', async () => {
+    const account = "'stashley_weitergabe'@'%'"
+    await root.query(`DROP USER IF EXISTS ${account}`)
+    await root.query(`CREATE USER ${account} IDENTIFIED BY 'demo-weitergabe-password'`)
+    try {
+      await root.query(`GRANT SELECT, SHOW VIEW ON wanderverein.* TO ${account}`)
+      await root.query(`GRANT USAGE ON *.* TO ${account} WITH GRANT OPTION`)
+      const response = await admin.send(
+        'POST',
+        '/internal/admin/connections/test',
+        input({
+          credentials: {
+            read: { username: 'stashley_weitergabe', password: 'demo-weitergabe-password' },
+            write: null,
+            schema: null,
+          },
+        }),
+      )
+      const [report] = response.json<ConnectionTestResult>().grants
+      expect(report?.warnings).toEqual([{ code: 'grant_option', scope: '*.*' }])
+    } finally {
+      await root.query(`DROP USER IF EXISTS ${account}`)
+    }
+  })
+
   it('counts privileges granted to PUBLIC (MariaDB 11.1 and later)', async () => {
     const [major = 0, minor = 0] = (connection.serverVersion ?? '').split('.').map(Number)
     if (connection.engine !== 'mariadb' || major * 100 + minor < 1101) return
@@ -496,6 +523,125 @@ describe.skipIf(targets.length === 0).each(targets)('target database $name', ({ 
     const notiz = list.find((access) => access.objectName === 'notiz')
     expect(notiz?.state).toBe('pending_grants')
     expect(notiz?.warnings.map((warning) => warning.code)).toContain('not_in_schema')
+  })
+
+  it('marks generated columns and ON UPDATE alike on both engines', async () => {
+    await root.query(
+      'ALTER TABLE wanderverein.event ADD COLUMN jahr_folge INT GENERATED ALWAYS AS (jahr + 1) VIRTUAL',
+    )
+    try {
+      const schema = (
+        await admin.send('POST', `/internal/admin/connections/${connection.id}/schema/refresh`)
+      ).statusCode
+      expect(schema).toBe(200)
+      const objects = (
+        await admin.request('GET', `/internal/admin/connections/${connection.id}/schema`)
+      ).json<CatalogSnapshot>().objects
+      const columnOf = (object: string, name: string) =>
+        objects.find((entry) => entry.name === object)?.columns.find((c) => c.name === name)
+      // MySQL reports `DEFAULT CURRENT_TIMESTAMP` as DEFAULT_GENERATED; it stays writable.
+      expect(columnOf('person', 'created_at')).toMatchObject({ generated: false, onUpdate: null })
+      const updatedAt = columnOf('person', 'updated_at')
+      expect(updatedAt?.generated).toBe(false)
+      expect(updatedAt?.onUpdate).toMatch(/^current_timestamp/i)
+      expect(columnOf('event', 'jahr_folge')).toMatchObject({ generated: true, onUpdate: null })
+    } finally {
+      await root.query('ALTER TABLE wanderverein.event DROP COLUMN jahr_folge')
+    }
+  })
+
+  it('returns JSON values as their raw text', async () => {
+    await root.query('CREATE TABLE wanderverein.notiz_json (id BIGINT PRIMARY KEY, daten JSON)')
+    try {
+      await root.query(
+        `INSERT INTO wanderverein.notiz_json VALUES (1, '{"a": 1, "b": [1, 2], "c": "x"}')`,
+      )
+      const rows = await server.services.connections.withReader(connection.id, (session) =>
+        session.query<{ daten: string }>('SELECT daten FROM notiz_json'),
+      )
+      const raw = rows[0]?.daten
+      expect(typeof raw).toBe('string')
+      const { value } = encodeValue('json', raw, 'UTC')
+      expect(typeof value).toBe('string')
+      expect(JSON.parse(String(value))).toEqual({ a: 1, b: [1, 2], c: 'x' })
+    } finally {
+      await root.query('DROP TABLE wanderverein.notiz_json')
+    }
+  })
+
+  it('follows a table that became a view and drops its write ceiling', async () => {
+    await root.query('CREATE TABLE wanderverein.tausch (id BIGINT PRIMARY KEY, x VARCHAR(10))')
+    try {
+      await admin.send('POST', `/internal/admin/connections/${connection.id}/schema/refresh`)
+      const exposed = await admin.send('POST', '/internal/admin/table-access', {
+        connectionId: connection.id,
+        objectName: 'tausch',
+        ops: ['read', 'create', 'update', 'delete'],
+        keyColumn: null,
+        displayTemplate: null,
+        apiResource: null,
+        mcpEnabled: false,
+        exclusions: [],
+      })
+      expect(exposed.statusCode).toBe(201)
+      await root.query('DROP TABLE wanderverein.tausch')
+      await root.query(
+        'CREATE VIEW wanderverein.tausch AS SELECT id, CAST(startnummer AS CHAR) AS x FROM wanderverein.anmeldung',
+      )
+      const refresh = await admin.send(
+        'POST',
+        `/internal/admin/connections/${connection.id}/schema/refresh`,
+      )
+      expect(refresh.json<{ impact: { label: string; reason: string }[] }>().impact).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ label: 'tausch', reason: 'type_changed' }),
+        ]),
+      )
+      const list = (
+        await admin.request('GET', `/internal/admin/table-access?connectionId=${connection.id}`)
+      ).json<{ data: TableAccess[] }>().data
+      expect(list.find((access) => access.objectName === 'tausch')).toMatchObject({
+        objectType: 'view',
+        ops: ['read'],
+        grantedOps: ['read'],
+        state: 'active',
+      })
+      const audited = await server.store.db
+        .selectFrom('audit_events')
+        .select('changes')
+        .where('action', '=', 'table_access.type_changed')
+        .execute()
+      expect(audited.map((row) => JSON.parse(row.changes ?? '{}') as unknown)).toEqual([
+        {
+          objectType: ['table', 'view'],
+          ops: [['read', 'create', 'update', 'delete'], ['read']],
+        },
+      ])
+    } finally {
+      await root.query('DROP VIEW IF EXISTS wanderverein.tausch')
+      await root.query('DROP TABLE IF EXISTS wanderverein.tausch')
+    }
+  })
+
+  it('keeps an unacknowledged drift while old snapshots are pruned', async () => {
+    await root.query('ALTER TABLE wanderverein.hotel ADD COLUMN drift_0 INT NULL')
+    await server.services.catalog.checkAll()
+    const open = () =>
+      admin
+        .request('GET', `/internal/admin/connections/${connection.id}/schema/drifts`)
+        .then((response) =>
+          response.json<{ data: SchemaDrift[] }>().data.filter((d) => d.acknowledgedAt === null),
+        )
+    const [drift] = await open()
+    expect(
+      drift?.diff.changedObjects.find((change) => change.object === 'hotel')?.addedColumns,
+    ).toEqual(['drift_0'])
+    // More structural changes than snapshots are kept (20).
+    for (let index = 1; index <= 21; index += 1) {
+      await root.query(`ALTER TABLE wanderverein.hotel ADD COLUMN drift_${index} INT NULL`)
+      await server.services.catalog.refresh(systemActor, connection.id, 'manual')
+    }
+    expect((await open()).map((entry) => entry.id)).toEqual([drift?.id])
   })
 
   it('keeps a connection that is still in use', async () => {

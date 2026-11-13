@@ -78,6 +78,30 @@ describe('parseGrantLine', () => {
     ])
   })
 
+  it('finds the grant option behind MariaDB authentication clauses', () => {
+    for (const line of [
+      "GRANT USAGE ON *.* TO `app`@`%` IDENTIFIED BY PASSWORD '*94BDCEBE19083CE2' WITH GRANT OPTION",
+      "GRANT ALL PRIVILEGES ON *.* TO `root`@`localhost` IDENTIFIED VIA mysql_native_password USING 'invalid' OR unix_socket WITH GRANT OPTION",
+      'GRANT USAGE ON *.* TO `app`@`%` REQUIRE SSL WITH GRANT OPTION',
+    ]) {
+      const grant = parseGrantLine(line)
+      expect(grant, line).toMatchObject({ kind: 'privileges', grantOption: true })
+      expect(JSON.stringify(grant)).not.toContain('94BDCEBE')
+    }
+    expect(
+      parseGrantLine("GRANT USAGE ON *.* TO `app`@`%` IDENTIFIED BY PASSWORD 'WITH GRANT OPTION'"),
+    ).toMatchObject({ grantOption: false })
+    const report = buildGrantReport({
+      purpose: 'read',
+      database: db,
+      lines: [
+        "GRANT USAGE ON *.* TO `app`@`%` IDENTIFIED BY PASSWORD '*94BDCEBE19083CE2' WITH GRANT OPTION",
+        'GRANT SELECT, SHOW VIEW ON `wanderverein`.* TO `app`@`%`',
+      ],
+    })
+    expect(report.warnings).toEqual([{ code: 'grant_option', scope: '*.*' }])
+  })
+
   it('never keeps password hashes', () => {
     const line = "GRANT USAGE ON *.* TO `app`@`%` IDENTIFIED BY PASSWORD '*94BDCEBE19083CE2'"
     expect(redactGrantLine(line)).toBe('GRANT USAGE ON *.* TO `app`@`%`')

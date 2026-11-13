@@ -66,6 +66,8 @@ function driverOptions(spec: TargetSpec, user: TargetUser, address: string): Con
     dateStrings: true,
     decimalNumbers: false,
     multipleStatements: false,
+    // JSON stays the raw text (§9.5); the driver would otherwise parse it into objects.
+    jsonStrings: true,
     flags: ['FOUND_ROWS'],
     connectTimeout: connectTimeoutMs,
     ...(ssl !== undefined && { ssl }),
@@ -208,12 +210,19 @@ export class TargetPools {
     user: TargetUser,
     fn: (session: TargetSession) => Promise<T>,
   ): Promise<T> {
-    const { pool, servers } = await this.entry(connectionId, spec, user)
+    const entry = await this.entry(connectionId, spec, user)
+    const { pool, servers } = entry
     let connection: PoolConnection
     try {
       connection = await pool.getConnection()
     } catch (error) {
-      throw toTargetError(error)
+      const failure = toTargetError(error)
+      // The pool is pinned to the address checked at creation. When the server cannot be
+      // reached there (e.g. its container got a new address), the next call resolves again.
+      if (failure.failure === 'unreachable' || failure.failure === 'timeout') {
+        this.drop(`${connectionId}:${user.purpose}`, entry)
+      }
+      throw failure
     }
     try {
       let server = servers.get(connection.connection)
@@ -230,6 +239,12 @@ export class TargetPools {
     } finally {
       connection.release()
     }
+  }
+
+  private drop(key: string, entry: PoolEntry): void {
+    if (this.pools.get(key) !== entry) return
+    this.pools.delete(key)
+    void entry.pool.end().catch(() => undefined)
   }
 
   /** Closes the pools of a connection, e.g. after its settings changed or it was removed. */

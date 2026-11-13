@@ -73,7 +73,10 @@ function column(row: ColumnRow): CatalogColumn {
     nullable,
     defaultValue: normalizeDefault(row.defaultValue, nullable),
     autoIncrement: extra.includes('auto_increment'),
-    generated: /generated|virtual|persistent|stored/.test(extra),
+    // `VIRTUAL GENERATED`, `STORED GENERATED`, `PERSISTENT`. MySQL marks expression
+    // defaults such as `DEFAULT CURRENT_TIMESTAMP` as `DEFAULT_GENERATED`; those stay writable.
+    generated: /\b(virtual|stored|persistent)\b/.test(extra),
+    onUpdate: /\bon update\s+(.+)$/i.exec(row.extra ?? '')?.[1]?.trim() ?? null,
     maxLength: num(row.maxLength),
     precision: num(row.numericPrecision) ?? num(row.datetimePrecision),
     scale: num(row.numericScale),

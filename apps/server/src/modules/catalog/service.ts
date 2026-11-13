@@ -17,12 +17,14 @@ import { isoOrNull, systemClock, type Clock } from '../../platform/clock.ts'
 import { AppError } from '../../platform/http/problem.ts'
 import { systemActor, type Actor, type AuditLog } from '../audit/audit-log.ts'
 import type { ConnectionsService } from '../connections/service.ts'
+import { maskToOps, opsToMask } from '../table-access/service.ts'
 import { diffSnapshots, isEmptyDiff } from './diff.ts'
 import { impactOf } from './impact.ts'
 import { introspect } from './introspect.ts'
 
 /** Snapshots kept per connection; older ones are removed after a refresh. */
 const keptSnapshots = 20
+const readOp = opsToMask(['read'])
 
 export interface CatalogDeps {
   db: Kysely<Database>
@@ -171,6 +173,7 @@ export class CatalogService {
     }
     await this.prune(connectionId)
     await this.updateAccessStates(connectionId, objects)
+    await this.followTypeChanges(actor, connectionId, objects)
     await this.deps.audit.record(actor, {
       action: 'connection.schema_refreshed',
       subject: { kind: 'connection', id: connectionId, label: target.row.name },
@@ -184,6 +187,54 @@ export class CatalogService {
       },
     })
     return { changed: true, capturedAt: new Date(now).toISOString(), diff, impact }
+  }
+
+  /**
+   * An exposed table replaced by a view of the same name (or the reverse) takes the new type.
+   * A view is always read-only, so its ceiling drops to `read`; a former view gets the
+   * table's single-column primary key as key column, if it has one (§ Obergrenzen).
+   */
+  private async followTypeChanges(
+    actor: Actor,
+    connectionId: string,
+    objects: CatalogObject[],
+  ): Promise<void> {
+    const byName = new Map(objects.map((object) => [object.name, object]))
+    const accesses = await this.deps.db
+      .selectFrom('table_access')
+      .select(['id', 'object_name', 'object_type', 'ops', 'key_column'])
+      .where('connection_id', '=', connectionId)
+      .execute()
+    for (const access of accesses) {
+      const object = byName.get(access.object_name)
+      if (object === undefined || object.type === access.object_type) continue
+      const [pk] = object.primaryKey
+      const next = {
+        object_type: object.type,
+        ops: object.type === 'view' ? access.ops & readOp : access.ops,
+        key_column:
+          object.type === 'view'
+            ? access.key_column
+            : object.primaryKey.length === 1 && pk !== undefined
+              ? pk
+              : null,
+        updated_at: this.clock(),
+      }
+      await this.deps.db.updateTable('table_access').set(next).where('id', '=', access.id).execute()
+      await this.deps.audit.record(actor, {
+        action: 'table_access.type_changed',
+        subject: { kind: 'table_access', id: access.id, label: access.object_name },
+        connectionId,
+        objectName: access.object_name,
+        changes: {
+          objectType: [access.object_type, next.object_type],
+          ...(next.ops !== access.ops && { ops: [maskToOps(access.ops), maskToOps(next.ops)] }),
+          ...(next.key_column !== access.key_column && {
+            keyColumn: [access.key_column, next.key_column],
+          }),
+        },
+      })
+    }
   }
 
   /** Objects that vanished from the read user's view wait for grants (or were dropped). */
@@ -212,8 +263,12 @@ export class CatalogService {
       .execute()
   }
 
+  /**
+   * Keeps the latest snapshots and every snapshot an unacknowledged drift points to; deleting
+   * a snapshot deletes its drifts, and those must stay until an admin has seen them.
+   */
   private async prune(connectionId: string): Promise<void> {
-    const keep = await this.deps.db
+    const latest = await this.deps.db
       .selectFrom('schema_snapshots')
       .select('id')
       .where('connection_id', '=', connectionId)
@@ -221,13 +276,19 @@ export class CatalogService {
       .orderBy('id', 'desc')
       .limit(keptSnapshots)
       .execute()
+    const open = await this.deps.db
+      .selectFrom('schema_drifts')
+      .select('snapshot_id as id')
+      .where('connection_id', '=', connectionId)
+      .where('acknowledged_at', 'is', null)
+      .execute()
     await this.deps.db
       .deleteFrom('schema_snapshots')
       .where('connection_id', '=', connectionId)
       .where(
         'id',
         'not in',
-        keep.map((row) => row.id),
+        [...latest, ...open].map((row) => row.id),
       )
       .execute()
   }

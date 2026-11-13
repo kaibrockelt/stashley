@@ -4,9 +4,9 @@ import type { AdminUser, ProblemDocument } from '@stashley/shared'
 import type { LightMyRequestResponse } from 'fastify'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createServer, type Server } from '../../app.ts'
-import { encrypt } from '../../platform/crypto/keys.ts'
 import { resolveTargetHost } from '../../target/address-guard.ts'
 import { TestClient } from '../../test/client.ts'
+import { storeConnection } from '../../test/connections.ts'
 import { testConfig } from '../../test/helpers.ts'
 
 /**
@@ -131,55 +131,6 @@ async function createUser(
   })
   expect(accepted.statusCode).toBe(200)
   return { user, client }
-}
-
-/** A saved connection with read and write user, written straight to the metadata store. */
-async function storeConnection(
-  s: Setup,
-  target: { host: string; port: number; tls: Record<string, unknown> },
-): Promise<string> {
-  const connectionId = '01890000-0000-7000-8000-0000000000c1'
-  const now = Date.now()
-  const db = s.server.store.db
-  await db
-    .insertInto('connections')
-    .values({
-      id: connectionId,
-      name: 'Saved',
-      host: target.host,
-      port: target.port,
-      database_name: 'wanderverein',
-      engine: 'mariadb',
-      server_version: '12.3.3',
-      tls: JSON.stringify(target.tls),
-      timezone: 'Europe/Berlin',
-      query_timeout_ms: 10_000,
-      created_at: now,
-      updated_at: now,
-    })
-    .execute()
-  for (const [purpose, credentialId] of [
-    ['read', '01890000-0000-7000-8000-0000000000d1'],
-    ['write', '01890000-0000-7000-8000-0000000000d2'],
-  ] as const) {
-    await db
-      .insertInto('connection_credentials')
-      .values({
-        id: credentialId,
-        connection_id: connectionId,
-        purpose,
-        username: `stashley_${purpose}`,
-        password: encrypt(
-          s.server.keys,
-          `${purpose} secret`,
-          `connection_credentials:${credentialId}:password`,
-        ),
-        grant_report: null,
-        checked_at: null,
-      })
-      .execute()
-  }
-  return connectionId
 }
 
 /** Calls a route the way the web client does, with a fresh CSRF token for writes. */
@@ -427,7 +378,7 @@ describe('data routes', () => {
       port: 3306,
       tls: { mode: 'verify-full', caPem: null, serverName: null },
     }
-    const connectionId = await storeConnection(s, target)
+    const connectionId = await storeConnection(s.server, target)
     const keep = {
       read: { username: 'stashley_read' },
       write: { username: 'stashley_write' },

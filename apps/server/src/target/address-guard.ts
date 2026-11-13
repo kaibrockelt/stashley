@@ -77,5 +77,7 @@ export async function resolveTargetHost(host: string): Promise<string> {
     }
     checked.push(ip.toString())
   }
-  return checked[0] ?? literal
+  // Every address passed the check. IPv4 goes first: containers often have no IPv6 route,
+  // and the pinned socket cannot fall back to another address the way `net.connect` would.
+  return checked.find((address) => isIP(address) === 4) ?? checked[0] ?? literal
 }

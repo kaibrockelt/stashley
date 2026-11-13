@@ -166,7 +166,10 @@ export interface CatalogColumn {
   nullable: boolean
   defaultValue: string | null
   autoIncrement: boolean
+  /** A virtual or stored generated column; expression defaults do not count. */
   generated: boolean
+  /** `ON UPDATE` expression, e.g. `CURRENT_TIMESTAMP`; absent in snapshots before it existed. */
+  onUpdate?: string | null
   maxLength: number | null
   precision: number | null
   scale: number | null
@@ -219,7 +222,7 @@ export interface ImpactItem {
   kind: 'table_access' | 'column_exclusion' | 'display_template' | 'relation'
   id: string
   label: string
-  reason: 'object_removed' | 'column_removed' | 'column_changed' | 'key_changed'
+  reason: 'object_removed' | 'column_removed' | 'column_changed' | 'key_changed' | 'type_changed'
 }
 
 export interface SchemaRefreshResult {
@@ -266,7 +269,15 @@ export const tableAccessCreate = z.object({
 export const tableAccessUpdate = z.object(tableAccessFields)
 
 export interface AccessWarning {
-  code: 'ops_without_grant' | 'no_write_user' | 'view_without_key' | 'not_in_schema'
+  code:
+    | 'ops_without_grant'
+    | 'no_write_user'
+    | 'view_without_key'
+    | 'not_in_schema'
+    /** The stored display template no longer passes; the default template is used. */
+    | 'template_invalid'
+    /** The table's primary key changed and no longer matches the key column. */
+    | 'key_mismatch'
   ops?: TableOp[]
 }
 

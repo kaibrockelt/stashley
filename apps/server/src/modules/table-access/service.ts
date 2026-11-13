@@ -25,7 +25,7 @@ import type { Actor, AuditLog } from '../audit/audit-log.ts'
 import type { CatalogService } from '../catalog/service.ts'
 import { objectPrivileges } from '../connections/grants.ts'
 import type { ConnectionsService } from '../connections/service.ts'
-import { defaultTemplate, placeholders } from './templates.ts'
+import { checkTemplate, defaultTemplate, type TemplateContext } from './templates.ts'
 
 type CreateInput = z.infer<typeof tableAccessCreate>
 type UpdateInput = z.infer<typeof tableAccessUpdate>
@@ -62,6 +62,17 @@ function uniqueColumns(object: CatalogObject, viewKey: string | null): Set<strin
     if (key.length === 1 && key[0] !== undefined) unique.add(key[0])
   if (viewKey !== null) unique.add(viewKey)
   return unique
+}
+
+function excludedForAll(
+  exclusions: { table_access_id: string; column_name: string; scope: 'all' | 'mcp' }[],
+  accessId: string,
+): Set<string> {
+  return new Set(
+    exclusions
+      .filter((entry) => entry.table_access_id === accessId && entry.scope === 'all')
+      .map((entry) => entry.column_name),
+  )
 }
 
 function defaultResource(objectName: string): string {
@@ -169,6 +180,7 @@ export class TableAccessService {
     const snapshot = await this.deps.catalog.current(connectionId)
     const rows = await this.rows(connectionId)
     const exclusions = await this.exclusions(rows.map((row) => row.id))
+    const templates = await this.templateScope(connectionId, snapshot, rows, exclusions)
     return rows.map((row) =>
       this.toApi(
         row,
@@ -176,8 +188,36 @@ export class TableAccessService {
         snapshot,
         target.reports,
         target.users.write !== undefined,
+        templates,
       ),
     )
+  }
+
+  /**
+   * What display templates of a connection are checked against: the catalog, relations and
+   * the objects that are exposed with `read`, each with its columns excluded for everyone.
+   */
+  private async templateScope(
+    connectionId: string,
+    snapshot: CatalogSnapshot | undefined,
+    rows: TableAccessTable[],
+    exclusions: { table_access_id: string; column_name: string; scope: 'all' | 'mcp' }[],
+  ): Promise<(object: CatalogObject, excluded: ReadonlySet<string>) => TemplateContext> {
+    const objects = new Map((snapshot?.objects ?? []).map((object) => [object.name, object]))
+    const relations =
+      snapshot === undefined ? [] : await this.resolvedRelations(connectionId, snapshot)
+    const readable = new Map(
+      rows
+        .filter((row) => (row.ops & opBits.read) !== 0 && row.state === 'active')
+        .map((row) => [row.object_name, { excluded: excludedForAll(exclusions, row.id) }]),
+    )
+    return (object, excluded) => ({
+      object,
+      objects,
+      relations: relations.filter((relation) => relation.sourceObject === object.name),
+      excluded,
+      target: (name) => readable.get(name),
+    })
   }
 
   async get(id: string): Promise<TableAccess> {
@@ -198,6 +238,7 @@ export class TableAccessService {
     snapshot: CatalogSnapshot | undefined,
     reports: Partial<Record<'read' | 'write' | 'schema', GrantReport>>,
     hasWriter: boolean,
+    templates: (object: CatalogObject, excluded: ReadonlySet<string>) => TemplateContext,
   ): TableAccess {
     const ops = maskToOps(row.ops)
     const object = snapshot?.objects.find((entry) => entry.name === row.object_name)
@@ -225,6 +266,27 @@ export class TableAccessService {
     if (row.object_type === 'view' && row.key_column === null) {
       warnings.push({ code: 'view_without_key' })
     }
+    // A table's key must still be its single-column primary key.
+    if (
+      object?.type === 'table' &&
+      (object.primaryKey.length !== 1 || object.primaryKey[0] !== row.key_column)
+    ) {
+      warnings.push({ code: 'key_mismatch' })
+    }
+    // A stored template that no longer passes (a column was excluded or removed, the target
+    // lost `read` or its access) is not used; the default template is safe.
+    const excluded = new Set(
+      exclusions.filter((entry) => entry.scope === 'all').map((entry) => entry.column_name),
+    )
+    let effectiveTemplate = defaultTemplate(object, row.key_column, excluded)
+    if (row.display_template !== null) {
+      const problem =
+        object === undefined
+          ? 'unknown_column'
+          : checkTemplate(row.display_template, templates(object, excluded))
+      if (problem === undefined) effectiveTemplate = row.display_template
+      else warnings.push({ code: 'template_invalid' })
+    }
     return {
       id: row.id,
       connectionId: row.connection_id,
@@ -233,7 +295,7 @@ export class TableAccessService {
       ops,
       keyColumn: row.key_column,
       displayTemplate: row.display_template,
-      effectiveTemplate: row.display_template ?? defaultTemplate(object, row.key_column),
+      effectiveTemplate,
       apiResource: row.api_resource,
       mcpEnabled: row.mcp_enabled === 1,
       exclusions: exclusions.map((entry) => ({ column: entry.column_name, scope: entry.scope })),
@@ -283,7 +345,14 @@ export class TableAccessService {
     })
 
     if (input.displayTemplate !== null && input.displayTemplate !== '') {
-      await this.validateTemplate(connectionId, snapshot, object, input.displayTemplate, exclusions)
+      const rows = await this.rows(connectionId)
+      const stored = await this.exclusions(rows.map((row) => row.id))
+      const templates = await this.templateScope(connectionId, snapshot, rows, stored)
+      const own = new Set(
+        [...exclusions].filter(([, scope]) => scope === 'all').map(([column]) => column),
+      )
+      const problem = checkTemplate(input.displayTemplate, templates(object, own))
+      if (problem !== undefined) throw fieldError('displayTemplate', problem)
     }
 
     const apiResource = input.apiResource ?? defaultResource(objectName)
@@ -304,55 +373,6 @@ export class TableAccessService {
           ? null
           : input.displayTemplate,
       ops: object.type === 'view' ? (['read'] as TableOp[]) : input.ops,
-    }
-  }
-
-  /** `{column}` reads the object itself; `{relation.column}` follows one relation. */
-  private async validateTemplate(
-    connectionId: string,
-    snapshot: CatalogSnapshot,
-    object: CatalogObject,
-    template: string,
-    exclusions: Map<string, 'all' | 'mcp'>,
-  ): Promise<void> {
-    const parts = placeholders(template)
-    if (parts.length === 0) throw fieldError('displayTemplate', 'invalid')
-    const relations = (await this.resolvedRelations(connectionId, snapshot)).filter(
-      (relation) => relation.sourceObject === object.name,
-    )
-    for (const part of parts) {
-      if (part.relation === undefined) {
-        if (!object.columns.some((column) => column.name === part.column)) {
-          throw fieldError('displayTemplate', 'unknown_column')
-        }
-        if (exclusions.get(part.column) === 'all')
-          throw fieldError('displayTemplate', 'excluded_column')
-        continue
-      }
-      const bySource = relations.filter((relation) => relation.sourceColumn === part.relation)
-      const byTarget = relations.filter((relation) => relation.targetObject === part.relation)
-      const relation = bySource[0] ?? (byTarget.length === 1 ? byTarget[0] : undefined)
-      if (relation === undefined) throw fieldError('displayTemplate', 'unknown_relation')
-      const target = snapshot.objects.find((entry) => entry.name === relation.targetObject)
-      if (target === undefined || !target.columns.some((column) => column.name === part.column)) {
-        throw fieldError('displayTemplate', 'unknown_column')
-      }
-      const targetAccess = await this.deps.db
-        .selectFrom('table_access')
-        .select(['id', 'ops'])
-        .where('connection_id', '=', connectionId)
-        .where('object_name', '=', relation.targetObject)
-        .executeTakeFirst()
-      if (targetAccess === undefined || (targetAccess.ops & opBits.read) === 0) {
-        throw fieldError('displayTemplate', 'target_not_exposed')
-      }
-      const excluded = await this.deps.db
-        .selectFrom('column_exclusions')
-        .select('scope')
-        .where('table_access_id', '=', targetAccess.id)
-        .where('column_name', '=', part.column)
-        .executeTakeFirst()
-      if (excluded?.scope === 'all') throw fieldError('displayTemplate', 'excluded_column')
     }
   }
 

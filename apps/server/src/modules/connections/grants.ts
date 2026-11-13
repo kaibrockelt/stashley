@@ -169,14 +169,30 @@ export function parseGrantLine(line: string): ParsedGrant {
   if (isWord(tokens[1], 'PROXY')) return { kind: 'proxy' }
   const level = parseLevel(tokens.slice(on + 1, to))
   if (level === undefined) return { kind: 'unparsed', raw: clean }
-  const after = tokens.slice(to + 1).map((token) => token.value.toUpperCase())
-  const grantOption = after.join(' ').includes('WITH GRANT OPTION')
   return {
     kind: 'privileges',
     privileges: parsePrivileges(tokens.slice(1, on)),
     level,
-    grantOption,
+    grantOption: hasGrantOption(line),
   }
+}
+
+/**
+ * Looks for `WITH GRANT OPTION` in the unredacted line. MariaDB writes it after the
+ * authentication clause (`… IDENTIFIED BY PASSWORD '*…' WITH GRANT OPTION`), which the
+ * redaction removes. Quoted strings are single tokens, so a password cannot fake it.
+ */
+function hasGrantOption(line: string): boolean {
+  const tokens = tokenize(line.trim())
+  const to = tokens.findIndex((token) => isWord(token, 'TO'))
+  return tokens
+    .slice(to + 1)
+    .some(
+      (token, index, rest) =>
+        isWord(token, 'WITH') &&
+        isWord(rest[index + 1], 'GRANT') &&
+        isWord(rest[index + 2], 'OPTION'),
+    )
 }
 
 /** Matches a schema name of a grant; `%` and `_` are wildcards unless escaped. */
