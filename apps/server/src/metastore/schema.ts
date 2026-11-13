@@ -16,6 +16,95 @@ export interface Database {
   sessions: SessionsTable
   user_tokens: UserTokensTable
   audit_events: AuditEventsTable
+  connections: ConnectionsTable
+  connection_credentials: ConnectionCredentialsTable
+  schema_snapshots: SchemaSnapshotsTable
+  schema_drifts: SchemaDriftsTable
+  table_access: TableAccessTable
+  column_exclusions: ColumnExclusionsTable
+  virtual_relations: VirtualRelationsTable
+}
+
+export interface ConnectionsTable {
+  id: string
+  name: string
+  host: string
+  port: number
+  database_name: string
+  engine: 'mariadb' | 'mysql' | null
+  server_version: string | null
+  /** JSON: `{ mode, caPem, serverName }`. */
+  tls: string
+  timezone: string
+  query_timeout_ms: number
+  created_at: number
+  updated_at: number
+}
+
+export interface ConnectionCredentialsTable {
+  id: string
+  connection_id: string
+  purpose: 'read' | 'write' | 'schema'
+  username: string
+  /** Encrypted, AAD `connection_credentials:<id>:password`. */
+  password: string
+  /** JSON grant report (§9.4). */
+  grant_report: string | null
+  checked_at: number | null
+}
+
+export interface SchemaSnapshotsTable {
+  id: string
+  connection_id: string
+  captured_at: number
+  content_hash: string
+  /** JSON list of catalog objects (§9.3). */
+  content: string
+  trigger: 'manual' | 'scheduled' | 'import'
+}
+
+export interface SchemaDriftsTable {
+  id: string
+  connection_id: string
+  snapshot_id: string
+  detected_at: number
+  /** JSON: `{ diff, impact }`. */
+  diff: string
+  acknowledged_at: number | null
+  acknowledged_by: string | null
+}
+
+export interface TableAccessTable {
+  id: string
+  connection_id: string
+  object_name: string
+  object_type: 'table' | 'view'
+  /** Bitmask: read 1, create 2, update 4, delete 8. */
+  ops: number
+  key_column: string | null
+  display_template: string | null
+  api_resource: string
+  mcp_enabled: number
+  state: 'active' | 'pending_grants'
+  created_at: number
+  updated_at: number
+}
+
+export interface ColumnExclusionsTable {
+  table_access_id: string
+  column_name: string
+  scope: 'all' | 'mcp'
+}
+
+export interface VirtualRelationsTable {
+  id: string
+  connection_id: string
+  source_object: string
+  source_column: string
+  target_object: string
+  target_column: string
+  kind: 'many_to_one' | 'one_to_one'
+  created_at: number
 }
 
 export interface SettingsTable {

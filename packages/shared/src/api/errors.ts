@@ -27,6 +27,8 @@ export const errorCodes = {
   last_admin: { status: 409, title: 'Last active admin' },
   last_sign_in_path: { status: 409, title: 'No admin could sign in afterwards' },
   provider_unreachable: { status: 422, title: 'Identity provider unreachable' },
+  connection_failed: { status: 422, title: 'Database connection failed' },
+  in_use: { status: 409, title: 'Still in use' },
   internal_error: { status: 500, title: 'Internal error' },
   service_unavailable: { status: 503, title: 'Service unavailable' },
 } as const satisfies Record<string, { status: number; title: string }>

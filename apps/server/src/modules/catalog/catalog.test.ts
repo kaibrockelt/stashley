@@ -1,0 +1,118 @@
+// SPDX-FileCopyrightText: 2026 Stashley contributors
+// SPDX-License-Identifier: AGPL-3.0-only
+import type { CatalogColumn, CatalogObject } from '@stashley/shared'
+import { describe, expect, it } from 'vitest'
+import { defaultTemplate, placeholders } from '../table-access/templates.ts'
+import { diffSnapshots, isEmptyDiff } from './diff.ts'
+import { impactOf } from './impact.ts'
+import { viewTables } from './view-deps.ts'
+
+function col(name: string, overrides: Partial<CatalogColumn> = {}): CatalogColumn {
+  return {
+    name,
+    position: 1,
+    dataType: 'varchar',
+    columnType: 'varchar(80)',
+    kind: 'string',
+    nullable: false,
+    defaultValue: null,
+    autoIncrement: false,
+    generated: false,
+    maxLength: 80,
+    precision: null,
+    scale: null,
+    ...overrides,
+  }
+}
+
+function table(name: string, columns: CatalogColumn[]): CatalogObject {
+  return {
+    name,
+    type: 'table',
+    rowEstimate: 0,
+    columns,
+    primaryKey: ['id'],
+    uniqueKeys: [],
+    foreignKeys: [],
+  }
+}
+
+const id = col('id', { dataType: 'bigint', columnType: 'bigint(20)', kind: 'bigint' })
+
+describe('schema diff', () => {
+  it('lists added, removed and changed objects and columns', () => {
+    const before = [table('person', [id, col('vorname'), col('telefon')]), table('alt', [id])]
+    const after = [
+      table('person', [id, col('vorname', { columnType: 'varchar(120)' }), col('email')]),
+      table('neu', [id]),
+    ]
+    const diff = diffSnapshots(before, after)
+    expect(diff.addedObjects).toEqual(['neu'])
+    expect(diff.removedObjects).toEqual(['alt'])
+    expect(diff.changedObjects).toEqual([
+      {
+        object: 'person',
+        addedColumns: ['email'],
+        removedColumns: ['telefon'],
+        changedColumns: [{ column: 'vorname', fields: ['columnType'] }],
+        keysChanged: false,
+      },
+    ])
+    expect(isEmptyDiff(diffSnapshots(after, after))).toBe(true)
+  })
+
+  it('collects affected access, exclusions, templates and relations', () => {
+    const diff = diffSnapshots(
+      [table('person', [id, col('vorname'), col('telefon')]), table('hotel', [id])],
+      [table('person', [id, col('vorname', { nullable: true })])],
+    )
+    const impact = impactOf(diff, {
+      accesses: [
+        {
+          id: 'a1',
+          objectName: 'person',
+          keyColumn: 'id',
+          displayTemplate: '{vorname}',
+          exclusions: ['telefon'],
+        },
+        { id: 'a2', objectName: 'hotel', keyColumn: 'id', displayTemplate: null, exclusions: [] },
+      ],
+      relations: [
+        {
+          id: 'r1',
+          sourceObject: 'buchung',
+          sourceColumn: 'hotel_id',
+          targetObject: 'hotel',
+          targetColumn: 'id',
+        },
+      ],
+    })
+    expect(impact.map((item) => `${item.kind}:${item.id}:${item.reason}`)).toEqual([
+      'column_exclusion:a1:column_removed',
+      'table_access:a2:object_removed',
+      'display_template:a1:column_changed',
+      'relation:r1:object_removed',
+    ])
+  })
+})
+
+describe('display templates', () => {
+  it('parses placeholders and picks a default', () => {
+    expect(placeholders('{startnummer} – {person.vorname} {person.nachname}')).toEqual([
+      { column: 'startnummer' },
+      { relation: 'person', column: 'vorname' },
+      { relation: 'person', column: 'nachname' },
+    ])
+    expect(defaultTemplate(table('person', [id, col('vorname')]), 'id')).toBe('{vorname}')
+    expect(defaultTemplate(table('zahl', [id]), 'id')).toBe('{id}')
+  })
+})
+
+describe('view dependencies', () => {
+  it('reads tables from a MariaDB view definition', () => {
+    const definition =
+      'select `wanderverein`.`a`.`id` AS `anmeldung_id`,sum(`z`.`betrag`) AS `bezahlt` from (`wanderverein`.`anmeldung` `a` left join `wanderverein`.`zahlung` `z` on(`z`.`anmeldung_id` = `a`.`id`)) group by `a`.`id`'
+    expect(viewTables(definition, 'wanderverein')).toEqual(['anmeldung', 'zahlung'])
+    expect(viewTables('not sql at all (', 'wanderverein')).toEqual([])
+  })
+})

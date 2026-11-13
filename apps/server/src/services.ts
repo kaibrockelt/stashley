@@ -5,6 +5,10 @@ import type { AppConfig } from './config/env.ts'
 import type { Metastore } from './metastore/db.ts'
 import { SettingsRepository } from './metastore/settings.ts'
 import { AuditLog } from './modules/audit/audit-log.ts'
+import { CatalogService } from './modules/catalog/service.ts'
+import { ConnectionsService } from './modules/connections/service.ts'
+import { TableAccessService } from './modules/table-access/service.ts'
+import { TargetPools } from './target/pools.ts'
 import { sessionCookieName } from './modules/auth/sessions.ts'
 import { createOidcClient, OidcService, type OidcClient } from './modules/auth/oidc.ts'
 import { AuthService } from './modules/auth/service.ts'
@@ -80,7 +84,15 @@ export function createServices(
     clock,
   })
   const instanceSettings = new InstanceSettingsService(db, settings, audit)
+  const pools = new TargetPools()
+  const connections = new ConnectionsService({ db, keys, audit, pools, clock })
+  const catalog = new CatalogService({ db, connections, audit, log, clock })
+  const tableAccess = new TableAccessService({ db, connections, catalog, audit, clock })
   return {
+    pools,
+    connections,
+    catalog,
+    tableAccess,
     settings,
     audit,
     users,

@@ -11,6 +11,7 @@ import type { SettingsRepository } from './metastore/settings.ts'
 import { systemActor } from './modules/audit/audit-log.ts'
 import { registerAuthRoutes } from './modules/auth/routes.ts'
 import { registerHealthRoutes, type Readiness } from './modules/system/health.ts'
+import { registerDataRoutes } from './modules/connections/routes.ts'
 import { registerAdminRoutes } from './modules/users/routes.ts'
 import { createServices, type ServiceOverrides, type Services } from './services.ts'
 import { registerSecurity } from './platform/http/security.ts'
@@ -112,6 +113,11 @@ export async function createServer(
     instanceSettings: services.instanceSettings,
     audit: services.audit,
   })
+  registerDataRoutes(app, {
+    connections: services.connections,
+    catalog: services.catalog,
+    tableAccess: services.tableAccess,
+  })
 
   const jobs: JobDefinition[] = [
     {
@@ -133,6 +139,11 @@ export async function createServer(
         const deleted = await services.audit.deleteOlderThan(Date.now() - days * day)
         if (deleted > 0) app.log.info({ deleted }, 'audit events past retention deleted')
       },
+    },
+    {
+      name: 'catalog.schema_check',
+      intervalMs: day,
+      run: () => services.catalog.checkAll(),
     },
     {
       name: 'sessions.cleanup',
@@ -182,6 +193,7 @@ export async function createServer(
         await app.close()
         await services.auth.idle()
         await scheduler.stop()
+        await services.pools.closeAll()
         await heartbeat.stop().catch(() => undefined)
         await store.close()
       })()
