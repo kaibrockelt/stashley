@@ -2,7 +2,7 @@
 
 **Current milestone:** M2 – Sign-in and accounts (in review)
 
-**Next step:** Push and confirm that CI is green. M2 is done after that, and M3 (connections and table access) can start.
+**Next step:** Push and confirm that CI is green. M2 is done after that. The M3 plan (connections and table access) waits for approval.
 
 **Recommended model strength for M3:** high. Review M2 in a fresh session before M3 starts; sign-in and sessions are security-critical.
 
@@ -86,3 +86,14 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Emergency CLI commands.
   - Verified with 58 server tests and in the browser against a mock OIDC provider (navikt/mock-oauth2-server): first OIDC sign-in shows as pending and is approved by an admin.
   - The OIDC part of the role criterion is met; roles themselves come with M4.
+- 2026-11-13: M2 reviewed in a fresh session. Fixed:
+  - Failed second-factor codes now count per account, across sessions and the 2FA settings routes.
+  - A TOTP code works only once, even in parallel requests.
+  - Invitation and reset tokens moved from URL paths to the fragment and request bodies, so they no longer appear in logs.
+  - CSRF and origin checks use the matched route; requests without `Sec-Fetch-Site` and `Origin` are rejected.
+  - Reset emails are limited per address and sent in the background.
+  - Failed sign-ins are audited with a reason, including OIDC failures.
+  - New CLI command `stashley user reset-mfa`.
+  - While password sign-in is off, no change may leave the instance without an admin who can sign in.
+  - Linking through `email_verified` stays as specified. Operators are responsible for connecting only providers that verify email addresses; the admin guide (M9) will say so.
+  - Verified with 67 server tests and in the browser (invitation and password reset through fragment links).

@@ -15,4 +15,4 @@ All notable changes to this project are documented here. The format follows [Kee
 - OIDC sign-in; new accounts wait for admin approval unless their domain is approved.
 - Invitations and password reset by email or link.
 - User administration, identity providers, instance settings and an append-only audit log with CSV export.
-- CLI commands `user create --admin`, `user reset-password` and `auth enable-local`.
+- CLI commands `user create --admin`, `user reset-password`, `user reset-mfa` and `auth enable-local`.

@@ -967,7 +967,8 @@ Errors follow RFC 9457, with the stable code catalog from `packages/shared/src/a
 - **Session cookie:** `__Host-stashley_session` when `APP_BASE_URL` is HTTPS, with `HttpOnly`, `Secure`, `SameSite=Lax` and `Path=/`. Plain HTTP is accepted only for `localhost`, without `Secure` and with a warning in the log.
 - **CSRF:**
   - `GET /internal/session` returns a token bound to the session (`@fastify/csrf-protection`). Every non-safe internal request must send it in `X-CSRF-Token`.
-  - As a second check, the server requires `Sec-Fetch-Site: same-origin` or a matching `Origin`.
+  - As a second check, the server requires `Sec-Fetch-Site: same-origin` or a matching `Origin`. A request with neither header is rejected.
+  - Both checks use the matched route pattern, not the raw URL, because the router decodes the path (`/%69nternal/…` reaches `/internal/…`).
   - The public API and MCP accept bearer tokens only and ignore cookies.
 
 ### 14.6 Rate limits
@@ -977,7 +978,9 @@ Errors follow RFC 9457, with the stable code catalog from `packages/shared/src/a
 | Scope | Default |
 | --- | --- |
 | Sign-in | Per IP and per account, with increasing delay |
-| Password reset, invitation redemption | Per IP and per email |
+| Second factor | Per IP and per account, with increasing delay; shared by sign-in, disabling 2FA and new recovery codes |
+| Password reset | Per IP, and 3 emails per address and hour |
+| Invitation lookup and redemption | Per IP |
 | Public API | Per token; configurable, default 60 per minute |
 | MCP | 30 calls per minute per user, 100,000 rows per day |
 | Manual refresh | Once per 10 s per user and component |
@@ -1009,7 +1012,7 @@ These are the resource groups of the internal API. The exact contracts are Zod s
 
 | Group | Routes |
 | --- | --- |
-| Session | `GET /internal/session` (account, system role, roles, CSRF token, instance time zone, features) · `POST /internal/auth/login` · `POST /internal/auth/mfa` · `POST /internal/auth/logout` · `POST /internal/auth/password-reset` · `POST /internal/auth/password-reset/complete` · `GET`, `POST /internal/invitations/:token` |
+| Session | `GET /internal/session` (account, system role, roles, CSRF token, instance time zone, features) · `POST /internal/auth/login` · `POST /internal/auth/mfa` · `POST /internal/auth/logout` · `POST /internal/auth/password-reset` · `POST /internal/auth/password-reset/complete` · `POST /internal/invitations/lookup` · `POST /internal/invitations/accept` |
 | Workspace | `GET /internal/navigation` · `GET /internal/pages/:slug?mode=&roles=` (render model) |
 | Components | Under `/internal/pages/:pageId/components/:componentId`: `POST …/query` · `POST …/count` · `GET …/rows/:key` · `POST …/rows` · `PATCH …/rows/:key` · `DELETE …/rows/:key` · `POST …/fields/:fieldId/options` · `POST …/export` (CSV) · `POST …/refresh` |
 | Page filters | `POST /internal/pages/:pageId/filters/:filterId/options` |
@@ -1139,6 +1142,7 @@ Forms and text blocks are never offered. The permission overview shows MCP reach
   - A new session ID is issued on every sign-in and on every privilege change.
   - **2FA:**
     - Accounts with TOTP get a session in state `mfa_required` until a TOTP code or recovery code is entered.
+    - Failed codes count per account, so a new sign-in does not reset them. A TOTP time step is claimed with a conditional update, so one code works only once, even in parallel requests.
     - When 2FA is enforced, accounts without TOTP get a session in state `mfa_enrollment_required`, which can only call enrollment routes.
   - **Passwords:** at least 12 characters, not in a bundled list of common passwords, and not equal to the email address. Hashes are upgraded on sign-in when the parameters change.
 - **OIDC sign-in:**
@@ -1148,7 +1152,8 @@ Forms and text blocks are never offered. The permission overview shows MCP reach
     2. Otherwise an existing account with the same email, if `email_verified` is true, which links the identity.
     3. Otherwise a new account in state `pending`, or `active` if the email domain is on the provider's auto-approve list.
   - Pending accounts get a session that can only show the pending page.
-- **Disabling local sign-in** requires at least one enabled OIDC provider and one active admin with a linked OIDC identity. `stashley auth enable-local` turns it back on.
+- **Trust in providers:** linking by email relies on the provider's `email_verified`. Admins should connect only providers that verify email addresses and do not let users change them freely; the admin guide says so.
+- **Disabling local sign-in** requires at least one enabled OIDC provider and one active admin with a linked OIDC identity. While it is off, removing or disabling a provider, removing an identity and demoting or disabling an admin are refused (`409 last_sign_in_path`) when afterwards no active admin could sign in. `stashley auth enable-local` turns it back on.
 - **Sessions:**
   - Stored server-side, and the cookie value is HMAC-signed (§21.1).
   - Idle timeout 12 h and maximum age 7 days by default, both configurable.
@@ -1157,7 +1162,8 @@ Forms and text blocks are never offered. The permission overview shows MCP reach
   - **Invitation:** valid 7 days, sent by email or shown as a link to copy.
   - **Activation:** the admin assigns the system role and roles.
   - **Deactivation** deletes sessions and revokes MCP grants and tokens at once.
-  - **Password reset:** valid 1 hour. The request endpoint always returns `202`, and completing a reset ends all sessions.
+  - **Password reset:** valid 1 hour. The request endpoint always returns `202` at once and sends the email in the background, so response times do not reveal accounts. Completing a reset ends all sessions.
+  - **Link tokens** (invitation, password reset) travel in the URL fragment (`/invitation#<token>`) and in request bodies, never in a path, so they do not reach request logs. The logger also redacts a token pasted into such a path.
   - **Last admin:** the last active admin cannot be deactivated or demoted. The check runs inside the same `BEGIN IMMEDIATE` transaction as the change.
 - **Email:** sent through SMTP with nodemailer. Templates are localized on the server (English, German).
 - **Profile:** name, language, formatting locale, theme, password and 2FA for local accounts, MCP connections and tokens.
@@ -1167,7 +1173,7 @@ Forms and text blocks are never offered. The permission overview shows MCP reach
 ### 20.1 Audit log
 
 - **Events** use dotted action names:
-  - `auth.sign_in.succeeded`, `auth.sign_in.failed`, `auth.mfa.failed`
+  - `auth.sign_in.succeeded`, `auth.sign_in.failed`, `auth.mfa.failed`; failures carry `details.reason` (`invalid_credentials`, `rate_limited`, `account_disabled`, `invalid_code`, or the OIDC error code)
   - `user.*`, `role.*`, `connection.*`, `table_access.*`, `relation.*`
   - `page.created`, `page.draft_saved`, `page.published`, `page.restored`, `page.deleted`
   - `query.*`, `variable.*`, `api_token.*`, `mcp.*`, `settings.updated`
@@ -1244,7 +1250,7 @@ AAD = "<table>:<row id>:<column>"
 
   | Route | Purpose |
   | --- | --- |
-  | `/sign-in`, `/sign-in/mfa`, `/invitation/:token`, `/password-reset/:token`, `/pending` | Sign-in and account states |
+  | `/sign-in`, `/sign-in/mfa`, `/invitation#<token>`, `/password-reset[#<token>]`, `/pending` | Sign-in and account states |
   | `/oauth/interaction/:uid` | OAuth consent |
   | `/` | Redirects to the home page |
   | `/pages/:slug`, `/pages/:slug/:recordKey` | Workspace pages and the detail view |
@@ -1282,6 +1288,7 @@ The image installs a `stashley` wrapper. The library is commander.
 | `stashley serve` (default command of the image) | n/a |
 | `stashley user create --admin --email <email> [--password-file <file>]` | Running or stopped |
 | `stashley user reset-password --email <email> [--password-file <file>]` (prints a reset link without a file) | Running or stopped |
+| `stashley user reset-mfa --email <email>` (turns off 2FA and ends the account's sessions) | Running or stopped |
 | `stashley auth enable-local` | Running or stopped |
 | `stashley backup [--output <file>]` | Running or stopped |
 | `stashley restore <file>` | Stopped |
