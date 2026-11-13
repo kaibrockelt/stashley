@@ -113,6 +113,10 @@ describe('view dependencies', () => {
     const definition =
       'select `wanderverein`.`a`.`id` AS `anmeldung_id`,sum(`z`.`betrag`) AS `bezahlt` from (`wanderverein`.`anmeldung` `a` left join `wanderverein`.`zahlung` `z` on(`z`.`anmeldung_id` = `a`.`id`)) group by `a`.`id`'
     expect(viewTables(definition, 'wanderverein')).toEqual(['anmeldung', 'zahlung'])
+    // MariaDB's stored form with nested joins, which the parser rejects.
+    const nested =
+      'select `a`.`id` AS `anmeldung_id` from ((`wanderverein`.`anmeldung` `a` left join (select `wanderverein`.`hotelbuchung`.`anmeldung_id` AS `anmeldung_id` from `wanderverein`.`hotelbuchung` group by `wanderverein`.`hotelbuchung`.`anmeldung_id`) `h` on(`h`.`anmeldung_id` = `a`.`id`)) left join `wanderverein`.`zahlung` `z` on(`z`.`anmeldung_id` = `a`.`id`))'
+    expect(viewTables(nested, 'wanderverein')).toEqual(['anmeldung', 'hotelbuchung', 'zahlung'])
     expect(viewTables('not sql at all (', 'wanderverein')).toEqual([])
   })
 })

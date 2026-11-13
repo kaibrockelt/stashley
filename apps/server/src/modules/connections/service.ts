@@ -21,7 +21,6 @@ import { AppError } from '../../platform/http/problem.ts'
 import { fieldError } from '../../platform/http/validation.ts'
 import { TargetError } from '../../target/errors.ts'
 import {
-  withTargetConnection,
   type TargetPools,
   type TargetSession,
   type TargetSpec,
@@ -120,7 +119,7 @@ export class ConnectionsService {
       const user = users[purpose]
       if (user === undefined) continue
       try {
-        const result = await withTargetConnection(spec, user, async (session) => ({
+        const result = await this.deps.pools.once(spec, user, async (session) => ({
           server: session.server,
           report: await inspectGrants(session, purpose, spec.database),
         }))

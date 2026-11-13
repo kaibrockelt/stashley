@@ -10,7 +10,8 @@
   "scripts": {
     "build": "tsc -b",
     "dev": "node --conditions=@stashley/source --watch src/cli/index.ts serve",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.5",

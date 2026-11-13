@@ -121,13 +121,16 @@ function session(raw: RawSession, server: ServerVersion, spec: TargetSpec): Targ
   }
 }
 
-/** Opens one connection outside the pools, e.g. to test settings before they are saved. */
-export async function withTargetConnection<T>(
+/** Resolves and checks a target host; tests on a developer machine may relax it. */
+export type HostResolver = (host: string) => Promise<string>
+
+async function once<T>(
+  resolveHost: HostResolver,
   spec: TargetSpec,
   user: TargetUser,
   fn: (session: TargetSession) => Promise<T>,
 ): Promise<T> {
-  const address = await resolveTargetHost(spec.host)
+  const address = await resolveHost(spec.host)
   let connection: Connection
   try {
     connection = await mysql.createConnection(driverOptions(spec, user, address))
@@ -159,6 +162,20 @@ interface PoolEntry {
  */
 export class TargetPools {
   private readonly pools = new Map<string, PoolEntry>()
+  private readonly resolveHost: HostResolver
+
+  constructor(options: { resolveHost?: HostResolver } = {}) {
+    this.resolveHost = options.resolveHost ?? resolveTargetHost
+  }
+
+  /** Opens one connection outside the pools, e.g. to test settings before they are saved. */
+  once<T>(
+    spec: TargetSpec,
+    user: TargetUser,
+    fn: (session: TargetSession) => Promise<T>,
+  ): Promise<T> {
+    return once(this.resolveHost, spec, user, fn)
+  }
 
   private async entry(connectionId: string, spec: TargetSpec, user: TargetUser) {
     const key = `${connectionId}:${user.purpose}`
@@ -171,7 +188,7 @@ export class TargetPools {
       this.pools.delete(key)
       void existing.pool.end().catch(() => undefined)
     }
-    const address = await resolveTargetHost(spec.host)
+    const address = await this.resolveHost(spec.host)
     const pool = mysql.createPool({
       ...driverOptions(spec, user, address),
       connectionLimit: poolSizes[user.purpose],
