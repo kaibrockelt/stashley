@@ -18,6 +18,8 @@ const errorMessages: Partial<Record<ErrorCode, MessageId>> = {
   forbidden: 'error.forbidden',
   not_found: 'error.notFound',
   conflict: 'error.conflict',
+  connection_failed: 'error.connectionFailed',
+  in_use: 'error.inUse',
 }
 
 const fieldMessages: Record<string, MessageId> = {
@@ -34,6 +36,24 @@ const fieldMessages: Record<string, MessageId> = {
   mismatch: 'field.mismatch',
   requirements_not_met: 'field.requirementsNotMet',
   not_allowed: 'field.invalid',
+  unreachable: 'field.failure.unreachable',
+  timeout: 'field.failure.timeout',
+  access_denied: 'field.failure.accessDenied',
+  unknown_database: 'field.failure.unknownDatabase',
+  tls_failed: 'field.failure.tlsFailed',
+  host_not_allowed: 'field.failure.hostNotAllowed',
+  failed: 'field.failure.failed',
+  schema_missing: 'field.schemaMissing',
+  not_in_schema: 'field.notInSchema',
+  primary_key_required: 'field.primaryKeyRequired',
+  view_read_only: 'field.viewReadOnly',
+  unknown_column: 'field.unknownColumn',
+  key_column: 'field.keyColumn',
+  excluded_column: 'field.excludedColumn',
+  unknown_relation: 'field.unknownRelation',
+  target_not_exposed: 'field.targetNotExposed',
+  not_unique: 'field.notUnique',
+  duplicate: 'field.duplicate',
 }
 
 /** Sign-in errors passed back from the OIDC callback as `?error=`. */

@@ -168,6 +168,22 @@ const appRoutes = [
     }),
     createRoute({
       getParentRoute: () => adminLayout,
+      path: '/connections',
+      component: lazyRouteComponent(
+        () => import('../features/admin/connections/connections-page.tsx'),
+        'ConnectionsPage',
+      ),
+    }),
+    createRoute({
+      getParentRoute: () => adminLayout,
+      path: '/connections/$connectionId',
+      component: lazyRouteComponent(
+        () => import('../features/admin/connections/connection-page.tsx'),
+        'ConnectionPage',
+      ),
+    }),
+    createRoute({
+      getParentRoute: () => adminLayout,
       path: '/identity-providers',
       component: lazyRouteComponent(
         () => import('../features/admin/identity-providers.tsx'),

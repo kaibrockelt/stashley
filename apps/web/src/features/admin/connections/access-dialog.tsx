@@ -1,0 +1,228 @@
+// SPDX-FileCopyrightText: 2026 Stashley contributors
+// SPDX-License-Identifier: AGPL-3.0-only
+import type { CatalogObject, ExclusionScope, TableAccess, TableOp } from '@stashley/shared'
+import { isTextKind, tableOps } from '@stashley/shared'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import { api } from '../../../api/client.ts'
+import { useErrorText } from '../../../i18n/errors.ts'
+import { useT } from '../../../i18n/use-t.ts'
+import {
+  Actions,
+  Button,
+  CheckboxField,
+  Dialog,
+  Form,
+  Notice,
+  SelectField,
+  SwitchField,
+  TextField,
+} from '../../../ui/controls.tsx'
+import table from '../../../ui/table.module.css'
+import styles from './connections.module.css'
+import { AccessWarnings, opLabels } from './texts.tsx'
+
+type Visibility = 'shown' | ExclusionScope
+
+export function AccessDialog(props: {
+  connectionId: string
+  object: CatalogObject
+  access: TableAccess | undefined
+  onClose: () => void
+}) {
+  const t = useT()
+  const errors = useErrorText()
+  const client = useQueryClient()
+  const { object, access } = props
+  const isView = object.type === 'view'
+  const textColumn = object.columns.find((column) => isTextKind(column.kind))
+  const defaultTemplate = `{${textColumn?.name ?? object.primaryKey[0] ?? object.columns[0]?.name ?? ''}}`
+  const [ops, setOps] = useState<TableOp[]>(access?.ops ?? (isView ? ['read'] : ['read']))
+  const [keyColumn, setKeyColumn] = useState<string>(
+    access?.keyColumn ??
+      (isView ? (object.keyCandidates?.[0] ?? '') : (object.primaryKey[0] ?? '')),
+  )
+  const [template, setTemplate] = useState(access?.displayTemplate ?? '')
+  const [resource, setResource] = useState(access?.apiResource ?? '')
+  const [mcp, setMcp] = useState(access?.mcpEnabled ?? false)
+  const [visibility, setVisibility] = useState<Record<string, Visibility>>(
+    Object.fromEntries(
+      object.columns.map((column) => [
+        column.name,
+        access?.exclusions.find((entry) => entry.column === column.name)?.scope ?? 'shown',
+      ]),
+    ),
+  )
+  const refresh = () =>
+    client.invalidateQueries({ queryKey: ['admin', 'connection', props.connectionId] })
+  const body = () => ({
+    ops,
+    keyColumn: keyColumn === '' ? null : keyColumn,
+    displayTemplate: template.trim() === '' ? null : template,
+    apiResource: resource.trim() === '' ? null : resource,
+    mcpEnabled: mcp,
+    exclusions: Object.entries(visibility)
+      .filter(([, scope]) => scope !== 'shown')
+      .map(([column, scope]) => ({ column, scope: scope as ExclusionScope })),
+  })
+  const save = useMutation({
+    mutationFn: () =>
+      access === undefined
+        ? api('POST', '/internal/admin/table-access', {
+            connectionId: props.connectionId,
+            objectName: object.name,
+            ...body(),
+          })
+        : api('PUT', `/internal/admin/table-access/${access.id}`, body()),
+    onSuccess: async () => {
+      await refresh()
+      props.onClose()
+    },
+  })
+  const remove = useMutation({
+    mutationFn: () => api('DELETE', `/internal/admin/table-access/${access?.id ?? ''}`),
+    onSuccess: async () => {
+      await refresh()
+      props.onClose()
+    },
+  })
+  const error = save.error ?? remove.error
+  const exclusionError = object.columns
+    .map((_column, index) => errors.field(save.error, `exclusions.${String(index)}.column`))
+    .find((message) => message !== undefined)
+  const visibilityOptions = (isKey: boolean) => [
+    { id: 'shown' as const, label: t('access.column.shown') },
+    ...(isKey ? [] : [{ id: 'all' as const, label: t('access.column.hidden') }]),
+    { id: 'mcp' as const, label: t('access.column.hiddenMcp') },
+  ]
+
+  return (
+    <Dialog title={object.name} isOpen isWide onOpenChange={(open) => !open && props.onClose()}>
+      <Form onSubmit={() => save.mutate()}>
+        {error !== null && errors.message(error) !== undefined && (
+          <Notice tone="error">{errors.message(error)}</Notice>
+        )}
+        {access !== undefined && <AccessWarnings warnings={access.warnings} />}
+        <fieldset className={styles.block}>
+          <legend className={styles.blockTitle}>{t('access.ceiling')}</legend>
+          <p className={styles.muted}>
+            {isView ? t('access.ceiling.view') : t('access.ceiling.hint')}
+          </p>
+          <div className={styles.checks}>
+            {tableOps.map((op) => (
+              <CheckboxField
+                key={op}
+                label={t(opLabels[op])}
+                isSelected={ops.includes(op)}
+                isDisabled={isView}
+                onChange={(selected) =>
+                  setOps((current) =>
+                    tableOps.filter((entry) => (entry === op ? selected : current.includes(entry))),
+                  )
+                }
+              />
+            ))}
+          </div>
+          {errors.field(save.error, 'ops') !== undefined && (
+            <p className={styles.danger}>{errors.field(save.error, 'ops')}</p>
+          )}
+        </fieldset>
+        {isView ? (
+          <SelectField
+            label={t('access.keyColumn')}
+            value={keyColumn}
+            onChange={setKeyColumn}
+            error={errors.field(save.error, 'keyColumn')}
+            options={[
+              { id: '', label: t('access.keyColumn.none') },
+              ...object.columns.map((column) => ({
+                id: column.name,
+                label: object.keyCandidates?.includes(column.name)
+                  ? t('access.keyColumn.suggested', { column: column.name })
+                  : column.name,
+              })),
+            ]}
+          />
+        ) : (
+          <TextField
+            label={t('access.keyColumn')}
+            value={keyColumn}
+            onChange={() => undefined}
+            description={t('access.keyColumn.primary')}
+            isReadOnly
+          />
+        )}
+        <TextField
+          label={t('access.template')}
+          value={template}
+          onChange={setTemplate}
+          description={t('access.template.hint', {
+            example: access?.effectiveTemplate ?? defaultTemplate,
+          })}
+          error={errors.field(save.error, 'displayTemplate')}
+        />
+        <div className={styles.grid}>
+          <TextField
+            label={t('access.apiResource')}
+            value={resource}
+            onChange={setResource}
+            description={t('access.apiResource.hint')}
+            error={errors.field(save.error, 'apiResource')}
+          />
+          <SwitchField
+            label={t('access.mcp')}
+            description={t('access.mcp.hint')}
+            isSelected={mcp}
+            onChange={setMcp}
+          />
+        </div>
+        <div className={styles.block}>
+          <p className={styles.blockTitle}>{t('access.columns')}</p>
+          <p className={styles.muted}>{t('access.columns.hint')}</p>
+          {exclusionError !== undefined && <p className={styles.danger}>{exclusionError}</p>}
+          <div className={`${table.wrap} ${styles.columns}`}>
+            <table className={table.table}>
+              <thead>
+                <tr>
+                  <th>{t('access.column')}</th>
+                  <th>{t('access.columnType')}</th>
+                  <th>{t('access.visibility')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {object.columns.map((column) => (
+                  <tr key={column.name}>
+                    <td className={table.mono}>{column.name}</td>
+                    <td className={table.muted}>{column.columnType}</td>
+                    <td>
+                      <SelectField
+                        label={t('access.visibility.of', { column: column.name })}
+                        value={visibility[column.name] ?? 'shown'}
+                        onChange={(scope) =>
+                          setVisibility((current) => ({ ...current, [column.name]: scope }))
+                        }
+                        options={visibilityOptions(column.name === keyColumn)}
+                        isLabelHidden
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <Actions>
+          {access !== undefined && (
+            <Button variant="danger" onPress={() => remove.mutate()} isDisabled={remove.isPending}>
+              {t('access.unshare')}
+            </Button>
+          )}
+          <Button onPress={props.onClose}>{t('action.cancel')}</Button>
+          <Button type="submit" variant="primary" isDisabled={save.isPending}>
+            {access === undefined ? t('access.share') : t('action.save')}
+          </Button>
+        </Actions>
+      </Form>
+    </Dialog>
+  )
+}

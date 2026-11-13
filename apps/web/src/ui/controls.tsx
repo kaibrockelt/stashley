@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from 'react'
 import {
   Button as AriaButton,
+  Checkbox,
   Dialog as AriaDialog,
   FieldError,
   Heading,
@@ -17,6 +18,7 @@ import {
   SelectValue,
   Switch,
   Text,
+  TextArea,
   TextField as AriaTextField,
   type ButtonProps as AriaButtonProps,
 } from 'react-aria-components'
@@ -83,12 +85,71 @@ export function TextField(props: {
   )
 }
 
+export function TextAreaField(props: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  error?: string | undefined
+  description?: string
+  rows?: number
+  isMono?: boolean
+}) {
+  return (
+    <AriaTextField
+      className={styles.field}
+      value={props.value}
+      onChange={props.onChange}
+      isInvalid={props.error !== undefined}
+    >
+      <Label className={styles.label}>{props.label}</Label>
+      <TextArea
+        className={[styles.input, styles.textarea, props.isMono === true && styles.mono]
+          .filter(Boolean)
+          .join(' ')}
+        rows={props.rows ?? 4}
+        spellCheck={false}
+      />
+      {props.description !== undefined && (
+        <Text slot="description" className={styles.description}>
+          {props.description}
+        </Text>
+      )}
+      <FieldError className={styles.error}>{props.error}</FieldError>
+    </AriaTextField>
+  )
+}
+
+export function CheckboxField(props: {
+  label: string
+  isSelected: boolean
+  onChange: (value: boolean) => void
+  isDisabled?: boolean
+}) {
+  return (
+    <Checkbox
+      className={styles.checkbox}
+      isSelected={props.isSelected}
+      onChange={props.onChange}
+      isDisabled={props.isDisabled ?? false}
+    >
+      <span className={styles.box} aria-hidden="true">
+        <svg viewBox="0 0 16 16" className={styles.check}>
+          <polyline points="3.5 8.5 6.5 11.5 12.5 4.5" />
+        </svg>
+      </span>
+      {props.label}
+    </Checkbox>
+  )
+}
+
 export function SelectField<K extends string>(props: {
   label: string
   value: K
   onChange: (value: K) => void
   options: { id: K; label: string }[]
   error?: string | undefined
+  /** The label is read by screen readers only, e.g. in a table row. */
+  isLabelHidden?: boolean
 }) {
   return (
     <Select
@@ -99,7 +160,9 @@ export function SelectField<K extends string>(props: {
       }}
       isInvalid={props.error !== undefined}
     >
-      <Label className={styles.label}>{props.label}</Label>
+      <Label className={props.isLabelHidden === true ? styles.visuallyHidden : styles.label}>
+        {props.label}
+      </Label>
       <AriaButton className={styles.select}>
         <SelectValue />
         <span aria-hidden="true" className={styles.chevron}>
@@ -168,6 +231,7 @@ export function Dialog(props: {
   isOpen: boolean
   onOpenChange: (open: boolean) => void
   children: ReactNode
+  isWide?: boolean
 }) {
   return (
     <ModalOverlay
@@ -176,7 +240,9 @@ export function Dialog(props: {
       onOpenChange={props.onOpenChange}
       isDismissable
     >
-      <Modal className={styles.modal}>
+      <Modal
+        className={[styles.modal, props.isWide === true && styles.wide].filter(Boolean).join(' ')}
+      >
         <AriaDialog className={styles.dialog}>
           <Heading slot="title" className={styles.dialogTitle}>
             {props.title}
