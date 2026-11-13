@@ -12,10 +12,11 @@ import type {
 import type { FastifyBaseLogger } from 'fastify'
 import type { Kysely } from 'kysely'
 import { v7 as uuidv7 } from 'uuid'
+import { writeTransaction } from '../../metastore/db.ts'
 import type { Database, SchemaSnapshotsTable } from '../../metastore/schema.ts'
 import { isoOrNull, systemClock, type Clock } from '../../platform/clock.ts'
 import { AppError } from '../../platform/http/problem.ts'
-import { systemActor, type Actor, type AuditLog } from '../audit/audit-log.ts'
+import { systemActor, type Actor, type AuditInput, type AuditLog } from '../audit/audit-log.ts'
 import type { ConnectionsService } from '../connections/service.ts'
 import { maskToOps, opsToMask } from '../table-access/service.ts'
 import { diffSnapshots, isEmptyDiff } from './diff.ts'
@@ -32,6 +33,14 @@ export interface CatalogDeps {
   audit: AuditLog
   log: FastifyBaseLogger
   clock?: Clock
+}
+
+/** The failure code of a schema read: the read user's connection failure, or `failed`. */
+function failureOf(error: unknown): string {
+  if (error instanceof AppError && error.code === 'connection_failed') {
+    return error.errors?.[0]?.code ?? 'failed'
+  }
+  return 'failed'
 }
 
 /** Hash over the structure only; row estimates change all the time. */
@@ -114,7 +123,8 @@ export class CatalogService {
 
   /**
    * Reads the schema again and stores a new snapshot if it changed. A scheduled check that
-   * finds changes records a drift for admins (§9.3).
+   * finds changes records a drift for admins (§9.3). The outcome is kept on the connection,
+   * so a daily check that cannot reach the database shows up there.
    */
   async refresh(
     actor: Actor,
@@ -122,15 +132,22 @@ export class CatalogService {
     trigger: SchemaSnapshotsTable['trigger'],
   ): Promise<SchemaRefreshResult> {
     const target = await this.deps.connections.resolve(connectionId)
-    const objects = (
-      await this.deps.connections.withReader(connectionId, (session) =>
-        introspect(session, target.spec.database),
-      )
-    ).sort((a, b) => a.name.localeCompare(b.name))
+    let objects: CatalogObject[]
+    try {
+      objects = (
+        await this.deps.connections.withReader(connectionId, (session) =>
+          introspect(session, target.spec.database),
+        )
+      ).sort((a, b) => a.name.localeCompare(b.name))
+    } catch (error) {
+      await this.markChecked(this.deps.db, connectionId, failureOf(error))
+      throw error
+    }
     const hash = contentHash(objects)
     const previous = await this.latest(connectionId)
     const empty: SchemaDiff = { addedObjects: [], removedObjects: [], changedObjects: [] }
     if (previous?.content_hash === hash) {
+      await this.markChecked(this.deps.db, connectionId, null)
       return {
         changed: false,
         capturedAt: new Date(previous.captured_at).toISOString(),
@@ -145,35 +162,39 @@ export class CatalogService {
     const impact = await this.impact(connectionId, diff)
     const now = this.clock()
     const snapshotId = uuidv7()
-    const db = this.deps.db
-    await db
-      .insertInto('schema_snapshots')
-      .values({
-        id: snapshotId,
-        connection_id: connectionId,
-        captured_at: now,
-        content_hash: hash,
-        content: JSON.stringify(objects),
-        trigger,
-      })
-      .execute()
-    if (trigger === 'scheduled' && previous !== undefined && !isEmptyDiff(diff)) {
-      await db
-        .insertInto('schema_drifts')
+    // One transaction, so a snapshot never exists without its drift and access states.
+    const typeChanges = await writeTransaction(this.deps.db, async (trx) => {
+      await trx
+        .insertInto('schema_snapshots')
         .values({
-          id: uuidv7(),
+          id: snapshotId,
           connection_id: connectionId,
-          snapshot_id: snapshotId,
-          detected_at: now,
-          diff: JSON.stringify({ diff, impact }),
-          acknowledged_at: null,
-          acknowledged_by: null,
+          captured_at: now,
+          content_hash: hash,
+          content: JSON.stringify(objects),
+          trigger,
         })
         .execute()
-    }
-    await this.prune(connectionId)
-    await this.updateAccessStates(connectionId, objects)
-    await this.followTypeChanges(actor, connectionId, objects)
+      if (trigger === 'scheduled' && previous !== undefined && !isEmptyDiff(diff)) {
+        await trx
+          .insertInto('schema_drifts')
+          .values({
+            id: uuidv7(),
+            connection_id: connectionId,
+            snapshot_id: snapshotId,
+            detected_at: now,
+            diff: JSON.stringify({ diff, impact }),
+            acknowledged_at: null,
+            acknowledged_by: null,
+          })
+          .execute()
+      }
+      await this.prune(trx, connectionId)
+      await this.updateAccessStates(trx, connectionId, objects)
+      await this.markChecked(trx, connectionId, null)
+      return this.followTypeChanges(trx, connectionId, objects)
+    })
+    for (const change of typeChanges) await this.deps.audit.record(actor, change)
     await this.deps.audit.record(actor, {
       action: 'connection.schema_refreshed',
       subject: { kind: 'connection', id: connectionId, label: target.row.name },
@@ -189,18 +210,31 @@ export class CatalogService {
     return { changed: true, capturedAt: new Date(now).toISOString(), diff, impact }
   }
 
+  private async markChecked(
+    db: Kysely<Database>,
+    connectionId: string,
+    failure: string | null,
+  ): Promise<void> {
+    await db
+      .updateTable('connections')
+      .set({ schema_checked_at: this.clock(), schema_check_failure: failure })
+      .where('id', '=', connectionId)
+      .execute()
+  }
+
   /**
    * An exposed table replaced by a view of the same name (or the reverse) takes the new type.
    * A view is always read-only, so its ceiling drops to `read`; a former view gets the
    * table's single-column primary key as key column, if it has one (§ Obergrenzen).
    */
   private async followTypeChanges(
-    actor: Actor,
+    db: Kysely<Database>,
     connectionId: string,
     objects: CatalogObject[],
-  ): Promise<void> {
+  ): Promise<AuditInput[]> {
     const byName = new Map(objects.map((object) => [object.name, object]))
-    const accesses = await this.deps.db
+    const audit: AuditInput[] = []
+    const accesses = await db
       .selectFrom('table_access')
       .select(['id', 'object_name', 'object_type', 'ops', 'key_column'])
       .where('connection_id', '=', connectionId)
@@ -220,8 +254,8 @@ export class CatalogService {
               : null,
         updated_at: this.clock(),
       }
-      await this.deps.db.updateTable('table_access').set(next).where('id', '=', access.id).execute()
-      await this.deps.audit.record(actor, {
+      await db.updateTable('table_access').set(next).where('id', '=', access.id).execute()
+      audit.push({
         action: 'table_access.type_changed',
         subject: { kind: 'table_access', id: access.id, label: access.object_name },
         connectionId,
@@ -235,12 +269,16 @@ export class CatalogService {
         },
       })
     }
+    return audit
   }
 
   /** Objects that vanished from the read user's view wait for grants (or were dropped). */
-  private async updateAccessStates(connectionId: string, objects: CatalogObject[]): Promise<void> {
+  private async updateAccessStates(
+    db: Kysely<Database>,
+    connectionId: string,
+    objects: CatalogObject[],
+  ): Promise<void> {
     const names = objects.map((object) => object.name)
-    const db = this.deps.db
     if (names.length === 0) {
       await db
         .updateTable('table_access')
@@ -267,8 +305,8 @@ export class CatalogService {
    * Keeps the latest snapshots and every snapshot an unacknowledged drift points to; deleting
    * a snapshot deletes its drifts, and those must stay until an admin has seen them.
    */
-  private async prune(connectionId: string): Promise<void> {
-    const latest = await this.deps.db
+  private async prune(db: Kysely<Database>, connectionId: string): Promise<void> {
+    const latest = await db
       .selectFrom('schema_snapshots')
       .select('id')
       .where('connection_id', '=', connectionId)
@@ -276,13 +314,13 @@ export class CatalogService {
       .orderBy('id', 'desc')
       .limit(keptSnapshots)
       .execute()
-    const open = await this.deps.db
+    const open = await db
       .selectFrom('schema_drifts')
       .select('snapshot_id as id')
       .where('connection_id', '=', connectionId)
       .where('acknowledged_at', 'is', null)
       .execute()
-    await this.deps.db
+    await db
       .deleteFrom('schema_snapshots')
       .where('connection_id', '=', connectionId)
       .where(

@@ -26,6 +26,7 @@ import {
   AccessWarnings,
   connectionsKey,
   DiffSummary,
+  failureLabels,
   GrantSummary,
   ImpactList,
   opLabels,
@@ -167,6 +168,14 @@ export function ConnectionPage() {
           {errors.message(error)}
           {error instanceof ApiError &&
             error.errors.map((entry) => ` ${errors.field(error, entry.field) ?? ''}`).join('')}
+        </Notice>
+      )}
+      {connection.schemaCheck.failure !== null && (
+        <Notice tone="error">
+          {t('connections.schemaCheck.failed', {
+            time: formatDate(connection.schemaCheck.checkedAt),
+            reason: t(failureLabels[connection.schemaCheck.failure]),
+          })}
         </Notice>
       )}
       <dl className={styles.facts}>

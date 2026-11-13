@@ -26,14 +26,18 @@ export function encodeValue(
       // The driver returns them as strings without exponent; they stay exact.
       return { value: text }
     case 'date':
-      return isZeroDate(text) ? { value: null, invalid: true } : { value: text }
-    case 'datetime': {
-      if (isZeroDate(text)) return { value: null, invalid: true }
-      return { value: wallTimeToInstant(text, timeZone) }
-    }
+      return isZeroDate(text) || !isValidDate(text)
+        ? { value: null, invalid: true }
+        : { value: text }
+    case 'datetime':
     case 'timestamp': {
       if (isZeroDate(text)) return { value: null, invalid: true }
-      return { value: wallTimeToInstant(text, 'UTC') }
+      // Legacy data written with ALLOW_INVALID_DATES (e.g. 2025-02-30) is flagged like a zero date.
+      try {
+        return { value: wallTimeToInstant(text, kind === 'datetime' ? timeZone : 'UTC') }
+      } catch {
+        return { value: null, invalid: true }
+      }
     }
     case 'set':
       return { value: text === '' ? [] : text.split(',') }
@@ -52,6 +56,15 @@ export function decodeDateTime(instant: string, timeZone: string): string {
 
 function isZeroDate(text: string): boolean {
   return text.startsWith('0000-00-00') || /^\d{4}-00-|^\d{4}-\d{2}-00/.test(text)
+}
+
+function isValidDate(text: string): boolean {
+  try {
+    Temporal.PlainDate.from(text)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function wallTimeToInstant(text: string, timeZone: string): string {

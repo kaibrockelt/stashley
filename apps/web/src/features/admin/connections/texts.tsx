@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type {
   AccessWarning,
+  ConnectionFailure,
   CredentialPurpose,
   GrantReport,
   GrantWarning,
@@ -37,6 +38,16 @@ export const tlsLabels: Record<TlsMode, MessageId> = {
   'verify-full': 'connections.tls.verifyFull',
 }
 
+export const failureLabels: Record<ConnectionFailure, MessageId> = {
+  unreachable: 'field.failure.unreachable',
+  timeout: 'field.failure.timeout',
+  access_denied: 'field.failure.accessDenied',
+  unknown_database: 'field.failure.unknownDatabase',
+  tls_failed: 'field.failure.tlsFailed',
+  host_not_allowed: 'field.failure.hostNotAllowed',
+  failed: 'field.failure.failed',
+}
+
 export const opLabels: Record<TableOp, MessageId> = {
   read: 'access.op.read',
   create: 'access.op.create',
@@ -68,6 +79,8 @@ const accessWarningLabels: Record<AccessWarning['code'], MessageId> = {
   not_in_schema: 'access.warning.notInSchema',
   template_invalid: 'access.warning.templateInvalid',
   key_mismatch: 'access.warning.keyMismatch',
+  view_dependencies_unknown: 'access.warning.viewDependenciesUnknown',
+  view_key_nullable: 'access.warning.viewKeyNullable',
 }
 
 const impactLabels: Record<ImpactItem['kind'], MessageId> = {

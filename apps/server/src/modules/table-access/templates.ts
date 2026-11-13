@@ -71,7 +71,9 @@ export function checkTemplate(
     }
     const bySource = context.relations.filter((relation) => relation.sourceColumn === part.relation)
     const byTarget = context.relations.filter((relation) => relation.targetObject === part.relation)
-    const relation = bySource[0] ?? (byTarget.length === 1 ? byTarget[0] : undefined)
+    // A source column with relations to two targets is ambiguous; name the target instead.
+    const relation =
+      bySource.length === 1 ? bySource[0] : byTarget.length === 1 ? byTarget[0] : undefined
     if (relation === undefined) return 'unknown_relation'
     const target = context.objects.get(relation.targetObject)
     if (target === undefined || !target.columns.some((column) => column.name === part.column)) {

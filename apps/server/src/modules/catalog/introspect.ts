@@ -29,7 +29,10 @@ interface IndexRow {
   indexName: string
   nonUnique: number | string
   sequence: number | string
-  column: string
+  /** Null for a functional key part (MySQL). */
+  column: string | null
+  /** Set for a prefix index such as `name(10)`. */
+  subPart: number | string | null
 }
 interface ForeignKeyRow {
   object: string
@@ -109,7 +112,7 @@ export async function introspect(
   )
   const indexes = await session.query<IndexRow>(
     `SELECT TABLE_NAME AS object, INDEX_NAME AS indexName, NON_UNIQUE AS nonUnique,
-            SEQ_IN_INDEX AS sequence, COLUMN_NAME AS \`column\`
+            SEQ_IN_INDEX AS sequence, COLUMN_NAME AS \`column\`, SUB_PART AS subPart
        FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ?
       ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX`,
     [database],
@@ -160,7 +163,9 @@ export async function introspect(
       unique: Number(row.nonUnique) === 0,
       columns: [],
     }
-    entry.columns.push(row.column)
+    // A prefix (`name(10)`) or an expression does not make the whole column unique.
+    if (row.column === null || row.subPart !== null) entry.unique = false
+    else entry.columns.push(row.column)
     keys.set(key, entry)
   }
   for (const [key, entry] of keys) {
@@ -209,6 +214,8 @@ export async function introspect(
     if (object === undefined) continue
     object.baseTables = resolveBaseTables(view.name, direct, objects)
     object.keyCandidates = keyCandidates(object, objects)
+    // Without SHOW VIEW the definition is empty and the base tables stay unknown.
+    object.dependenciesKnown = (view.definition ?? '').trim() !== ''
   }
   return [...objects.values()]
 }
@@ -227,7 +234,8 @@ function resolveBaseTables(
     if (name === undefined || seen.has(name)) continue
     seen.add(name)
     if (direct.has(name)) queue.push(...(direct.get(name) ?? []))
-    else if (objects.get(name)?.type !== 'view') result.add(name)
+    // Only known tables: CTE names and objects the read user cannot see are left out.
+    else if (objects.get(name)?.type === 'table') result.add(name)
   }
   return [...result].sort()
 }

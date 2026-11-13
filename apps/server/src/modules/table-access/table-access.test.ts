@@ -1,10 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { CatalogObject, ProblemDocument, TableAccess } from '@stashley/shared'
+import type { CatalogObject, Connection, ProblemDocument, TableAccess } from '@stashley/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createServer, type Server } from '../../app.ts'
 import { TestClient } from '../../test/client.ts'
-import { column, storeConnection, storeSnapshot, table } from '../../test/connections.ts'
+import {
+  column,
+  storeConnection,
+  storedConnectionId,
+  storeSnapshot,
+  table,
+} from '../../test/connections.ts'
+import { buildGrantReport } from '../connections/grants.ts'
 import { testConfig } from '../../test/helpers.ts'
 import { checkTemplate, defaultTemplate } from './templates.ts'
 
@@ -26,7 +33,23 @@ const anmeldung = table(
   ],
 )
 const hotel = table('hotel', [column('name', 'string', 2), column('ort', 'string', 3)])
-const objects: CatalogObject[] = [anmeldung, hotel, person]
+/** A view the read user cannot inspect (no SHOW VIEW). */
+const status: CatalogObject = {
+  name: 'v_status',
+  type: 'view',
+  rowEstimate: null,
+  columns: [
+    { ...column('anmeldung_id', 'bigint'), nullable: false },
+    column('offen', 'decimal', 2),
+  ],
+  primaryKey: [],
+  uniqueKeys: [],
+  foreignKeys: [],
+  baseTables: [],
+  keyCandidates: [],
+  dependenciesKnown: false,
+}
+const objects: CatalogObject[] = [anmeldung, hotel, person, status]
 
 const servers: Server[] = []
 afterEach(async () => {
@@ -89,6 +112,13 @@ describe('display templates', () => {
     expect(checkTemplate('{startnummer}', { ...context, excluded: new Set(['startnummer']) })).toBe(
       'excluded_column',
     )
+    // One source column with relations to two targets: only the target name is unambiguous.
+    const twoTargets = {
+      ...context,
+      relations: [...context.relations, { sourceColumn: 'person_id', targetObject: 'hotel' }],
+    }
+    expect(checkTemplate('{person_id.vorname}', twoTargets)).toBe('unknown_relation')
+    expect(checkTemplate('{person.vorname}', twoTargets)).toBeUndefined()
   })
 
   it('default to the first text column that is not excluded', () => {
@@ -159,5 +189,89 @@ describe('table access', () => {
     expect((await s.list()).get('person')?.warnings).toEqual([])
     await storeSnapshot(s.server, [{ ...person, primaryKey: ['email'] }], Date.now() + 1000)
     expect((await s.list()).get('person')?.warnings).toEqual([{ code: 'key_mismatch' }])
+  })
+
+  it('grants update and delete only with SELECT for the write user', async () => {
+    const s = await setup()
+    const report = buildGrantReport({
+      purpose: 'write',
+      database: 'wanderverein',
+      lines: ['GRANT INSERT, UPDATE, DELETE ON `wanderverein`.* TO `stashley_write`@`%`'],
+    })
+    await s.server.store.db
+      .updateTable('connection_credentials')
+      .set({ grant_report: JSON.stringify(report) })
+      .where('purpose', '=', 'write')
+      .execute()
+    const created = await s.expose('hotel', { ops: ['read', 'create', 'update', 'delete'] })
+    expect(created.json<TableAccess>()).toMatchObject({
+      grantedOps: ['read', 'create'],
+      warnings: [{ code: 'ops_without_grant', ops: ['update', 'delete'] }],
+    })
+  })
+
+  it('warns about views without known base tables or with a nullable key', async () => {
+    const s = await setup()
+    const created = await s.expose('v_status', { keyColumn: 'offen' })
+    expect(created.json<TableAccess>().warnings.map((warning) => warning.code)).toEqual([
+      'view_dependencies_unknown',
+      'view_key_nullable',
+    ])
+  })
+
+  it('keeps relations consistent with column kinds and view keys', async () => {
+    const s = await setup()
+    const relation = (fields: Record<string, unknown>) =>
+      s.admin.send('POST', '/internal/admin/relations', {
+        connectionId: storedConnectionId,
+        kind: 'many_to_one',
+        ...fields,
+      })
+    const mismatch = await relation({
+      sourceObject: 'hotel',
+      sourceColumn: 'name',
+      targetObject: 'anmeldung',
+      targetColumn: 'id',
+    })
+    expect(mismatch.json<ProblemDocument>().errors).toEqual([
+      { field: 'targetColumn', code: 'type_mismatch' },
+    ])
+
+    const view = (await s.expose('v_status', { keyColumn: 'anmeldung_id' })).json<TableAccess>()
+    const oneToOne = await relation({
+      sourceObject: 'anmeldung',
+      sourceColumn: 'id',
+      targetObject: 'v_status',
+      targetColumn: 'anmeldung_id',
+      kind: 'one_to_one',
+    })
+    expect(oneToOne.statusCode).toBe(201)
+    const rekeyed = await s.admin.send('PUT', `/internal/admin/table-access/${view.id}`, {
+      ops: ['read'],
+      keyColumn: 'offen',
+      displayTemplate: null,
+      apiResource: null,
+      mcpEnabled: false,
+      exclusions: [],
+    })
+    expect(rekeyed.json<ProblemDocument>().errors).toEqual([
+      { field: 'keyColumn', code: 'used_by_relation' },
+    ])
+  })
+})
+
+describe('schema check status', () => {
+  it('keeps the failure of the last schema read on the connection', async () => {
+    const s = await setup()
+    const refresh = await s.admin.send(
+      'POST',
+      `/internal/admin/connections/${storedConnectionId}/schema/refresh`,
+    )
+    expect(refresh.json<ProblemDocument>().code).toBe('connection_failed')
+    const connection = (
+      await s.admin.request('GET', `/internal/admin/connections/${storedConnectionId}`)
+    ).json<Connection>()
+    expect(connection.schemaCheck.failure).toBe('host_not_allowed')
+    expect(connection.schemaCheck.checkedAt).not.toBeNull()
   })
 })

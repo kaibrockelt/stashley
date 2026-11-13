@@ -254,6 +254,9 @@ export function ConnectionDialog(props: { connection?: Connection; onClose: () =
           onChange={setTlsMode}
           options={tlsModes.map((mode) => ({ id: mode, label: t(tlsLabels[mode]) }))}
         />
+        {(tlsMode === 'disabled' || tlsMode === 'required') && (
+          <Notice tone="info">{t('connections.tls.unverified')}</Notice>
+        )}
         {(tlsMode === 'verify-ca' || tlsMode === 'verify-full') && (
           <>
             <TextAreaField

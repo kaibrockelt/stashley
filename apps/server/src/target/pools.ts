@@ -164,6 +164,7 @@ interface PoolEntry {
  */
 export class TargetPools {
   private readonly pools = new Map<string, PoolEntry>()
+  private readonly pending = new Map<string, Promise<PoolEntry>>()
   private readonly resolveHost: HostResolver
 
   constructor(options: { resolveHost?: HostResolver } = {}) {
@@ -179,17 +180,31 @@ export class TargetPools {
     return once(this.resolveHost, spec, user, fn)
   }
 
-  private async entry(connectionId: string, spec: TargetSpec, user: TargetUser) {
+  private entry(connectionId: string, spec: TargetSpec, user: TargetUser): Promise<PoolEntry> {
     const key = `${connectionId}:${user.purpose}`
     const fingerprint = createHash('sha256')
       .update(JSON.stringify([spec, user.username, user.password]))
       .digest('hex')
     const existing = this.pools.get(key)
-    if (existing?.fingerprint === fingerprint) return existing
-    if (existing !== undefined) {
-      this.pools.delete(key)
-      void existing.pool.end().catch(() => undefined)
+    if (existing?.fingerprint === fingerprint) return Promise.resolve(existing)
+    // Concurrent first requests share one pool instead of each creating (and leaking) one.
+    const pendingKey = `${key}:${fingerprint}`
+    let creating = this.pending.get(pendingKey)
+    if (creating === undefined) {
+      creating = this.create(key, fingerprint, spec, user).finally(() =>
+        this.pending.delete(pendingKey),
+      )
+      this.pending.set(pendingKey, creating)
     }
+    return creating
+  }
+
+  private async create(
+    key: string,
+    fingerprint: string,
+    spec: TargetSpec,
+    user: TargetUser,
+  ): Promise<PoolEntry> {
     const address = await this.resolveHost(spec.host)
     const pool = mysql.createPool({
       ...driverOptions(spec, user, address),
@@ -200,7 +215,9 @@ export class TargetPools {
       queueLimit: 100,
     })
     const created: PoolEntry = { fingerprint, pool, servers: new WeakMap() }
+    const replaced = this.pools.get(key)
     this.pools.set(key, created)
+    if (replaced !== undefined) void replaced.pool.end().catch(() => undefined)
     return created
   }
 
@@ -224,20 +241,31 @@ export class TargetPools {
       }
       throw failure
     }
+    let reusable = true
     try {
       let server = servers.get(connection.connection)
       if (server === undefined) {
         try {
           server = await setUp(connection, spec, user.purpose)
         } catch (error) {
-          connection.destroy()
+          reusable = false
           throw toTargetError(error)
         }
         servers.set(connection.connection, server)
       }
       return await fn(session(connection, server, spec))
+    } catch (error) {
+      // A failed call may leave a transaction open; the next caller must not inherit it.
+      if (reusable) {
+        reusable = await connection.query('ROLLBACK').then(
+          () => true,
+          () => false,
+        )
+      }
+      throw error
     } finally {
-      connection.release()
+      if (reusable) connection.release()
+      else connection.destroy()
     }
   }
 

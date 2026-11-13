@@ -123,6 +123,9 @@ async function rotateKey(options: { newKeyFile: string; force?: boolean }): Prom
     await verifyKey(services.settings, current)
     const backup = await backupMetastore(store, backupDir(cfg), backupFileName('pre-rotate-key'))
     console.log(`Backup written to ${backup}`)
+    console.log(
+      'The backup keeps the secrets under the current key; restore it only with that key.',
+    )
     const result = await rotateSecrets(store.db, current, createKeyRing(newKey), {
       plaintext: keyCheckPlaintext,
       aad: keyCheckAad,

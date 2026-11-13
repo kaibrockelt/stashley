@@ -44,6 +44,8 @@ export async function storeConnection(
       query_timeout_ms: 10_000,
       created_at: now,
       updated_at: now,
+      schema_checked_at: null,
+      schema_check_failure: null,
     })
     .execute()
   const grants = {

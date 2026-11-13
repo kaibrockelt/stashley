@@ -644,6 +644,33 @@ describe.skipIf(targets.length === 0).each(targets)('target database $name', ({ 
     expect((await open()).map((entry) => entry.id)).toEqual([drift?.id])
   })
 
+  it('ignores prefix indexes and CTE names when reading keys and view tables', async () => {
+    await root.query('ALTER TABLE wanderverein.hotel ADD UNIQUE KEY hotel_name_prefix (name(10))')
+    await root.query(
+      `CREATE VIEW wanderverein.v_cte AS
+         WITH x AS (SELECT id, person_id FROM wanderverein.anmeldung)
+         SELECT x.id, x.person_id FROM x`,
+    )
+    try {
+      await server.services.catalog.refresh(systemActor, connection.id, 'manual')
+      const objects = new Map(
+        (await admin.request('GET', `/internal/admin/connections/${connection.id}/schema`))
+          .json<CatalogSnapshot>()
+          .objects.map((object) => [object.name, object]),
+      )
+      // A unique prefix does not make the whole column unique.
+      expect(objects.get('hotel')?.uniqueKeys).toEqual([])
+      expect(objects.get('v_cte')).toMatchObject({
+        baseTables: ['anmeldung'],
+        dependenciesKnown: true,
+      })
+      expect(objects.get('v_zahlungsstatus')?.dependenciesKnown).toBe(true)
+    } finally {
+      await root.query('DROP VIEW IF EXISTS wanderverein.v_cte')
+      await root.query('ALTER TABLE wanderverein.hotel DROP INDEX hotel_name_prefix')
+    }
+  })
+
   it('keeps a connection that is still in use', async () => {
     const response = await admin.send('DELETE', `/internal/admin/connections/${connection.id}`)
     expect(problem(response).code).toBe('in_use')

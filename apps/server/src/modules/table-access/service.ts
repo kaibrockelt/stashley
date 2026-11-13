@@ -75,6 +75,13 @@ function excludedForAll(
   )
 }
 
+/** Value kinds that can be joined with each other. */
+function keyFamily(kind: string | undefined): string | undefined {
+  if (kind === 'integer' || kind === 'bigint') return 'integer'
+  if (kind === 'string' || kind === 'enum') return 'string'
+  return kind
+}
+
 function defaultResource(objectName: string): string {
   const base = objectName.toLowerCase().replace(/[^a-z0-9_]/g, '_')
   return /^[a-z]/.test(base) ? base.slice(0, 63) : `t_${base}`.slice(0, 63)
@@ -176,7 +183,7 @@ export class TableAccessService {
   }
 
   async list(connectionId: string): Promise<TableAccess[]> {
-    const target = await this.deps.connections.resolve(connectionId)
+    const target = await this.deps.connections.grantReports(connectionId)
     const snapshot = await this.deps.catalog.current(connectionId)
     const rows = await this.rows(connectionId)
     const exclusions = await this.exclusions(rows.map((row) => row.id))
@@ -187,7 +194,7 @@ export class TableAccessService {
         exclusions.filter((entry) => entry.table_access_id === row.id),
         snapshot,
         target.reports,
-        target.users.write !== undefined,
+        target.hasWriter,
         templates,
       ),
     )
@@ -252,8 +259,10 @@ export class TableAccessService {
     if (row.object_type === 'table' && reports.write !== undefined) {
       const privileges = objectPrivileges(reports.write, row.object_name)
       if (privileges.has('INSERT')) granted.add('create')
-      if (privileges.has('UPDATE')) granted.add('update')
-      if (privileges.has('DELETE')) granted.add('delete')
+      // Updates and deletes find their row by key, which needs SELECT as well.
+      const select = privileges.has('SELECT')
+      if (privileges.has('UPDATE') && select) granted.add('update')
+      if (privileges.has('DELETE') && select) granted.add('delete')
     }
     const warnings: AccessWarning[] = []
     if (object === undefined || row.state === 'pending_grants')
@@ -265,6 +274,16 @@ export class TableAccessService {
     if (ungranted.length > 0) warnings.push({ code: 'ops_without_grant', ops: ungranted })
     if (row.object_type === 'view' && row.key_column === null) {
       warnings.push({ code: 'view_without_key' })
+    }
+    // Without SHOW VIEW the base tables of a view stay unknown, so caches cannot follow
+    // writes to them (§12).
+    if (object?.type === 'view' && object.dependenciesKnown === false) {
+      warnings.push({ code: 'view_dependencies_unknown' })
+    }
+    // A key column with NULL values cannot identify rows or page through them.
+    const key = object?.columns.find((column) => column.name === row.key_column)
+    if (row.object_type === 'view' && key?.nullable === true) {
+      warnings.push({ code: 'view_key_nullable' })
     }
     // A table's key must still be its single-column primary key.
     if (
@@ -447,6 +466,31 @@ export class TableAccessService {
   async update(actor: Actor, id: string, input: UpdateInput): Promise<TableAccess> {
     const before = await this.get(id)
     const values = await this.validate(before.connectionId, before.objectName, input, id)
+    // A view's key column is what makes it a unique relation target; relations built on it
+    // must go first.
+    if (
+      before.objectType === 'view' &&
+      before.keyColumn !== null &&
+      values.keyColumn !== before.keyColumn
+    ) {
+      const key = before.keyColumn
+      const used = await this.deps.db
+        .selectFrom('virtual_relations')
+        .select('id')
+        .where('connection_id', '=', before.connectionId)
+        .where((eb) =>
+          eb.or([
+            eb.and([eb('target_object', '=', before.objectName), eb('target_column', '=', key)]),
+            eb.and([
+              eb('source_object', '=', before.objectName),
+              eb('source_column', '=', key),
+              eb('kind', '=', 'one_to_one'),
+            ]),
+          ]),
+        )
+        .executeTakeFirst()
+      if (used !== undefined) throw fieldError('keyColumn', 'used_by_relation')
+    }
     await writeTransaction(this.deps.db, async (trx) => {
       await trx
         .updateTable('table_access')
@@ -512,6 +556,14 @@ export class TableAccessService {
     }
     if (!target.columns.some((column) => column.name === input.targetColumn)) {
       throw fieldError('targetColumn', 'unknown_column')
+    }
+    const kindOf = (object: CatalogObject, name: string) =>
+      object.columns.find((column) => column.name === name)?.kind
+    if (
+      keyFamily(kindOf(source, input.sourceColumn)) !==
+      keyFamily(kindOf(target, input.targetColumn))
+    ) {
+      throw fieldError('targetColumn', 'type_mismatch')
     }
     const accesses = await this.rows(input.connectionId)
     const viewKey = (name: string) =>

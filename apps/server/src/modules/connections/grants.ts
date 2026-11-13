@@ -21,7 +21,8 @@ export type ParsedGrant =
       level: Level
       grantOption: boolean
     }
-  | { kind: 'roles'; roles: RoleName[]; grantee: RoleName | undefined }
+  | { kind: 'roles'; roles: RoleName[]; grantee: RoleName | undefined; adminOption: boolean }
+  | { kind: 'revoke'; privileges: { name: string }[]; schema: string }
   | { kind: 'proxy' }
   | { kind: 'ignored' }
   | { kind: 'unparsed'; raw: string }
@@ -157,14 +158,31 @@ function parsePrivileges(tokens: Token[]): { name: string; columns?: string[] }[
 export function parseGrantLine(line: string): ParsedGrant {
   const clean = redactGrantLine(line.trim())
   const tokens = tokenize(clean)
-  if (isWord(tokens[0], 'REVOKE') || isWord(tokens[0], 'SET')) return { kind: 'ignored' }
+  if (isWord(tokens[0], 'SET')) return { kind: 'ignored' }
+  if (isWord(tokens[0], 'REVOKE')) {
+    // MySQL partial revokes: `REVOKE DELETE ON `db`.* FROM …` restricts a global privilege.
+    const on = tokens.findIndex((token) => isWord(token, 'ON'))
+    const from = tokens.findIndex((token) => isWord(token, 'FROM'))
+    const level = on === -1 || from < on ? undefined : parseLevel(tokens.slice(on + 1, from))
+    if (level?.kind !== 'schema') return { kind: 'ignored' }
+    return {
+      kind: 'revoke',
+      privileges: parsePrivileges(tokens.slice(1, on)),
+      schema: level.schema,
+    }
+  }
   if (!isWord(tokens[0], 'GRANT')) return { kind: 'unparsed', raw: clean }
   const on = tokens.findIndex((token) => isWord(token, 'ON'))
   const to = tokens.findIndex((token) => isWord(token, 'TO'))
   if (to === -1) return { kind: 'unparsed', raw: clean }
   if (on === -1 || on > to) {
     const [grantee] = parseRoles(tokens.slice(to + 1))
-    return { kind: 'roles', roles: parseRoles(tokens.slice(1, to)), grantee }
+    return {
+      kind: 'roles',
+      roles: parseRoles(tokens.slice(1, to)),
+      grantee,
+      adminOption: hasOption(line, 'ADMIN'),
+    }
   }
   if (isWord(tokens[1], 'PROXY')) return { kind: 'proxy' }
   const level = parseLevel(tokens.slice(on + 1, to))
@@ -173,25 +191,23 @@ export function parseGrantLine(line: string): ParsedGrant {
     kind: 'privileges',
     privileges: parsePrivileges(tokens.slice(1, on)),
     level,
-    grantOption: hasGrantOption(line),
+    grantOption: hasOption(line, 'GRANT'),
   }
 }
 
 /**
- * Looks for `WITH GRANT OPTION` in the unredacted line. MariaDB writes it after the
- * authentication clause (`… IDENTIFIED BY PASSWORD '*…' WITH GRANT OPTION`), which the
- * redaction removes. Quoted strings are single tokens, so a password cannot fake it.
+ * Looks for `WITH GRANT OPTION` or `WITH ADMIN OPTION` in the unredacted line. MariaDB writes
+ * them after the authentication clause (`… IDENTIFIED BY PASSWORD '*…' WITH GRANT OPTION`),
+ * which the redaction removes. Quoted strings are single tokens, so a password cannot fake it.
  */
-function hasGrantOption(line: string): boolean {
+function hasOption(line: string, kind: 'GRANT' | 'ADMIN'): boolean {
   const tokens = tokenize(line.trim())
   const to = tokens.findIndex((token) => isWord(token, 'TO'))
   return tokens
     .slice(to + 1)
     .some(
       (token, index, rest) =>
-        isWord(token, 'WITH') &&
-        isWord(rest[index + 1], 'GRANT') &&
-        isWord(rest[index + 2], 'OPTION'),
+        isWord(token, 'WITH') && isWord(rest[index + 1], kind) && isWord(rest[index + 2], 'OPTION'),
     )
 }
 
@@ -211,8 +227,9 @@ function schemaMatches(pattern: string, schema: string): { matches: boolean; wil
   return { matches, wildcard: /(?<!\\)%/.test(pattern) }
 }
 
+/** SHOW VIEW is checked per exposed view (`view_dependencies_unknown`), not for the schema. */
 const required: Record<CredentialPurpose, string[]> = {
-  read: ['SELECT', 'SHOW VIEW'],
+  read: ['SELECT'],
   write: ['SELECT', 'INSERT', 'UPDATE'],
   schema: ['CREATE', 'INSERT'],
 }
@@ -224,6 +241,9 @@ const allowed: Record<CredentialPurpose, Set<string>> = {
 }
 
 const routinePrivileges = new Set(['EXECUTE', 'CREATE ROUTINE', 'ALTER ROUTINE'])
+
+/** The privileges Stashley can use, which `ALL PRIVILEGES` stands for in its checks. */
+const allPrivileges = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'SHOW VIEW', 'CREATE']
 
 function scopeOf(level: Level): string {
   switch (level.kind) {
@@ -289,13 +309,23 @@ export function buildGrantReport(input: {
     entry.columns.set(name, granted)
   }
 
+  // Partial revokes on the target schema, which only restrict global privileges.
+  const revoked = new Set<string>()
+
   for (const { line, effective } of lines) {
     const grant = parseGrantLine(line)
     if (grant.kind === 'proxy') warn({ code: 'proxy', scope: 'PROXY' })
     if (grant.kind === 'unparsed') warn({ code: 'unparsed', scope: grant.raw.slice(0, 200) })
+    if (grant.kind === 'revoke' && effective && grant.schema === input.database) {
+      for (const privilege of grant.privileges) revoked.add(privilege.name)
+    }
     if (grant.kind === 'roles') {
-      for (const role of grant.roles)
-        roles.add(role.host === undefined ? role.name : `${role.name}@${role.host}`)
+      for (const role of grant.roles) {
+        const key = role.host === undefined ? role.name : `${role.name}@${role.host}`
+        roles.add(key)
+        // The account may grant this role to others.
+        if (grant.adminOption) warn({ code: 'grant_option', scope: key })
+      }
     }
     if (grant.kind !== 'privileges') continue
     const scope = scopeOf(grant.level)
@@ -330,6 +360,13 @@ export function buildGrantReport(input: {
 
   for (const role of input.inactiveRoles ?? []) warn({ code: 'inactive_role', scope: role })
   for (const role of input.unreadableRoles ?? []) warn({ code: 'role_unreadable', scope: role })
+
+  // A partial revoke takes a global privilege away on the target schema. `ALL PRIVILEGES` is
+  // spelled out first, so one revoked privilege does not take the others with it.
+  if (revoked.size > 0) {
+    if (global.delete('ALL PRIVILEGES')) for (const name of allPrivileges) global.add(name)
+    for (const name of revoked) global.delete(name)
+  }
 
   const has = (privilege: string) => {
     const test = (set: Set<string>) => set.has(privilege) || set.has('ALL PRIVILEGES')

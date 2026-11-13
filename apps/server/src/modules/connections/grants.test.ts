@@ -40,6 +40,7 @@ describe('parseGrantLine', () => {
       kind: 'roles',
       roles: [{ name: 'leser' }],
       grantee: { name: 'app', host: '%' },
+      adminOption: false,
     })
     expect(parseGrantLine('GRANT `r1`@`%`,`r2`@`%` TO `app`@`%` WITH ADMIN OPTION')).toEqual({
       kind: 'roles',
@@ -48,6 +49,7 @@ describe('parseGrantLine', () => {
         { name: 'r2', host: '%' },
       ],
       grantee: { name: 'app', host: '%' },
+      adminOption: true,
     })
     // MariaDB lists the roles of an active role as role-to-role grants.
     expect(parseGrantLine('GRANT `r_nest` TO `r_def`')).toMatchObject({
@@ -210,6 +212,47 @@ describe('buildGrantReport', () => {
       ]),
     )
     expect(report.roles).toEqual(['r_def', 'r_other'])
+  })
+
+  it('needs only SELECT for the read user; SHOW VIEW is checked per view', () => {
+    const report = buildGrantReport({
+      purpose: 'read',
+      database: db,
+      lines: ['GRANT SELECT ON `wanderverein`.* TO `leser`@`%`'],
+    })
+    expect(report.required).toEqual(['SELECT'])
+    expect(report.missing).toEqual([])
+  })
+
+  it('warns about roles the account may pass on', () => {
+    const report = buildGrantReport({
+      purpose: 'read',
+      database: db,
+      lines: [
+        'GRANT `r_def`@`%` TO `leser`@`%` WITH ADMIN OPTION',
+        'GRANT SELECT ON `wanderverein`.* TO `leser`@`%`',
+      ],
+    })
+    expect(report.warnings).toEqual([{ code: 'grant_option', scope: 'r_def@%' }])
+  })
+
+  it('takes partial revokes on the target schema off global privileges', () => {
+    const report = buildGrantReport({
+      purpose: 'write',
+      database: db,
+      lines: [
+        'GRANT ALL PRIVILEGES ON *.* TO `schreiber`@`%`',
+        'REVOKE DELETE, DROP ON `wanderverein`.* FROM `schreiber`@`%`',
+        'REVOKE INSERT ON `other`.* FROM `schreiber`@`%`',
+      ],
+    })
+    expect(report.missing).toEqual([])
+    const privileges = objectPrivileges(report, 'zahlung')
+    expect(privileges.has('DELETE')).toBe(false)
+    expect(privileges.has('INSERT')).toBe(true)
+    expect(report.warnings).toEqual([
+      { code: 'global_privilege', privilege: 'ALL PRIVILEGES', scope: '*.*' },
+    ])
   })
 
   it('expands ALL PRIVILEGES and treats escaped wildcards literally', () => {

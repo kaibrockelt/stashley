@@ -39,6 +39,10 @@ export interface ConnectionsTable {
   query_timeout_ms: number
   created_at: number
   updated_at: number
+  /** Last schema read, manual or scheduled; null before the first. */
+  schema_checked_at: number | null
+  /** Failure code of the last schema read, null when it succeeded. */
+  schema_check_failure: string | null
 }
 
 export interface ConnectionCredentialsTable {

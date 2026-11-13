@@ -89,6 +89,10 @@ describe('rotate-key', () => {
       })
       .execute()
 
+    // Every column that holds a ciphertext must be in the registry, or rotation would leave
+    // it unreadable. The key check value lives in `settings`.
+    expect(ciphertextColumns(server)).toEqual([...encryptedColumns, 'settings.value'].sort())
+
     const result = await rotateSecrets(db, current, next, {
       plaintext: keyCheckPlaintext,
       aad: keyCheckAad,
@@ -121,4 +125,61 @@ describe('rotate-key', () => {
     await expect(verifyKey(server.services.settings, current)).rejects.toThrow(/does not match/)
     expect((await admin.session()).state).toBe('anonymous')
   })
+
+  it('changes nothing when one secret cannot be decrypted', async () => {
+    const server = await createServer(
+      testConfig({
+        INITIAL_ADMIN_EMAIL: 'admin@example.com',
+        INITIAL_ADMIN_PASSWORD: 'correct horse battery staple',
+      }),
+      { quiet: true, listen: false },
+    )
+    servers.push(server)
+    await server.start()
+    const admin = new TestClient(server.app)
+    await admin.login('admin@example.com', 'correct horse battery staple')
+    const db = server.store.db
+    const current = createKeyRing(testSecret)
+    const [user] = await db.selectFrom('users').select('id').execute()
+    // Bound to another row, so it does not decrypt here.
+    const broken = encrypt(current, 'TOTPSECRET', 'users:someone-else:totp_secret')
+    await db
+      .updateTable('users')
+      .set({ totp_secret: broken })
+      .where('id', '=', user?.id ?? '')
+      .execute()
+
+    await expect(
+      rotateSecrets(db, current, createKeyRing('a completely different key of 32+ bytes'), {
+        plaintext: keyCheckPlaintext,
+        aad: keyCheckAad,
+      }),
+    ).rejects.toThrow()
+    const after = await db.selectFrom('users').select('totp_secret').executeTakeFirstOrThrow()
+    expect(after.totp_secret).toBe(broken)
+    await expect(verifyKey(server.services.settings, current)).resolves.toBeUndefined()
+    expect((await admin.session()).state).toBe('active')
+  })
 })
+
+/** `table.column` of every column holding a ciphertext (`v1.<key id>.…`, also as JSON). */
+function ciphertextColumns(server: Server): string[] {
+  const sqlite = server.store.sqlite
+  const found: string[] = []
+  const tables = sqlite
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+    .all() as { name: string }[]
+  for (const { name: table } of tables) {
+    const columns = sqlite.prepare(`PRAGMA table_info("${table}")`).all() as { name: string }[]
+    for (const { name: column } of columns) {
+      const hit = sqlite
+        .prepare(
+          `SELECT 1 FROM "${table}" WHERE CAST("${column}" AS TEXT) GLOB 'v1.[0-9a-f]*.*'
+              OR CAST("${column}" AS TEXT) GLOB '"v1.[0-9a-f]*.*' LIMIT 1`,
+        )
+        .get()
+      if (hit !== undefined) found.push(`${table}.${column}`)
+    }
+  }
+  return found.sort()
+}

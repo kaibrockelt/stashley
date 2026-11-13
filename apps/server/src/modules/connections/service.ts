@@ -238,6 +238,10 @@ export class ConnectionsService {
           checkedAt: isoOrNull(credential.checked_at),
         })),
       schemaCapturedAt: isoOrNull(snapshot?.captured_at ?? null),
+      schemaCheck: {
+        checkedAt: isoOrNull(row.schema_checked_at),
+        failure: (row.schema_check_failure ?? null) as Connection['schemaCheck']['failure'],
+      },
       openDrifts: Number(drifts.count),
       createdAt: new Date(row.created_at).toISOString(),
       updatedAt: new Date(row.updated_at).toISOString(),
@@ -320,6 +324,8 @@ export class ConnectionsService {
           query_timeout_ms: spec.queryTimeoutMs,
           created_at: now,
           updated_at: now,
+          schema_checked_at: null,
+          schema_check_failure: null,
         })
         .execute()
       await this.saveCredentials(trx, id, users, reports)
@@ -479,6 +485,31 @@ export class ConnectionsService {
       users,
       reports,
     }
+  }
+
+  /** The stored grant reports and whether a write user exists; passwords stay encrypted. */
+  async grantReports(id: string): Promise<{
+    reports: ResolvedTarget['reports']
+    hasWriter: boolean
+  }> {
+    const connection = await this.deps.db
+      .selectFrom('connections')
+      .select('id')
+      .where('id', '=', id)
+      .executeTakeFirst()
+    if (connection === undefined) throw new AppError('not_found')
+    const credentials = await this.deps.db
+      .selectFrom('connection_credentials')
+      .select(['purpose', 'grant_report'])
+      .where('connection_id', '=', id)
+      .execute()
+    const reports: ResolvedTarget['reports'] = {}
+    for (const credential of credentials) {
+      if (credential.grant_report !== null) {
+        reports[credential.purpose] = JSON.parse(credential.grant_report) as GrantReport
+      }
+    }
+    return { reports, hasWriter: credentials.some((entry) => entry.purpose === 'write') }
   }
 
   /** Runs `fn` on a pooled connection of the read user. */

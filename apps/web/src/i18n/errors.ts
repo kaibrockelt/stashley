@@ -54,6 +54,8 @@ const fieldMessages: Record<string, MessageId> = {
   target_not_exposed: 'field.targetNotExposed',
   not_unique: 'field.notUnique',
   duplicate: 'field.duplicate',
+  type_mismatch: 'field.typeMismatch',
+  used_by_relation: 'field.usedByRelation',
 }
 
 /** Sign-in errors passed back from the OIDC callback as `?error=`. */

@@ -106,6 +106,15 @@ describe('pools', () => {
       })
     }
     expect(resolved).toEqual(['db.example.com', 'db.example.com'])
+
+    // Concurrent first requests share one pool, so the host is resolved once.
+    resolved.length = 0
+    const both = await Promise.allSettled([
+      pools.run('c2', spec, user, () => Promise.resolve()),
+      pools.run('c2', spec, user, () => Promise.resolve()),
+    ])
+    expect(both.map((result) => result.status)).toEqual(['rejected', 'rejected'])
+    expect(resolved).toEqual(['db.example.com'])
     await pools.closeAll()
   })
 })
@@ -154,6 +163,19 @@ describe('value encoding', () => {
     expect(encodeValue('timestamp', '2025-05-01 08:00:00', 'Europe/Berlin').value).toBe(
       '2025-05-01T08:00:00Z',
     )
+  })
+
+  it('flags invalid dates from legacy data instead of failing', () => {
+    expect(encodeValue('date', '2025-02-30', 'UTC')).toEqual({ value: null, invalid: true })
+    expect(encodeValue('datetime', '2025-02-30 10:00:00', 'UTC')).toEqual({
+      value: null,
+      invalid: true,
+    })
+    expect(encodeValue('timestamp', '2025-13-01 10:00:00', 'UTC')).toEqual({
+      value: null,
+      invalid: true,
+    })
+    expect(encodeValue('date', '2024-02-29', 'UTC')).toEqual({ value: '2024-02-29' })
   })
 
   it('reads DATETIME in the connection time zone and writes it back', () => {

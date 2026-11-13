@@ -39,7 +39,8 @@ export const connectionInput = z.object({
     .trim()
     .min(1)
     .max(253)
-    .regex(/^[A-Za-z0-9.:[\]-]+$/),
+    // Underscores occur in Docker service and container names.
+    .regex(/^[A-Za-z0-9_.:[\]-]+$/),
   port: z.number().int().min(1).max(65535),
   databaseName: identifier,
   tls: z.object({
@@ -143,6 +144,8 @@ export interface Connection {
   queryTimeoutSeconds: number
   credentials: ConnectionCredential[]
   schemaCapturedAt: string | null
+  /** The last schema read, and why it failed; the daily check runs unattended. */
+  schemaCheck: { checkedAt: string | null; failure: ConnectionFailure | null }
   openDrifts: number
   createdAt: string
   updatedAt: string
@@ -195,6 +198,8 @@ export interface CatalogObject {
   baseTables?: string[]
   /** Views: columns that likely identify a row. */
   keyCandidates?: string[]
+  /** Views: false when the read user cannot read the definition (no SHOW VIEW). */
+  dependenciesKnown?: boolean
 }
 
 export interface CatalogSnapshot {
@@ -278,6 +283,10 @@ export interface AccessWarning {
     | 'template_invalid'
     /** The table's primary key changed and no longer matches the key column. */
     | 'key_mismatch'
+    /** The read user lacks SHOW VIEW, so the view's base tables are unknown. */
+    | 'view_dependencies_unknown'
+    /** The view's key column can hold NULL. */
+    | 'view_key_nullable'
   ops?: TableOp[]
 }
 

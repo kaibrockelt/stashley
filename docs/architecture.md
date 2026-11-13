@@ -323,7 +323,7 @@ The lists below give each table's columns. Encrypted columns use the format desc
 
 | Table | Purpose and main columns |
 | --- | --- |
-| `connections` | `id`, `name` (unique, also the reference in configuration exports), `host`, `port`, `database_name`, `engine` (`mariadb`, `mysql`), `server_version`, `tls` (JSON: mode, CA PEM, server name), `timezone` (IANA), `query_timeout_ms`, timestamps |
+| `connections` | `id`, `name` (unique, also the reference in configuration exports), `host`, `port`, `database_name`, `engine` (`mariadb`, `mysql`), `server_version`, `tls` (JSON: mode, CA PEM, server name), `timezone` (IANA), `query_timeout_ms`, `schema_checked_at` and `schema_check_failure` (outcome of the last schema read), timestamps |
 | `connection_credentials` | `id`, `connection_id`, `purpose` (`read`, `write`, `schema`; unique per connection), `username`, `password` (encrypted, AAD `connection_credentials:<id>:password`), `grant_report` (JSON), `checked_at` |
 | `schema_snapshots` | `id`, `connection_id`, `captured_at`, `content_hash`, `content` (JSON, §9.3), `trigger` (`manual`, `scheduled`, `import`) |
 | `schema_drifts` | `id`, `connection_id`, `snapshot_id`, `detected_at`, `diff` (JSON), `acknowledged_at`, `acknowledged_by` |
@@ -518,7 +518,8 @@ The admin overview is computed with the same algebra over every published page. 
   - Only TCP is allowed; there is no socket path.
   - Before each pool is created, the host is resolved. Every address is normalized first, so IPv4-mapped IPv6 in any notation (`::ffff:7f00:1`) is checked as IPv4.
   - Only public, private (RFC 1918) and carrier-grade NAT IPv4 addresses, global unicast IPv6 (`2000::/3`) and unique local IPv6 (`fc00::/7`) are allowed. Everything else is rejected: loopback, unspecified, link-local, multicast, reserved and documentation ranges, and the IPv6 forms that can embed an IPv4 address (IPv4-compatible, NAT64, 6to4, Teredo). Addresses of the container's own interfaces are rejected too.
-  - The check repeats whenever a pool is recreated, which defends against DNS rebinding. A pool whose address cannot be reached (`unreachable`, `timeout`) is dropped, so the next request resolves the host again, e.g. after a database container got a new address.
+  - The check repeats whenever a pool is recreated, which defends against DNS rebinding. A pool whose address cannot be reached (`unreachable`, `timeout`) is dropped, so the next request resolves the host again, e.g. after a database container got a new address. Concurrent first requests share one pool.
+  - A call that fails returns its connection only after `ROLLBACK`, so no caller inherits an open transaction; if that fails too, the connection is closed.
   - When a name resolves to several allowed addresses, IPv4 is used first: containers often have no IPv6 route, and the pinned socket cannot fall back to another address.
   - The socket connects to the address that was checked, while the driver keeps the host name, so TLS still verifies the certificate against the name (or the configured server name).
   - Integration tests on a developer machine reach databases through loopback; only the test server relaxes the check there (`STASHLEY_TEST_ALLOW_LOOPBACK`). CI runs them with the check on.
@@ -548,12 +549,15 @@ The admin overview is computed with the same algebra over every published page. 
 - **Snapshot document:** for each object it records:
   - The type and the estimated row count.
   - Every column: name, position, data type, full column type, nullability, default, `auto_increment`, the `ON UPDATE` expression, length, precision and scale, enum or set values, generated flag. Only virtual and stored generated columns count as generated; MySQL's `DEFAULT_GENERATED` (an expression default such as `CURRENT_TIMESTAMP`) does not.
-  - The primary key, unique keys and foreign keys.
+  - The primary key, unique keys and foreign keys. Prefix indexes (`name(10)`) and functional key parts do not count as unique keys.
   - For views: the base tables and the key candidate.
 - **Diff:** a refresh compares the new snapshot with the stored one. It lists added, changed and removed objects and columns, and collects every affected query, component, relation, display template and API endpoint into an impact report.
 - **Scheduled check:** every 24 h. If the diff is not empty, it is stored as a drift and shown to admins until one of them marks it as seen.
 - **Snapshots:** a new one is stored only when the structure changed; row estimates are not part of the comparison. The last 20 per connection are kept, plus every snapshot an unacknowledged drift refers to.
 - **Table access state:** after every read, exposed objects the read user no longer sees switch to `pending_grants`, and back to `active` when they reappear.
+- **Check status:** every read, manual or scheduled, stores its time and failure code on the connection (`schema_checked_at`, `schema_check_failure`), so a failed daily check is shown on the connection page. The writes of a read (snapshot, drift, pruning, access states, type changes) run in one transaction.
+- **View base tables** list only tables the read user sees; CTE names are left out. Without `SHOW VIEW` the definition is empty: the view gets `dependenciesKnown: false`, and its table access shows `view_dependencies_unknown`, because caches on it cannot follow writes to its tables (§12). A view key column that can be NULL shows `view_key_nullable`.
+- **Virtual relations** need source and target columns of the same kind of value (integers, text, …). A view's key column cannot change while a relation relies on it.
 - **Type changes:** when an exposed table is replaced by a view of the same name, the table access becomes a view and its ceiling drops to `read`; a former view gets the table's single-column primary key as key column. Both are audited (`table_access.type_changed`) and appear in the impact list as `type_changed`.
 
 ### 9.4 Grant inspection
@@ -561,10 +565,11 @@ The admin overview is computed with the same algebra over every published page. 
 - **When:** on save and on demand, for each credential.
 - **How:** on a connection that is closed afterwards, the server runs `SHOW GRANTS`. Both engines list what a session of the user gets at sign-in: its own privileges, its active roles with their nested roles and, on MariaDB 11.1 and later, `PUBLIC`. The output is parsed into global, schema, table and column privileges.
 - **The report contains:**
-  - **Required privileges:** for read, `SELECT` and `SHOW VIEW`; for write, `SELECT`, `INSERT`, `UPDATE` and optionally `DELETE`; for schema, `CREATE` and `INSERT`.
+  - **Required privileges:** for read, `SELECT` (`SHOW VIEW` is checked per exposed view, §9.3); for write, `SELECT`, `INSERT`, `UPDATE` and optionally `DELETE`; for schema, `CREATE` and `INSERT`.
   - **Missing privileges.**
   - **Excess privileges, shown as warnings:** any global privilege other than `USAGE`; access to other schemas; `DROP`, `ALTER`, `FILE`, `GRANT OPTION`, `SUPER`, `PROCESS`, `CREATE USER`, `RELOAD`, `SHUTDOWN`, `EXECUTE`, routine, trigger and event privileges; write privileges on the read user; `ALTER` or `DROP` on the schema user.
-- **Effect on access:** per object, the report feeds `dbGrants` in §8.3. If the write user lacks `DELETE` on a table, delete is never offered there. The table access API shows these as `grantedOps` next to the ceiling.
+- **Effect on access:** per object, the report feeds `dbGrants` in §8.3. If the write user lacks `DELETE` on a table, delete is never offered there; update and delete also need `SELECT`, because they find their row by key. MySQL partial revokes (`REVOKE … ON db.*` against a global privilege) are taken off. Column-level privileges count for the object; M6 limits writable fields to the granted columns. The table access API shows these as `grantedOps` next to the ceiling.
+- **Grant options:** `WITH GRANT OPTION` on privileges and `WITH ADMIN OPTION` on roles are warnings (`grant_option`).
 - **Roles:** Stashley never runs `SET ROLE` in its pools, so only roles active at sign-in (`CURRENT_ROLE()`) count for required, missing and granted privileges.
   - Granted roles that are inactive at sign-in are read for warnings: MySQL with `SET ROLE ALL` and `SHOW GRANTS` (which also covers `mandatory_roles`), MariaDB with `SET ROLE <role>` and `SHOW GRANTS FOR CURRENT_ROLE` per role (which includes nested roles). MariaDB refuses `SHOW GRANTS FOR <role>` for roles that are not active.
   - Every inactive role gets the warning `inactive_role`. A role whose grants cannot be read gets `role_unreadable` instead of being skipped.
@@ -591,7 +596,7 @@ The rules are defined once in `packages/shared/src/values` and used by every sur
 | `BLOB`, `BINARY`, `VARBINARY`, spatial types | Never selected. The column metadata marks them as unsupported, and tables show a placeholder. |
 
 - **Writes** convert the other way: a UTC instant becomes the connection's wall time for `DATETIME`, using Temporal with `compatible` disambiguation.
-- **Invalid zero dates** read from legacy data become `null` and the row gets a flag.
+- **Invalid dates** read from legacy data (zero dates, or impossible dates such as `2025-02-30` written with `ALLOW_INVALID_DATES`) become `null` and the row gets a flag.
 
 ## 10. Read path
 
