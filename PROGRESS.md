@@ -2,7 +2,7 @@
 
 **Current milestone:** M3 – Connections and table access (in review)
 
-**Next step:** Push and confirm that CI is green, including the new integration job against the four database versions. Then review M3 in a fresh session before M4 starts.
+**Next step:** Review M3 in a fresh session before M4 starts. CI is green, including the integration job against the four database versions.
 
 **Recommended model strength for M4:** strongest model, maximum effort.
 
@@ -12,7 +12,7 @@
 | --- | --- | --- | --- |
 | M0 | Architecture plan | Strongest, maximum effort | Done |
 | M1 | Scaffold and operations: monorepo, CI, Dockerfile, build script, metadata store, health, logs, backup and restore, i18n and design token foundations | Medium | Done |
-| M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | Done (review fixes in, CI pending) |
+| M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | Done |
 | M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | In review |
 | M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Open |
 | M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | Open |
@@ -106,4 +106,5 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Verified: 85 server unit tests; 40 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7 (the whole demo schema exposed with its ceilings, TLS on MySQL); a browser run against MariaDB 12.3 with the grant warning, sharing of a table and a view, and a schema change with its impact.
   - Decisions: the read user's required privileges include SHOW VIEW even for schemas without views; privileges of every granted role count, active or not, so warnings err on the safe side; a schema read stores a new snapshot only when the structure changed.
   - Not yet verified: the new CI integration job, which needs a push.
+- 2026-11-13: CI fixed and green on `375ca1f`. The integration job had failed on `23685c6`: Vitest resolves test imports in its SSR environment, which ignored the `@stashley/source` condition, so `@stashley/shared` could not be found without a prior build. Checks, image and the integration job against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7 now pass. M2 is done.
 
