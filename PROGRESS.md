@@ -2,7 +2,7 @@
 
 **Current milestone:** M3 – Connections and table access (in review)
 
-**Next step:** Review M3 in a fresh session before M4 starts. CI is green, including the integration job against the four database versions.
+**Next step:** Work through the remaining findings of the M3 review (should fix: S1–S8), then close M3 and start M4.
 
 **Recommended model strength for M4:** strongest model, maximum effort.
 
@@ -108,3 +108,11 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Not yet verified: the new CI integration job, which needs a push.
 - 2026-11-13: CI fixed and green on `375ca1f`. The integration job had failed on `23685c6`: Vitest resolves test imports in its SSR environment, which ignored the `@stashley/source` condition, so `@stashley/shared` could not be found without a prior build. Checks, image and the integration job against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7 now pass. M2 is done.
 
+- 2026-11-13: M3 reviewed in a fresh session: 3 blocking, 8 should-fix and 18 nice-to-have findings. Fixed so far:
+  - Stored database passwords are reused only while host, port and TLS settings stay the same. With any other target, every password must be entered again, so a test can no longer send them to a different server. A test that uses stored passwords is audited as `connection.tested`.
+  - The self-connection guard normalizes addresses first, so IPv4-mapped IPv6 such as `::ffff:7f00:1` no longer reaches loopback. Only public, private and carrier-grade NAT IPv4, global unicast and unique local IPv6 are allowed. `ipaddr.js` (D8) is now a direct dependency.
+  - Role grants are read on MariaDB as well: it refuses `SHOW GRANTS FOR <role>` for inactive roles, so each role is read after `SET ROLE`. `PUBLIC` grants on MariaDB 11.1 and later count too.
+  - Missing and granted privileges now come only from roles active at sign-in, because Stashley never runs `SET ROLE`. Other granted roles still produce warnings, plus `inactive_role`. This replaces the earlier decision that every granted role counts.
+  - Route tests for all data routes: roles, CSRF, validation, guard and rate limit.
+  - Verified with 94 server unit tests and 52 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7.
+  - Open: the should-fix findings S1–S8.

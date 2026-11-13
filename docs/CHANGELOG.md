@@ -17,7 +17,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - User administration, identity providers, instance settings and an append-only audit log with CSV export.
 - CLI commands `user create --admin`, `user reset-password`, `user reset-mfa` and `auth enable-local`.
 - Database connections to MariaDB and MySQL with read, write and schema users, encrypted credentials, TLS and a guard against connecting to Stashley itself.
-- Grant check for every database user, with warnings about privileges beyond what it needs.
+- Grant check for every database user, including its roles, with warnings about privileges beyond what it needs.
 - Schema reading with keys, foreign keys and view dependencies, a daily comparison and a list of what a change affects.
 - Sharing of tables and views with upper limits, key columns for views, hidden columns, display values and relations, including relations into views.
 - CLI command `rotate-key`.
