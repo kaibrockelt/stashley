@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest'
-import { buildGrantReport, objectPrivileges, parseGrantLine, redactGrantLine } from './grants.ts'
+import {
+  buildGrantReport,
+  grantedRoles,
+  objectPrivileges,
+  parseCurrentRoles,
+  parseGrantLine,
+  redactGrantLine,
+} from './grants.ts'
 
 const db = 'wanderverein'
 
@@ -32,14 +39,43 @@ describe('parseGrantLine', () => {
     expect(parseGrantLine('GRANT `leser` TO `app`@`%`')).toEqual({
       kind: 'roles',
       roles: [{ name: 'leser' }],
+      grantee: { name: 'app', host: '%' },
     })
-    expect(parseGrantLine('GRANT `r1`@`%`,`r2`@`%` TO `app`@`%`')).toEqual({
+    expect(parseGrantLine('GRANT `r1`@`%`,`r2`@`%` TO `app`@`%` WITH ADMIN OPTION')).toEqual({
       kind: 'roles',
       roles: [
         { name: 'r1', host: '%' },
         { name: 'r2', host: '%' },
       ],
+      grantee: { name: 'app', host: '%' },
     })
+    // MariaDB lists the roles of an active role as role-to-role grants.
+    expect(parseGrantLine('GRANT `r_nest` TO `r_def`')).toMatchObject({
+      grantee: { name: 'r_def' },
+    })
+  })
+
+  it('finds the roles granted to the account and the active ones', () => {
+    const lines = [
+      'GRANT `r_def` TO `app`@`%`',
+      'GRANT `r_other` TO `app`@`%`',
+      'GRANT USAGE ON *.* TO `app`@`%`',
+      'GRANT `r_nest` TO `r_def`',
+      'GRANT SELECT ON `wanderverein`.* TO `r_def`',
+      'SET DEFAULT ROLE `r_def` FOR `app`@`%`',
+    ]
+    expect(grantedRoles(lines)).toEqual([{ name: 'r_def' }, { name: 'r_other' }])
+    expect(grantedRoles(['GRANT `a`@`%`,`b`@`%` TO `app`@`%`'])).toEqual([
+      { name: 'a', host: '%' },
+      { name: 'b', host: '%' },
+    ])
+    expect(parseCurrentRoles('mariadb', 'r_def')).toEqual(['r_def'])
+    expect(parseCurrentRoles('mariadb', null)).toEqual([])
+    expect(parseCurrentRoles('mysql', 'NONE')).toEqual([])
+    expect(parseCurrentRoles('mysql', '`r_def`@`%`,`r``x`@`localhost`')).toEqual([
+      'r_def@%',
+      'r`x@localhost',
+    ])
   })
 
   it('never keeps password hashes', () => {
@@ -112,6 +148,44 @@ describe('buildGrantReport', () => {
       lines: ['GRANT CREATE ON `wanderverein`.* TO `schema`@`%`'],
     })
     expect(schemaUser.missing).toEqual(['INSERT'])
+  })
+
+  it('grants only what is in effect, but warns about every granted role', () => {
+    const report = buildGrantReport({
+      purpose: 'read',
+      database: db,
+      lines: [
+        'GRANT `r_def` TO `leser`@`%`',
+        'GRANT `r_other` TO `leser`@`%`',
+        'GRANT USAGE ON *.* TO `leser`@`%`',
+        'GRANT SELECT, SHOW VIEW ON `wanderverein`.* TO `r_def`',
+        // MariaDB 11.1+: privileges of PUBLIC apply to every account.
+        'GRANT SELECT ON `mysql`.* TO PUBLIC',
+      ],
+      roleLines: [
+        'GRANT USAGE ON *.* TO `r_other`',
+        'GRANT DELETE, DROP ON `wanderverein`.* TO `r_other`',
+        'GRANT FILE ON *.* TO `r_other`',
+      ],
+      inactiveRoles: ['r_other'],
+      unreadableRoles: ['r_secret'],
+    })
+    expect(report.missing).toEqual([])
+    // DELETE and FILE only come with a role Stashley's sessions do not activate.
+    expect(report.schemaPrivileges).toEqual(['SELECT', 'SHOW VIEW'])
+    expect(objectPrivileges(report, 'person').has('DELETE')).toBe(false)
+    const codes = report.warnings.map((w) => `${w.code}:${w.privilege ?? ''}:${w.scope}`)
+    expect(codes).toEqual(
+      expect.arrayContaining([
+        'other_schema:SELECT:mysql.*',
+        'excess_privilege:DELETE:wanderverein.*',
+        'excess_privilege:DROP:wanderverein.*',
+        'global_privilege:FILE:*.*',
+        'inactive_role::r_other',
+        'role_unreadable::r_secret',
+      ]),
+    )
+    expect(report.roles).toEqual(['r_def', 'r_other'])
   })
 
   it('expands ALL PRIVILEGES and treats escaped wildcards literally', () => {

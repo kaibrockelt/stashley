@@ -57,6 +57,8 @@ const warningLabels: Record<GrantWarning['code'], MessageId> = {
   routine_privilege: 'grants.warning.routine',
   proxy: 'grants.warning.proxy',
   unparsed: 'grants.warning.unparsed',
+  inactive_role: 'grants.warning.inactiveRole',
+  role_unreadable: 'grants.warning.roleUnreadable',
 }
 
 const accessWarningLabels: Record<AccessWarning['code'], MessageId> = {

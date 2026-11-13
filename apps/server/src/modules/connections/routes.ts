@@ -41,7 +41,7 @@ export function registerDataRoutes(app: FastifyInstance, deps: DataRouteDeps): v
   app.post('/internal/admin/connections/test', { config: outbound }, async (request) => {
     admin(request)
     const { connectionId, ...input } = parse(testBody.strict(), request.body)
-    return connections.test(input, connectionId)
+    return connections.test(actorOf(request), input, connectionId)
   })
 
   app.post('/internal/admin/connections', { config: outbound }, async (request, reply) => {

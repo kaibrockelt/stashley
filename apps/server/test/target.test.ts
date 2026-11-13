@@ -157,14 +157,12 @@ describe.skipIf(targets.length === 0).each(targets)('target database $name', ({ 
   })
 
   it.skipIf(allowLoopback)('refuses connections to Stashley itself', async () => {
-    const response = await admin.send(
-      'POST',
-      '/internal/admin/connections/test',
-      input({ host: 'localhost' }),
-    )
-    expect(problem(response).errors).toEqual(
-      expect.arrayContaining([{ field: 'credentials.read', code: 'host_not_allowed' }]),
-    )
+    for (const host of ['localhost', '::ffff:7f00:1']) {
+      const response = await admin.send('POST', '/internal/admin/connections/test', input({ host }))
+      expect(problem(response).errors, host).toEqual(
+        expect.arrayContaining([{ field: 'credentials.read', code: 'host_not_allowed' }]),
+      )
+    }
   })
 
   it('warns about the over-privileged user', async () => {
@@ -246,6 +244,107 @@ describe.skipIf(targets.length === 0).each(targets)('target database $name', ({ 
       'ehrung',
       'event',
     ])
+  })
+
+  it('uses stored passwords only for the server they were saved for', async () => {
+    const keep = {
+      read: { username: 'stashley_read' },
+      write: { username: 'stashley_write' },
+      schema: { username: 'stashley_schema' },
+    }
+    const same = await admin.send('POST', '/internal/admin/connections/test', {
+      ...input({ credentials: keep }),
+      connectionId: connection.id,
+    })
+    expect(same.statusCode).toBe(200)
+    const moved = await admin.send('POST', '/internal/admin/connections/test', {
+      ...input({ port: port + 1, credentials: keep }),
+      connectionId: connection.id,
+    })
+    expect(problem(moved).errors).toEqual([
+      { field: 'credentials.read.password', code: 'required' },
+      { field: 'credentials.write.password', code: 'required' },
+      { field: 'credentials.schema.password', code: 'required' },
+    ])
+  })
+
+  it('reads privileges of roles, whether active at sign-in or not', async () => {
+    const mariadb = connection.engine === 'mariadb'
+    const account = "'stashley_rollen'@'%'"
+    const roles = ['stashley_r_def', 'stashley_r_nest', 'stashley_r_other']
+    await root.query(`DROP USER IF EXISTS ${account}`)
+    for (const role of roles) {
+      await root.query(`DROP ROLE IF EXISTS ${role}`)
+      await root.query(`CREATE ROLE ${role}`)
+    }
+    try {
+      // The default role carries the read privileges and, through a nested role, DROP.
+      // The other role is granted but not active at sign-in.
+      await root.query('GRANT SELECT, SHOW VIEW ON wanderverein.* TO stashley_r_def')
+      await root.query('GRANT DROP ON wanderverein.* TO stashley_r_nest')
+      await root.query('GRANT stashley_r_nest TO stashley_r_def')
+      await root.query('GRANT DELETE ON wanderverein.* TO stashley_r_other')
+      await root.query(`CREATE USER ${account} IDENTIFIED BY 'demo-rollen-password'`)
+      await root.query(`GRANT stashley_r_def TO ${account}`)
+      await root.query(`GRANT stashley_r_other TO ${account}`)
+      await root.query(`SET DEFAULT ROLE stashley_r_def ${mariadb ? 'FOR' : 'TO'} ${account}`)
+      const response = await admin.send(
+        'POST',
+        '/internal/admin/connections/test',
+        input({
+          credentials: {
+            read: { username: 'stashley_rollen', password: 'demo-rollen-password' },
+            write: null,
+            schema: null,
+          },
+        }),
+      )
+      expect(response.statusCode).toBe(200)
+      const [report] = response.json<ConnectionTestResult>().grants
+      const other = mariadb ? 'stashley_r_other' : 'stashley_r_other@%'
+      expect(report?.missing).toEqual([])
+      // In effect: the default role and its nested role, not the inactive one.
+      expect(report?.schemaPrivileges).toEqual(['DROP', 'SELECT', 'SHOW VIEW'])
+      const warnings = (report?.warnings ?? []).map(
+        (w) => `${w.code}:${w.privilege ?? ''}:${w.scope}`,
+      )
+      expect(warnings).toEqual(
+        expect.arrayContaining([
+          'excess_privilege:DROP:wanderverein.*',
+          'excess_privilege:DELETE:wanderverein.*',
+          `inactive_role::${other}`,
+        ]),
+      )
+      expect(warnings.filter((w) => w.startsWith('role_unreadable'))).toEqual([])
+    } finally {
+      await root.query(`DROP USER IF EXISTS ${account}`)
+      for (const role of roles) await root.query(`DROP ROLE IF EXISTS ${role}`)
+    }
+  })
+
+  it('counts privileges granted to PUBLIC (MariaDB 11.1 and later)', async () => {
+    const [major = 0, minor = 0] = (connection.serverVersion ?? '').split('.').map(Number)
+    if (connection.engine !== 'mariadb' || major * 100 + minor < 1101) return
+    await root.query('GRANT SELECT ON mysql.* TO PUBLIC')
+    try {
+      const response = await admin.send(
+        'POST',
+        '/internal/admin/connections/test',
+        input({
+          credentials: {
+            read: { username: 'stashley_read', password: 'demo-read-password' },
+            write: null,
+            schema: null,
+          },
+        }),
+      )
+      const [report] = response.json<ConnectionTestResult>().grants
+      expect(report?.warnings).toEqual(
+        expect.arrayContaining([{ code: 'other_schema', privilege: 'SELECT', scope: 'mysql.*' }]),
+      )
+    } finally {
+      await root.query('REVOKE SELECT ON mysql.* FROM PUBLIC')
+    }
   })
 
   it('connects over TLS and verifies certificates when asked', async () => {

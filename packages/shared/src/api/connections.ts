@@ -57,6 +57,32 @@ export const connectionInput = z.object({
 })
 export type ConnectionInput = z.infer<typeof connectionInput>
 
+/** The settings that decide which server receives a connection's passwords. */
+export interface ConnectionTarget {
+  host: string
+  port: number
+  tls: { mode: TlsMode; caPem: string | null; serverName: string | null }
+}
+
+/**
+ * Stored passwords are sent only to the server they were saved for: the same host, port and
+ * TLS settings. With any other target, a test or save could hand them to a different server,
+ * so all passwords must be entered again.
+ */
+export function sameConnectionTarget(a: ConnectionTarget, b: ConnectionTarget): boolean {
+  const text = (value: string | null) => {
+    const trimmed = (value ?? '').trim()
+    return trimmed === '' ? null : trimmed
+  }
+  return (
+    a.host.trim().toLowerCase() === b.host.trim().toLowerCase() &&
+    a.port === b.port &&
+    a.tls.mode === b.tls.mode &&
+    text(a.tls.caPem) === text(b.tls.caPem) &&
+    text(a.tls.serverName) === text(b.tls.serverName)
+  )
+}
+
 /** A privilege the user has beyond what its purpose needs, or a grant that cannot be judged. */
 export interface GrantWarning {
   code:
@@ -67,8 +93,10 @@ export interface GrantWarning {
     | 'routine_privilege'
     | 'proxy'
     | 'unparsed'
+    | 'inactive_role'
+    | 'role_unreadable'
   privilege?: string
-  /** `*.*`, `schema.*`, `schema.table` or the raw grant line for `unparsed`. */
+  /** `*.*`, `schema.*`, `schema.table`, the raw grant line for `unparsed`, or the role. */
   scope: string
 }
 

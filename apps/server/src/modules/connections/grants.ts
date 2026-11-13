@@ -21,7 +21,7 @@ export type ParsedGrant =
       level: Level
       grantOption: boolean
     }
-  | { kind: 'roles'; roles: RoleName[] }
+  | { kind: 'roles'; roles: RoleName[]; grantee: RoleName | undefined }
   | { kind: 'proxy' }
   | { kind: 'ignored' }
   | { kind: 'unparsed'; raw: string }
@@ -162,7 +162,10 @@ export function parseGrantLine(line: string): ParsedGrant {
   const on = tokens.findIndex((token) => isWord(token, 'ON'))
   const to = tokens.findIndex((token) => isWord(token, 'TO'))
   if (to === -1) return { kind: 'unparsed', raw: clean }
-  if (on === -1 || on > to) return { kind: 'roles', roles: parseRoles(tokens.slice(1, to)) }
+  if (on === -1 || on > to) {
+    const [grantee] = parseRoles(tokens.slice(to + 1))
+    return { kind: 'roles', roles: parseRoles(tokens.slice(1, to)), grantee }
+  }
   if (isWord(tokens[1], 'PROXY')) return { kind: 'proxy' }
   const level = parseLevel(tokens.slice(on + 1, to))
   if (level === undefined) return { kind: 'unparsed', raw: clean }
@@ -219,11 +222,21 @@ function scopeOf(level: Level): string {
   }
 }
 
-/** Builds the grant report of one database user for the target schema (§9.4). */
+/**
+ * Builds the grant report of one database user for the target schema (§9.4). Required,
+ * missing and granted privileges come from `lines`, the grants in effect for Stashley's own
+ * sessions. Warnings also cover `roleLines`: privileges of granted roles that a session
+ * would have to activate with `SET ROLE`, which Stashley never does.
+ */
 export function buildGrantReport(input: {
   purpose: CredentialPurpose
   database: string
   lines: string[]
+  roleLines?: string[]
+  /** Granted roles that are not active when the user signs in. */
+  inactiveRoles?: string[]
+  /** Granted roles whose privileges could not be read. */
+  unreadableRoles?: string[]
   roles?: string[]
 }): GrantReport {
   const global = new Set<string>()
@@ -233,8 +246,34 @@ export function buildGrantReport(input: {
   const warn = (warning: GrantWarning) =>
     warnings.set(`${warning.code}|${warning.privilege ?? ''}|${warning.scope}`, warning)
   const roles = new Set(input.roles ?? [])
+  const lines = [
+    ...input.lines.map((line) => ({ line, effective: true })),
+    ...(input.roleLines ?? []).map((line) => ({ line, effective: false })),
+  ]
+  const addPrivilege = (
+    level: Extract<Level, { kind: 'schema' | 'table' }>,
+    name: string,
+    columns: string[] | undefined,
+  ) => {
+    if (level.kind === 'schema') {
+      schema.add(name)
+      return
+    }
+    const entry = objects.get(level.table) ?? {
+      privileges: new Set<string>(),
+      columns: new Map<string, Set<string>>(),
+    }
+    objects.set(level.table, entry)
+    if (columns === undefined) {
+      entry.privileges.add(name)
+      return
+    }
+    const granted = entry.columns.get(name) ?? new Set<string>()
+    for (const column of columns) granted.add(column)
+    entry.columns.set(name, granted)
+  }
 
-  for (const line of input.lines) {
+  for (const { line, effective } of lines) {
     const grant = parseGrantLine(line)
     if (grant.kind === 'proxy') warn({ code: 'proxy', scope: 'PROXY' })
     if (grant.kind === 'unparsed') warn({ code: 'unparsed', scope: grant.raw.slice(0, 200) })
@@ -250,7 +289,7 @@ export function buildGrantReport(input: {
       const level = grant.level
       if (level.kind === 'global') {
         if (name === 'USAGE') continue
-        global.add(name)
+        if (effective) global.add(name)
         warn({ code: 'global_privilege', privilege: name, scope })
         continue
       }
@@ -264,27 +303,17 @@ export function buildGrantReport(input: {
         warn({ code: 'other_schema', privilege: name, scope })
       }
       if (!match.matches) continue
-      if (level.kind === 'schema') {
-        schema.add(name)
-      } else {
-        const entry = objects.get(level.table) ?? {
-          privileges: new Set<string>(),
-          columns: new Map<string, Set<string>>(),
-        }
-        objects.set(level.table, entry)
-        if (privilege.columns === undefined) entry.privileges.add(name)
-        else {
-          const columns = entry.columns.get(name) ?? new Set<string>()
-          for (const column of privilege.columns) columns.add(column)
-          entry.columns.set(name, columns)
-        }
-      }
+      // Privileges of inactive roles only produce warnings.
+      if (effective) addPrivilege(level, name, privilege.columns)
       if (routinePrivileges.has(name)) warn({ code: 'routine_privilege', privilege: name, scope })
       else if (!allowed[input.purpose].has(name)) {
         warn({ code: 'excess_privilege', privilege: name, scope })
       }
     }
   }
+
+  for (const role of input.inactiveRoles ?? []) warn({ code: 'inactive_role', scope: role })
+  for (const role of input.unreadableRoles ?? []) warn({ code: 'role_unreadable', scope: role })
 
   const has = (privilege: string) => {
     const test = (set: Set<string>) => set.has(privilege) || set.has('ALL PRIVILEGES')
@@ -341,40 +370,90 @@ async function showGrants(session: TargetSession, statement: string): Promise<st
   return rows.map((row) => String(Object.values(row)[0] ?? ''))
 }
 
+const roleKey = (role: RoleName) =>
+  role.host === undefined ? role.name : `${role.name}@${role.host}`
+
+/** Roles granted to the account itself; role-to-role grants (no host) are left out. */
+export function grantedRoles(lines: string[]): RoleName[] {
+  const roles = new Map<string, RoleName>()
+  for (const line of lines) {
+    const grant = parseGrantLine(line)
+    if (grant.kind !== 'roles' || grant.grantee?.host === undefined) continue
+    for (const role of grant.roles) roles.set(roleKey(role), role)
+  }
+  return [...roles.values()]
+}
+
+/** Roles active in this session: MariaDB returns one name, MySQL a quoted list or `NONE`. */
+export function parseCurrentRoles(engine: TargetSession['engine'], value: string | null): string[] {
+  if (value === null || value === '' || value === 'NONE') return []
+  if (engine === 'mariadb') return [value]
+  return parseRoles(tokenize(value)).map(roleKey)
+}
+
 /**
- * Reads the grants of the connected user, including granted roles: MySQL through
- * `SHOW GRANTS … USING`, MariaDB by reading each role's grants (roles of roles included).
+ * Reads the privileges of granted roles that are not active at sign-in. MySQL activates
+ * them all at once; MariaDB allows one role at a time, whose grants include its own roles.
+ */
+async function readInactiveRoles(
+  session: TargetSession,
+  inactive: RoleName[],
+  active: string[],
+): Promise<{ lines: string[]; unreadable: string[] }> {
+  const lines: string[] = []
+  const unreadable: string[] = []
+  try {
+    if (session.engine === 'mysql') {
+      try {
+        await session.query('SET ROLE ALL')
+        lines.push(...(await showGrants(session, 'SHOW GRANTS')))
+      } catch {
+        unreadable.push(...inactive.map(roleKey))
+      }
+      return { lines, unreadable }
+    }
+    for (const role of inactive) {
+      try {
+        await session.query(`SET ROLE ${quoteRole({ name: role.name })}`)
+        lines.push(...(await showGrants(session, 'SHOW GRANTS FOR CURRENT_ROLE')))
+      } catch {
+        unreadable.push(roleKey(role))
+      }
+    }
+    return { lines, unreadable }
+  } finally {
+    // Back to the roles of sign-in, in case the session is used further.
+    const restore =
+      session.engine === 'mysql'
+        ? 'SET ROLE DEFAULT'
+        : `SET ROLE ${active[0] === undefined ? 'NONE' : quoteRole({ name: active[0] })}`
+    await session.query(restore).catch(() => undefined)
+  }
+}
+
+/**
+ * Reads the grants of the connected user (§9.4). `SHOW GRANTS` lists what Stashley's own
+ * sessions get: the user's privileges, its roles active at sign-in (with their roles) and,
+ * on MariaDB, `PUBLIC`. Every other granted role is read too, for warnings only, because
+ * Stashley never runs `SET ROLE`. Call it on a connection that is closed afterwards.
  */
 export async function inspectGrants(
   session: TargetSession,
   purpose: CredentialPurpose,
   database: string,
 ): Promise<GrantReport> {
-  const own = await showGrants(session, 'SHOW GRANTS FOR CURRENT_USER()')
-  const granted = own.flatMap((line) => {
-    const grant = parseGrantLine(line)
-    return grant.kind === 'roles' ? grant.roles : []
+  const lines = await showGrants(session, 'SHOW GRANTS')
+  const [current] = await session.query<{ role: string | null }>('SELECT CURRENT_ROLE() AS role')
+  const active = parseCurrentRoles(session.engine, current?.role ?? null)
+  const inactive = grantedRoles(lines).filter((role) => !active.includes(roleKey(role)))
+  if (inactive.length === 0) return buildGrantReport({ purpose, database, lines })
+  const extra = await readInactiveRoles(session, inactive, active)
+  return buildGrantReport({
+    purpose,
+    database,
+    lines,
+    roleLines: extra.lines,
+    inactiveRoles: inactive.map(roleKey),
+    unreadableRoles: extra.unreadable,
   })
-  const lines = [...own]
-  if (granted.length > 0 && session.engine === 'mysql') {
-    const using = granted.map(quoteRole).join(', ')
-    lines.push(...(await showGrants(session, `SHOW GRANTS FOR CURRENT_USER() USING ${using}`)))
-  } else if (granted.length > 0) {
-    const seen = new Set<string>()
-    const queue = [...granted]
-    while (queue.length > 0 && seen.size < 50) {
-      const role = queue.shift()
-      if (role === undefined || seen.has(role.name)) continue
-      seen.add(role.name)
-      const roleLines = await showGrants(session, `SHOW GRANTS FOR ${quoteRole(role)}`).catch(
-        () => [] as string[],
-      )
-      lines.push(...roleLines)
-      for (const line of roleLines) {
-        const grant = parseGrantLine(line)
-        if (grant.kind === 'roles') queue.push(...grant.roles)
-      }
-    }
-  }
-  return buildGrantReport({ purpose, database, lines })
 }

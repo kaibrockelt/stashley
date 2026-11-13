@@ -7,7 +7,7 @@ import type {
   CredentialPurpose,
   TlsMode,
 } from '@stashley/shared'
-import { tlsModes } from '@stashley/shared'
+import { sameConnectionTarget, tlsModes } from '@stashley/shared'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -39,7 +39,8 @@ function UserFields(props: {
   purpose: CredentialPurpose
   state: UserState
   onChange: (state: UserState) => void
-  hasStoredPassword: boolean
+  /** `keep`: an empty field keeps the stored password; `reenter`: the target changed. */
+  storedPassword: 'keep' | 'reenter' | null
   error: unknown
 }) {
   const t = useT()
@@ -75,7 +76,13 @@ function UserFields(props: {
             autoComplete="new-password"
             value={state.password}
             onChange={(password) => props.onChange({ ...state, password })}
-            {...(props.hasStoredPassword && { description: t('connections.password.keep') })}
+            {...(props.storedPassword === 'keep' && {
+              description: t('connections.password.keep'),
+            })}
+            {...(props.storedPassword === 'reenter' && {
+              description: t('connections.password.reenter'),
+            })}
+            isRequired={props.storedPassword !== 'keep'}
             error={errors.field(props.error, `${field}.password`)}
           />
         </div>
@@ -116,6 +123,19 @@ export function ConnectionDialog(props: { connection?: Connection; onClose: () =
     schema: initialUser('schema'),
   })
 
+  const tls = {
+    mode: tlsMode,
+    caPem: caPem.trim() === '' ? null : caPem,
+    serverName: serverName.trim() === '' ? null : serverName,
+  }
+  // Mirrors the server: stored passwords go only to the server they were saved for.
+  const sameTarget =
+    existing !== undefined && sameConnectionTarget(existing, { host, port: Number(port), tls })
+  const storedPassword = (purpose: CredentialPurpose) => {
+    if (stored(purpose) === undefined) return null
+    return sameTarget ? 'keep' : 'reenter'
+  }
+
   const input = (): ConnectionInput => {
     const credential = (purpose: CredentialPurpose) => {
       const user = users[purpose]
@@ -130,11 +150,7 @@ export function ConnectionDialog(props: { connection?: Connection; onClose: () =
       host,
       port: Number(port),
       databaseName: database,
-      tls: {
-        mode: tlsMode,
-        caPem: caPem.trim() === '' ? null : caPem,
-        serverName: serverName.trim() === '' ? null : serverName,
-      },
+      tls,
       timezone,
       queryTimeoutSeconds: Number(timeout),
       credentials: {
@@ -265,7 +281,7 @@ export function ConnectionDialog(props: { connection?: Connection; onClose: () =
             purpose={purpose}
             state={users[purpose]}
             onChange={(state) => setUsers((current) => ({ ...current, [purpose]: state }))}
-            hasStoredPassword={stored(purpose) !== undefined}
+            storedPassword={storedPassword(purpose)}
             error={error}
           />
         ))}

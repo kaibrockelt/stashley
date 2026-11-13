@@ -10,7 +10,7 @@ import type {
   FieldError,
   GrantReport,
 } from '@stashley/shared'
-import { credentialPurposes } from '@stashley/shared'
+import { credentialPurposes, sameConnectionTarget } from '@stashley/shared'
 import type { Kysely } from 'kysely'
 import { v7 as uuidv7 } from 'uuid'
 import { writeTransaction } from '../../metastore/db.ts'
@@ -93,18 +93,32 @@ export class ConnectionsService {
     }
   }
 
-  /** Users for a test or save; omitted passwords come from the stored connection. */
+  /**
+   * Users for a test or save. An omitted password comes from the stored connection, but only
+   * while the target is unchanged (`sameConnectionTarget`); otherwise it must be entered again.
+   */
   private async usersFor(input: ConnectionInput, existingId: string | undefined) {
     const stored = existingId === undefined ? undefined : await this.resolve(existingId)
+    const reusable = stored !== undefined && sameConnectionTarget(stored.spec, input)
     const users: Partial<Record<CredentialPurpose, TargetUser>> = {}
+    const reused: CredentialPurpose[] = []
+    const missing: FieldError[] = []
     for (const purpose of credentialPurposes) {
       const credential = input.credentials[purpose]
       if (credential === null) continue
-      const password = credential.password ?? stored?.users[purpose]?.password
-      if (password === undefined) throw fieldError(`credentials.${purpose}.password`, 'required')
+      let password = credential.password
+      if (password === undefined && reusable) {
+        password = stored.users[purpose]?.password
+        if (password !== undefined) reused.push(purpose)
+      }
+      if (password === undefined) {
+        missing.push({ field: `credentials.${purpose}.password`, code: 'required' })
+        continue
+      }
       users[purpose] = { purpose, username: credential.username, password }
     }
-    return users
+    if (missing.length > 0) throw new AppError('validation_failed', { errors: missing })
+    return { users, reused }
   }
 
   /** Connects with every user and reads its grants; fails if one cannot connect. */
@@ -134,17 +148,33 @@ export class ConnectionsService {
     return { server, reports }
   }
 
-  async test(input: ConnectionInput, existingId?: string): Promise<ConnectionTestResult> {
+  /** Tests settings before they are saved. A test with stored passwords is audited. */
+  async test(
+    actor: Actor,
+    input: ConnectionInput,
+    existingId?: string,
+  ): Promise<ConnectionTestResult> {
     this.validate(input)
-    const { server, reports } = await this.check(
-      specOf(input),
-      await this.usersFor(input, existingId),
-    )
-    return {
-      engine: server.engine,
-      serverVersion: server.version,
-      versionSupported: server.supported,
-      grants: reports,
+    const { users, reused } = await this.usersFor(input, existingId)
+    let outcome = 'failed'
+    try {
+      const { server, reports } = await this.check(specOf(input), users)
+      outcome = 'succeeded'
+      return {
+        engine: server.engine,
+        serverVersion: server.version,
+        versionSupported: server.supported,
+        grants: reports,
+      }
+    } finally {
+      if (existingId !== undefined && reused.length > 0) {
+        await this.deps.audit.record(actor, {
+          action: 'connection.tested',
+          subject: { kind: 'connection', id: existingId, label: input.name },
+          connectionId: existingId,
+          details: { host: input.host, port: input.port, storedPasswords: reused, outcome },
+        })
+      }
     }
   }
 
@@ -268,12 +298,9 @@ export class ConnectionsService {
 
   async create(actor: Actor, input: ConnectionInput): Promise<Connection> {
     this.validate(input)
-    if (input.credentials.read.password === undefined) {
-      throw fieldError('credentials.read.password', 'required')
-    }
     await this.ensureNameFree(input.name)
     const spec = specOf(input)
-    const users = await this.usersFor(input, undefined)
+    const { users } = await this.usersFor(input, undefined)
     const { server, reports } = await this.check(spec, users)
     const id = uuidv7()
     const now = this.clock()
@@ -319,7 +346,7 @@ export class ConnectionsService {
     const before = await this.get(id)
     await this.ensureNameFree(input.name, id)
     const spec = specOf(input)
-    const users = await this.usersFor(input, id)
+    const { users } = await this.usersFor(input, id)
     const { server, reports } = await this.check(spec, users)
     await writeTransaction(this.deps.db, async (trx) => {
       await trx

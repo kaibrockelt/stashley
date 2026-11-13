@@ -515,10 +515,12 @@ The admin overview is computed with the same algebra over every published page. 
 - **Generated SQL** is built and compiled with Kysely (`MysqlDialect`) and executed with bound parameters. Stored queries run as prepared statements (`execute`).
 - **Self-connection guard:**
   - Only TCP is allowed; there is no socket path.
-  - Before each pool is created, the host is resolved. Addresses are rejected if they are loopback, unspecified or link-local, or belong to one of the container's own interfaces.
+  - Before each pool is created, the host is resolved. Every address is normalized first, so IPv4-mapped IPv6 in any notation (`::ffff:7f00:1`) is checked as IPv4.
+  - Only public, private (RFC 1918) and carrier-grade NAT IPv4 addresses, global unicast IPv6 (`2000::/3`) and unique local IPv6 (`fc00::/7`) are allowed. Everything else is rejected: loopback, unspecified, link-local, multicast, reserved and documentation ranges, and the IPv6 forms that can embed an IPv4 address (IPv4-compatible, NAT64, 6to4, Teredo). Addresses of the container's own interfaces are rejected too.
   - The check repeats whenever a pool is recreated, which defends against DNS rebinding.
   - The socket connects to the address that was checked, while the driver keeps the host name, so TLS still verifies the certificate against the name (or the configured server name).
   - Integration tests on a developer machine reach databases through loopback; only the test server relaxes the check there (`STASHLEY_TEST_ALLOW_LOOPBACK`). CI runs them with the check on.
+- **Stored passwords:** a test or save may leave a password empty to keep the stored one, but only while host, port and TLS settings (mode, CA, server name) are unchanged (`sameConnectionTarget` in `packages/shared`). With any other target, every password must be entered again, so stored passwords never reach a server they were not saved for. A test that uses stored passwords is audited as `connection.tested`.
 - **Errors:** driver errors become a failure code (`unreachable`, `timeout`, `access_denied`, `unknown_database`, `tls_failed`, `host_not_allowed`, `failed`). Server messages are never logged or returned, because they can contain user names, addresses or values.
 
 ### 9.2 Session setup
@@ -554,13 +556,15 @@ The admin overview is computed with the same algebra over every published page. 
 ### 9.4 Grant inspection
 
 - **When:** on save and on demand, for each credential.
-- **How:** the server runs `SHOW GRANTS FOR CURRENT_USER()`, expanded by active roles (MySQL `USING`, MariaDB role grants). The output is parsed into global, schema, table and column privileges.
+- **How:** on a connection that is closed afterwards, the server runs `SHOW GRANTS`. Both engines list what a session of the user gets at sign-in: its own privileges, its active roles with their nested roles and, on MariaDB 11.1 and later, `PUBLIC`. The output is parsed into global, schema, table and column privileges.
 - **The report contains:**
   - **Required privileges:** for read, `SELECT` and `SHOW VIEW`; for write, `SELECT`, `INSERT`, `UPDATE` and optionally `DELETE`; for schema, `CREATE` and `INSERT`.
   - **Missing privileges.**
   - **Excess privileges, shown as warnings:** any global privilege other than `USAGE`; access to other schemas; `DROP`, `ALTER`, `FILE`, `GRANT OPTION`, `SUPER`, `PROCESS`, `CREATE USER`, `RELOAD`, `SHUTDOWN`, `EXECUTE`, routine, trigger and event privileges; write privileges on the read user; `ALTER` or `DROP` on the schema user.
 - **Effect on access:** per object, the report feeds `dbGrants` in §8.3. If the write user lacks `DELETE` on a table, delete is never offered there. The table access API shows these as `grantedOps` next to the ceiling.
-- **Roles:** all roles granted to the user count, recursively. MySQL reads them with `SHOW GRANTS FOR CURRENT_USER() USING …`, MariaDB with `SHOW GRANTS FOR <role>` per role.
+- **Roles:** Stashley never runs `SET ROLE` in its pools, so only roles active at sign-in (`CURRENT_ROLE()`) count for required, missing and granted privileges.
+  - Granted roles that are inactive at sign-in are read for warnings: MySQL with `SET ROLE ALL` and `SHOW GRANTS` (which also covers `mandatory_roles`), MariaDB with `SET ROLE <role>` and `SHOW GRANTS FOR CURRENT_ROLE` per role (which includes nested roles). MariaDB refuses `SHOW GRANTS FOR <role>` for roles that are not active.
+  - Every inactive role gets the warning `inactive_role`. A role whose grants cannot be read gets `role_unreadable` instead of being skipped.
 - **Parsing:** the report never stores raw grant lines except unrecognized ones, and `IDENTIFIED BY …` clauses are removed first. Schema patterns with an unescaped `%` count as access to other schemas.
 
 ### 9.5 Value encoding

@@ -4,6 +4,7 @@ import type { AdminUser, ProblemDocument } from '@stashley/shared'
 import type { LightMyRequestResponse } from 'fastify'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createServer, type Server } from '../../app.ts'
+import { encrypt } from '../../platform/crypto/keys.ts'
 import { resolveTargetHost } from '../../target/address-guard.ts'
 import { TestClient } from '../../test/client.ts'
 import { testConfig } from '../../test/helpers.ts'
@@ -130,6 +131,55 @@ async function createUser(
   })
   expect(accepted.statusCode).toBe(200)
   return { user, client }
+}
+
+/** A saved connection with read and write user, written straight to the metadata store. */
+async function storeConnection(
+  s: Setup,
+  target: { host: string; port: number; tls: Record<string, unknown> },
+): Promise<string> {
+  const connectionId = '01890000-0000-7000-8000-0000000000c1'
+  const now = Date.now()
+  const db = s.server.store.db
+  await db
+    .insertInto('connections')
+    .values({
+      id: connectionId,
+      name: 'Saved',
+      host: target.host,
+      port: target.port,
+      database_name: 'wanderverein',
+      engine: 'mariadb',
+      server_version: '12.3.3',
+      tls: JSON.stringify(target.tls),
+      timezone: 'Europe/Berlin',
+      query_timeout_ms: 10_000,
+      created_at: now,
+      updated_at: now,
+    })
+    .execute()
+  for (const [purpose, credentialId] of [
+    ['read', '01890000-0000-7000-8000-0000000000d1'],
+    ['write', '01890000-0000-7000-8000-0000000000d2'],
+  ] as const) {
+    await db
+      .insertInto('connection_credentials')
+      .values({
+        id: credentialId,
+        connection_id: connectionId,
+        purpose,
+        username: `stashley_${purpose}`,
+        password: encrypt(
+          s.server.keys,
+          `${purpose} secret`,
+          `connection_credentials:${credentialId}:password`,
+        ),
+        grant_report: null,
+        checked_at: null,
+      })
+      .execute()
+  }
+  return connectionId
 }
 
 /** Calls a route the way the web client does, with a fresh CSRF token for writes. */
@@ -335,7 +385,15 @@ describe('data routes', () => {
 
   it('refuse connections to Stashley itself for every database user', async () => {
     const s = await setup()
-    for (const host of ['localhost', '127.0.0.1', '[::1]', '0.0.0.0']) {
+    for (const host of [
+      'localhost',
+      '127.0.0.1',
+      '[::1]',
+      '0.0.0.0',
+      '::ffff:7f00:1',
+      '0:0:0:0:0:ffff:127.0.0.1',
+      '::ffff:a9fe:a9fe',
+    ]) {
       const response = await s.admin.send(
         'POST',
         '/internal/admin/connections/test',
@@ -358,6 +416,66 @@ describe('data routes', () => {
     expect(problem(saved).code).toBe('connection_failed')
     expect((await s.admin.request('GET', '/internal/admin/connections')).json()).toEqual({
       data: [],
+    })
+  })
+
+  it('send stored passwords only to the server they were saved for', async () => {
+    const s = await setup()
+    // A documentation address: the guard refuses it, so nothing leaves the test.
+    const target = {
+      host: '192.0.2.10',
+      port: 3306,
+      tls: { mode: 'verify-full', caPem: null, serverName: null },
+    }
+    const connectionId = await storeConnection(s, target)
+    const keep = {
+      read: { username: 'stashley_read' },
+      write: { username: 'stashley_write' },
+      schema: null,
+    }
+    const reenter = [
+      { field: 'credentials.read.password', code: 'required' },
+      { field: 'credentials.write.password', code: 'required' },
+    ]
+    for (const change of [
+      { host: 'attacker.example.net' },
+      { port: 3307 },
+      { tls: { mode: 'disabled', caPem: null, serverName: null } },
+      { tls: { mode: 'verify-full', caPem: null, serverName: 'other.example.net' } },
+    ]) {
+      const input = connectionInput({ ...target, ...change, credentials: keep })
+      const tested = await s.admin.send('POST', '/internal/admin/connections/test', {
+        ...input,
+        connectionId,
+      })
+      expect(problem(tested).errors, JSON.stringify(change)).toEqual(reenter)
+      const saved = await s.admin.send('PUT', `/internal/admin/connections/${connectionId}`, input)
+      expect(problem(saved).errors, JSON.stringify(change)).toEqual(reenter)
+    }
+    expect(s.resolved).toEqual([])
+
+    // With the target unchanged, the stored passwords are used and the test is audited.
+    const same = await s.admin.send('POST', '/internal/admin/connections/test', {
+      ...connectionInput({ ...target, credentials: keep }),
+      connectionId,
+    })
+    expect(problem(same).errors).toEqual([
+      { field: 'credentials.read', code: 'host_not_allowed' },
+      { field: 'credentials.write', code: 'host_not_allowed' },
+    ])
+    expect(s.resolved).toEqual(['192.0.2.10', '192.0.2.10'])
+    const audited = await s.server.store.db
+      .selectFrom('audit_events')
+      .select(['details', 'connection_id'])
+      .where('action', '=', 'connection.tested')
+      .execute()
+    expect(audited).toHaveLength(1)
+    expect(audited[0]?.connection_id).toBe(connectionId)
+    expect(JSON.parse(audited[0]?.details ?? '{}')).toEqual({
+      host: '192.0.2.10',
+      port: 3306,
+      storedPasswords: ['read', 'write'],
+      outcome: 'failed',
     })
   })
 

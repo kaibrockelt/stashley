@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
+import { networkInterfaces } from 'node:os'
+import ipaddr from 'ipaddr.js'
 import { describe, expect, it } from 'vitest'
 import { isBlockedAddress, resolveTargetHost } from './address-guard.ts'
 import { decodeDateTime, encodeValue } from './encoding.ts'
@@ -7,30 +9,70 @@ import { toTargetError } from './errors.ts'
 import { parseServerVersion } from './version.ts'
 
 describe('address guard', () => {
-  it('blocks loopback, unspecified and link-local addresses', () => {
+  it('blocks loopback, link-local, special ranges and every notation of them', () => {
     for (const address of [
       '127.0.0.1',
       '127.8.9.1',
       '0.0.0.0',
-      '169.254.1.1',
+      '169.254.169.254',
+      '224.0.0.1',
+      '240.0.0.1',
+      '255.255.255.255',
+      '192.0.2.10',
       '::1',
       '::',
       'fe80::1',
+      'fe80::1%eth0',
+      'fec0::1',
+      'ff02::1',
+      '2001:db8::1',
+      // IPv4-mapped loopback and metadata addresses in every notation.
       '::ffff:127.0.0.1',
+      '::ffff:7f00:1',
+      '0:0:0:0:0:ffff:127.0.0.1',
+      '0:0:0:0:0:ffff:7f00:1',
+      '[::ffff:7f00:1]',
+      '::ffff:a9fe:a9fe',
+      // IPv4-compatible, NAT64, 6to4 and Teredo addresses can embed an IPv4 address.
+      '::7f00:1',
+      '64:ff9b::7f00:1',
+      '2002:7f00:1::1',
+      '2001:0:4136:e378::1',
+      'not-an-address',
     ]) {
       expect(isBlockedAddress(address), address).toBe(true)
     }
-    for (const address of ['10.0.0.5', '172.18.0.3', '192.168.1.20', '2001:db8::1', '8.8.8.8']) {
+    for (const address of [
+      '10.0.0.5',
+      '172.18.0.3',
+      '192.168.1.20',
+      '100.64.0.10',
+      '8.8.8.8',
+      '::ffff:10.0.0.5',
+      '2a01:4f8::1',
+      'fd12:3456::1',
+    ]) {
       expect(isBlockedAddress(address), address).toBe(false)
     }
   })
 
-  it('refuses hosts that resolve to loopback', async () => {
-    await expect(resolveTargetHost('localhost')).rejects.toMatchObject({
-      failure: 'host_not_allowed',
-    })
-    await expect(resolveTargetHost('[::1]')).rejects.toMatchObject({ failure: 'host_not_allowed' })
+  it('refuses hosts that resolve to loopback or to Stashley itself', async () => {
+    const refused = { failure: 'host_not_allowed' }
+    await expect(resolveTargetHost('localhost')).rejects.toMatchObject(refused)
+    await expect(resolveTargetHost('[::1]')).rejects.toMatchObject(refused)
+    await expect(resolveTargetHost('::ffff:7f00:1')).rejects.toMatchObject(refused)
     await expect(resolveTargetHost('10.1.2.3')).resolves.toBe('10.1.2.3')
+    // The socket connects to the checked address in canonical form.
+    await expect(resolveTargetHost('::ffff:10.1.2.3')).resolves.toBe('10.1.2.3')
+    await expect(resolveTargetHost('[2a01:4f8::1]')).resolves.toBe('2a01:4f8::1')
+    const own = Object.values(networkInterfaces())
+      .flat()
+      .find((entry) => entry !== undefined && !entry.internal && entry.family === 'IPv4')
+    if (own !== undefined) {
+      await expect(resolveTargetHost(own.address)).rejects.toMatchObject(refused)
+      const mapped = ipaddr.IPv4.parse(own.address).toIPv4MappedAddress().toString()
+      await expect(resolveTargetHost(mapped)).rejects.toMatchObject(refused)
+    }
   })
 })
 
