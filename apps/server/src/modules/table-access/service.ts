@@ -5,6 +5,7 @@ import type {
   CatalogObject,
   CatalogSnapshot,
   GrantReport,
+  ReadScope,
   Relation,
   TableAccess,
   TableOp,
@@ -24,8 +25,9 @@ import { AppError } from '../../platform/http/problem.ts'
 import { fieldError } from '../../platform/http/validation.ts'
 import type { Actor, AuditLog } from '../audit/audit-log.ts'
 import type { CatalogService } from '../catalog/service.ts'
-import { objectPrivileges } from '../connections/grants.ts'
+import { columnReadable, objectPrivileges } from '../connections/grants.ts'
 import type { ConnectionsService } from '../connections/service.ts'
+import { readScope } from './read-scope.ts'
 import { checkTemplate, defaultTemplate, type TemplateContext } from './templates.ts'
 
 type CreateInput = z.infer<typeof tableAccessCreate>
@@ -229,6 +231,26 @@ export class TableAccessService {
     })
   }
 
+  /** What the read user may read beyond the exposed objects and columns (§9.4). */
+  async readScope(connectionId: string): Promise<ReadScope> {
+    const connection = await this.deps.connections.get(connectionId)
+    const { reports } = await this.deps.connections.grantReports(connectionId)
+    const snapshot = await this.deps.catalog.current(connectionId)
+    const rows = await this.rows(connectionId)
+    const exclusions = await this.exclusions(rows.map((row) => row.id))
+    return readScope({
+      database: connection.databaseName,
+      report: reports.read,
+      catalog: snapshot?.objects ?? [],
+      exposed: rows.map((row) => ({
+        objectName: row.object_name,
+        objectType: row.object_type,
+        readable: (row.ops & opBits.read) !== 0,
+        excluded: excludedForAll(exclusions, row.id),
+      })),
+    })
+  }
+
   async get(id: string): Promise<TableAccess> {
     const row = await this.deps.db
       .selectFrom('table_access')
@@ -299,6 +321,19 @@ export class TableAccessService {
     const excluded = new Set(
       exclusions.filter((entry) => entry.scope === 'all').map((entry) => entry.column_name),
     )
+    // The database would let the read user select these columns; only the SQL validation
+    // keeps them out of queries until column grants leave them out (§9.4).
+    const readableExcluded =
+      reports.read === undefined
+        ? []
+        : [...excluded]
+            .filter((column) =>
+              columnReadable(reports.read as GrantReport, row.object_name, column),
+            )
+            .sort()
+    if (readableExcluded.length > 0) {
+      warnings.push({ code: 'excluded_column_readable', columns: readableExcluded })
+    }
     let effectiveTemplate = defaultTemplate(object, row.key_column, excluded)
     if (row.display_template !== null) {
       const problem =
@@ -352,9 +387,16 @@ export class TableAccessService {
         throw fieldError('keyColumn', 'unknown_column')
     }
 
+    // A stored exclusion may name a column the read user no longer sees: column grants that
+    // leave it out hide it from the catalog too (§9.4). New exclusions need a known column.
+    const stored = new Set(
+      existingId === undefined
+        ? []
+        : (await this.exclusions([existingId])).map((entry) => entry.column_name),
+    )
     const exclusions = new Map<string, 'all' | 'mcp'>()
     input.exclusions.forEach((exclusion, index) => {
-      if (!columns.has(exclusion.column)) {
+      if (!columns.has(exclusion.column) && !stored.has(exclusion.column)) {
         throw fieldError(`exclusions.${index}.column`, 'unknown_column')
       }
       if (exclusion.column === keyColumn && exclusion.scope === 'all') {

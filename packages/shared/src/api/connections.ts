@@ -118,6 +118,11 @@ export interface GrantReport {
   /** Table-level privileges in the target schema. */
   objects: ObjectGrant[]
   roles: string[]
+  /**
+   * The account as the server names it (`CURRENT_USER()`, e.g. `stashley_read@%`). Reports
+   * stored before it was recorded lack it until the grants are checked again.
+   */
+  account?: string
   /** Set when the user could not connect. */
   failure?: ConnectionFailure
 }
@@ -288,7 +293,32 @@ export interface AccessWarning {
     | 'view_dependencies_unknown'
     /** The view's key column can hold NULL. */
     | 'view_key_nullable'
+    /** The read user may select columns that are excluded for everyone. */
+    | 'excluded_column_readable'
   ops?: TableOp[]
+  columns?: string[]
+}
+
+/**
+ * What the read user may read beyond the exposed objects and columns, and the statements that
+ * limit it to them (§9.4). Database grants then enforce exposures and exclusions as well.
+ */
+export interface ReadScope {
+  /** The read user's account, e.g. `stashley_read@%`; null until its grants are checked again. */
+  account: string | null
+  /** Objects the read user may select although they are not exposed with `read`. */
+  unexposedReadable: string[]
+  /** Columns excluded for everyone that the read user may still select, per object. */
+  excludedReadable: { object: string; columns: string[] }[]
+  /** `REVOKE` and `GRANT` statements for the read user; empty without an account. */
+  statements: string[]
+  /**
+   * `no_grant_report`: the read user's grants were never checked.
+   * `account_unknown`: the report predates the account; check the grants again.
+   * `global_select`: SELECT on every database cannot be narrowed by these statements.
+   * `roles`: privileges that come from roles stay until the roles change.
+   */
+  notes: ('no_grant_report' | 'account_unknown' | 'global_select' | 'roles')[]
 }
 
 export interface TableAccess {

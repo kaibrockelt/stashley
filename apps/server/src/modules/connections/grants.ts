@@ -413,6 +413,22 @@ export function objectPrivileges(report: GrantReport, object: string): Set<strin
   return result
 }
 
+/**
+ * Whether a report lets the user select one column of an object: through a privilege on every
+ * database, the schema or the object, or a column privilege that names it. Column names
+ * compare case-insensitively, like MySQL.
+ */
+export function columnReadable(report: GrantReport, object: string, column: string): boolean {
+  const covers = (privileges: readonly string[]) =>
+    privileges.includes('SELECT') || privileges.includes('ALL PRIVILEGES')
+  if (covers(report.schemaPrivileges)) return true
+  const entry = report.objects.find((grant) => grant.object === object)
+  if (entry === undefined) return false
+  if (covers(entry.privileges)) return true
+  const lower = column.toLowerCase()
+  return (entry.columns?.SELECT ?? []).some((name) => name.toLowerCase() === lower)
+}
+
 function quoteRole(role: RoleName): string {
   const quote = (value: string) => `\`${value.replace(/`/g, '``')}\``
   return role.host === undefined ? quote(role.name) : `${quote(role.name)}@${quote(role.host)}`
@@ -496,17 +512,24 @@ export async function inspectGrants(
   database: string,
 ): Promise<GrantReport> {
   const lines = await showGrants(session, 'SHOW GRANTS')
-  const [current] = await session.query<{ role: string | null }>('SELECT CURRENT_ROLE() AS role')
+  const [current] = await session.query<{ role: string | null; account: string | null }>(
+    'SELECT CURRENT_ROLE() AS role, CURRENT_USER() AS account',
+  )
+  const account = current?.account ?? undefined
   const active = parseCurrentRoles(session.engine, current?.role ?? null)
   const inactive = grantedRoles(lines).filter((role) => !active.includes(roleKey(role)))
-  if (inactive.length === 0) return buildGrantReport({ purpose, database, lines })
-  const extra = await readInactiveRoles(session, inactive, active)
-  return buildGrantReport({
-    purpose,
-    database,
-    lines,
-    roleLines: extra.lines,
-    inactiveRoles: inactive.map(roleKey),
-    unreadableRoles: extra.unreadable,
-  })
+  const report =
+    inactive.length === 0
+      ? buildGrantReport({ purpose, database, lines })
+      : await readInactiveRoles(session, inactive, active).then((extra) =>
+          buildGrantReport({
+            purpose,
+            database,
+            lines,
+            roleLines: extra.lines,
+            inactiveRoles: inactive.map(roleKey),
+            unreadableRoles: extra.unreadable,
+          }),
+        )
+  return account === undefined ? report : { ...report, account }
 }
