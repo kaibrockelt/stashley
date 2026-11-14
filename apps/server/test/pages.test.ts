@@ -488,6 +488,76 @@ describe.skipIf(targets.length === 0).each(targets)('page components on $name', 
     expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0)
   })
 
+  it('pages through a live query from its snapshot without running it again', async () => {
+    const live = (
+      await admin.send('POST', '/internal/design/queries', {
+        connectionId: connection.id,
+        name: 'Personen live',
+        description: '',
+        sql: 'SELECT id, nachname FROM person ORDER BY id',
+        parameters: [],
+        cacheTtlSeconds: 0,
+      })
+    ).json<Query>()
+    const role = (roles.Kasse as Role).id
+    const shown = await page('live', {
+      schemaVersion: 1,
+      kind: 'dashboard',
+      title: 'Personen',
+      filters: [],
+      parameters: [],
+      rows: [
+        {
+          id: 'r1',
+          layout: '12',
+          blocks: [
+            {
+              id: 'personen',
+              type: 'table',
+              title: 'Personen',
+              restrictions: [],
+              source: { kind: 'query', queryId: live.id },
+              bindings: [],
+              table: null,
+            },
+          ],
+        },
+      ],
+      table: null,
+      access: {
+        view: [role],
+        grants: [{ principal: role, source: `query:${live.id}`, ops: ['read'] }],
+      },
+      mcp: { available: false },
+    })
+    const client = users.kasse as TestClient
+    const executor = server.services.executor
+    const execute = executor.execute.bind(executor)
+    let runs = 0
+    executor.execute = (...args) => {
+      runs++
+      return execute(...args)
+    }
+    try {
+      const first = await read<ComponentResult>(client, shown.id, 'personen', { pageSize: 5 })
+      const second = await read<ComponentResult>(client, shown.id, 'personen', {
+        pageSize: 5,
+        cursor: first.nextCursor,
+      })
+      const third = await read<ComponentResult>(client, shown.id, 'personen', {
+        pageSize: 5,
+        cursor: second.nextCursor,
+      })
+      expect(runs).toBe(1)
+      // A reload runs the query again and pages from a new snapshot.
+      const all = await read<ComponentResult>(client, shown.id, 'personen', { pageSize: 15 })
+      expect(runs).toBe(2)
+      expect([...first.rows, ...second.rows, ...third.rows]).toEqual(all.rows)
+    } finally {
+      executor.execute = execute
+    }
+  })
+
   // Runs last: it takes the read user's grants away for a moment.
   it('serves no cached result once the read user lost its grants', async () => {
     const events = (

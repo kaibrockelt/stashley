@@ -26,7 +26,7 @@ import type { VariablesService } from '../variables/service.ts'
 import type { ReadExecutor } from './executor.ts'
 import { normalizeResult } from './results.ts'
 import { decodeCursor, encodeCursor } from './sql/cursor.ts'
-import { ParameterError, resolveParameters } from './sql/parameters.ts'
+import { ParameterError, resolveParameters, type ResolvedParameters } from './sql/parameters.ts'
 import {
   bindForColumn,
   countStatement,
@@ -75,6 +75,13 @@ const hash = (value: unknown) =>
 
 function invalid(errors: FieldError[]): AppError {
   return new AppError('validation_failed', { errors })
+}
+
+/** A stored query with its parameters resolved for one request, and its cache key. */
+interface PreparedQuery {
+  source: CompiledQuerySource
+  resolved: ResolvedParameters
+  key: string
 }
 
 /** A cached page of a table source, with the raw key and sort values for its cursors. */
@@ -181,13 +188,12 @@ export class ComponentReader {
     }
   }
 
-  /** Runs a stored query of a component or filter, through the cache. */
-  private async runQuery(
+  /** Resolves the parameters of a stored query and its cache key, without running it. */
+  private async prepareQuery(
     source: CompiledQuerySource,
     user: { id: string; email: string },
     clientValues: Record<string, unknown>,
-    refresh: boolean,
-  ): Promise<{ result: QueryResult; freshness: Freshness; key: string }> {
+  ): Promise<PreparedQuery> {
     const variables = await this.variables.current()
     const target = await this.executor.target(source.connection.connectionId)
     let resolved
@@ -207,6 +213,15 @@ export class ComponentReader {
     const key = `query:${source.stored.queryId}:${source.stored.version}:${queryRowLimit}:${hash(resolved.key)}${
       resolved.usesUserContext ? `:user:${user.id}` : ''
     }`
+    return { source, resolved, key }
+  }
+
+  /** Runs a prepared query through the cache. */
+  private async loadQuery(
+    query: PreparedQuery,
+    refresh: boolean,
+  ): Promise<{ result: QueryResult; freshness: Freshness }> {
+    const { source, resolved, key } = query
     let durationMs: number | undefined
     const loaded = await this.cache.load<QueryResult>({
       key,
@@ -233,7 +248,6 @@ export class ComponentReader {
     return {
       result: loaded.value,
       freshness: this.freshness(loaded, source.stored.cacheTtlSeconds, durationMs),
-      key,
     }
   }
 
@@ -251,47 +265,48 @@ export class ComponentReader {
       const value = this.bound(binding.from, input)
       if (value !== undefined && value !== null && value !== '') values[binding.parameter] = value
     }
-    const { result, freshness, key } = await this.runQuery(
-      source,
-      handle.user,
-      values,
-      input.refresh === true,
-    )
+    const query = await this.prepareQuery(source, handle.user, values)
     if (handle.component.block.type !== 'table') {
+      const { result, freshness } = await this.loadQuery(query, input.refresh === true)
       return { ...result, ...freshness, nextCursor: null, prevCursor: null }
     }
-    return this.pageQueryResult(source, result, freshness, key, input)
+    return this.pageQueryResult(query, input)
   }
 
   /**
    * Stored queries in tables (§10.7): run once up to the limit; sorting, filters, search and
-   * paging work on the result. Live queries keep it as a paging snapshot for five minutes.
+   * paging work on the result. Live queries keep it as a paging snapshot for five minutes and
+   * page through it without running again; a reload or a manual refresh runs them again.
    */
-  private pageQueryResult(
-    source: CompiledQuerySource,
-    result: QueryResult,
-    freshness: Freshness,
-    key: string,
+  private async pageQueryResult(
+    query: PreparedQuery,
     input: ComponentInput,
-  ): ComponentResult {
-    const fingerprint = hash([key, input.sort, input.columnFilters, input.search])
-    let offset = 0
-    let rows = result
-    let snapshot: string | null = null
+  ): Promise<ComponentResult> {
+    const fingerprint = hash([query.key, input.sort, input.columnFilters, input.search])
+    let position: CursorPosition | undefined
     if (input.cursor !== undefined) {
-      const position = decodeCursor(this.cursorKey, input.cursor, fingerprint)
+      position = decodeCursor(this.cursorKey, input.cursor, fingerprint)
       if (position === undefined || typeof position.key !== 'number') {
         throw new AppError('cursor_invalid')
       }
-      offset = position.key
-      if (typeof position.sort === 'string') {
-        const kept = this.cache.snapshot<QueryResult>(position.sort)
-        if (kept === undefined) throw new AppError('cursor_expired')
-        rows = kept.value
-        snapshot = position.sort
+    }
+    const offset = typeof position?.key === 'number' ? position.key : 0
+    let rows: QueryResult
+    let freshness: Freshness
+    let snapshot: string | null = null
+    if (typeof position?.sort === 'string' && input.refresh !== true) {
+      const kept = this.cache.snapshot<QueryResult>(position.sort)
+      if (kept === undefined) throw new AppError('cursor_expired')
+      rows = kept.value
+      snapshot = position.sort
+      freshness = { fetchedAt: new Date(kept.fetchedAt).toISOString(), stale: false }
+    } else {
+      const loaded = await this.loadQuery(query, input.refresh === true)
+      rows = loaded.result
+      freshness = loaded.freshness
+      if (query.source.stored.cacheTtlSeconds === 0) {
+        snapshot = this.cache.keepSnapshot(rows, JSON.stringify(rows.rows).length * 2)
       }
-    } else if (source.stored.cacheTtlSeconds === 0) {
-      snapshot = this.cache.keepSnapshot(result, JSON.stringify(result.rows).length * 2)
     }
     const filtered = filterRows(rows, input)
     const pageSize = input.pageSize ?? defaultPageSize
@@ -572,7 +587,8 @@ export class ComponentReader {
     const filter = handle.filter.filter
     const source = handle.filter.source
     if (filter.kind !== 'select' || source === undefined) throw new AppError('not_found')
-    const { result, freshness } = await this.runQuery(source, handle.user, {}, false)
+    const query = await this.prepareQuery(source, handle.user, {})
+    const { result, freshness } = await this.loadQuery(query, false)
     const search = (input.search ?? '').trim().toLowerCase()
     const options = result.rows
       .map((row) => ({
