@@ -1,8 +1,8 @@
 # Progress
 
-**Current milestone:** M3 – Connections and table access (in review)
+**Current milestone:** M4 – Queries, access control and cache (in progress)
 
-**Next step:** Close M3 and start M4 in a fresh session with the strongest model at maximum effort. The M3 review's findings are fixed, except three carried into later milestones (see the log).
+**Next step:** Implement M4 as planned (see the log of 2026-11-14).
 
 **Recommended model strength for M4:** strongest model, maximum effort.
 
@@ -13,8 +13,8 @@
 | M0 | Architecture plan | Strongest, maximum effort | Done |
 | M1 | Scaffold and operations: monorepo, CI, Dockerfile, build script, metadata store, health, logs, backup and restore, i18n and design token foundations | Medium | Done |
 | M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | Done |
-| M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | In review |
-| M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Open |
+| M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | Done |
+| M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | In progress |
 | M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | Open |
 | M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export | Medium (write path and base filters: high) | Open |
 | M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High | Open |
@@ -47,7 +47,7 @@ Status values: open, in progress, in review, done.
 
 ## Deviations from the specification
 
-All approved on 2026-11-12. Rationale for each is in [`docs/architecture.md` §28](docs/architecture.md#28-decisions-requiring-approval).
+D1–D12 approved on 2026-11-12, D13–D16 on 2026-11-14. Rationale for D1–D12 for each is in [`docs/architecture.md` §28](docs/architecture.md#28-decisions-requiring-approval).
 
 | ID | Approved deviation or interpretation |
 | --- | --- |
@@ -63,6 +63,10 @@ All approved on 2026-11-12. Rationale for each is in [`docs/architecture.md` §2
 | D10 | Writes to target databases are simulated in edit mode and preview: validation and `SELECT`-based checks, no DML. |
 | D11 | Drafts are saved explicitly, and every save is audited. |
 | D12 | Page filter options are authorized through the page's view right; option lists, lookup columns and display templates through the right of their component. |
+| D13 | Date-time parameters arrive as UTC instants and are bound as wall times of the connection time zone, like written values (§9.5). (Approved 2026-11-14.) |
+| D14 | When managers may not create roles, only admins create, rename or delete roles; managers still grant rights to existing roles. (Approved 2026-11-14.) |
+| D15 | Grants to deleted roles stop taking effect and show as an issue on the page; stored pages are not rewritten. (Approved 2026-11-14.) |
+| D16 | The SQL lexer rejects locking clauses (`FOR UPDATE`, `FOR SHARE`, `LOCK IN SHARE MODE`) itself, because the MariaDB parser does not know all of them and the error must stay specific. (Approved 2026-11-14.) |
 
 Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an addition to the D8 list; approving a pending account keeps its session, so the user can continue without signing in again; the common-password list is the subset of 12+ characters from SecLists (MIT). npm is removed from the runtime image; dependencies must be at least three days old (`minimumReleaseAge`); the compose host port is configurable with `STASHLEY_PORT`. Earlier decisions: documentation site with VitePress on GitHub Pages; problem types as `urn:stashley:problem:<code>`; images at `ghcr.io/kaibrockelt/stashley`.
 
@@ -156,3 +160,7 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
     - Column-level write grants limit writable fields in M6.
     - The default API alias equals the table name, while the requirements say the real table name is not disclosed. M7 decides whether enabling an endpoint asks for an alias.
   - Verified with 112 server unit tests and 76 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7.
+- 2026-11-14: M3 accepted by the operator. M4 started; plan approved with D13–D16.
+  - Page documents arrive in M4 as far as access control needs them: rights, data sources, component restrictions, base filters, page filters and table source settings, with draft and publish through the API. M5 adds the page UI, version history, restore and compare, and chart settings.
+  - Forms are part of the page model with their table and mode only; fields and writes follow in M6. The hotel criterion is covered for reads in M4 and for writes in M6.
+  - The query builder's spec and compiler come in M4, its UI in M5. The permission overview and page issues arrive as API; their UI follows in M5.
