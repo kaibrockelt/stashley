@@ -2,7 +2,7 @@
 
 **Current milestone:** M4 – Queries, access control and cache (in review)
 
-**Next step:** Review M4 in a fresh session with a high model strength, then start M5 (medium; query builder UI: high).
+**Next step:** Review the SQL validation of M4 separately, then start M5 (medium; query builder UI: high).
 
 **Recommended model strength for M4:** strongest model, maximum effort.
 
@@ -199,3 +199,10 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
     - The user list now names the system role as such.
     - Test data was removed; the two test accounts are disabled, since accounts cannot be deleted.
   - Not checked in the browser: the role page as a manager without the right to manage roles; the route tests cover it.
+- 2026-11-14: M4 reviewed in a fresh session. In the reviewed areas there were no blocking, 4 should-fix and 12 nice-to-have findings. The SQL validation was not fully reviewed in that session and still needs its own review. Fixed:
+  - Stale results are served only while the target database cannot be reached. A read the database refuses (missing privileges, a denied account, an unknown schema) drops the expired entry, so revoked grants take effect at once. Denied accounts and unknown schemas now report `target_permission_denied`.
+  - A request that arrives after an invalidation starts its own load instead of joining one that began before the write.
+  - Tables on live queries page through their snapshot without running the query again; a reload or a manual refresh runs it again.
+  - At most 128 prepared statements per target connection, so pooled connections cannot fill the server-wide `max_prepared_stmt_count`.
+  - Verified with 541 server unit tests and 144 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7.
+  - Open: the review of the SQL validation, and the nice-to-have findings.

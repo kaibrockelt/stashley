@@ -517,6 +517,7 @@ The admin overview is computed with the same algebra over every published page. 
 - **Client options:**
   - `multipleStatements: false`, `charset: utf8mb4`, `supportBigNumbers` and `bigNumberStrings`, `dateStrings`.
   - The client flag `FOUND_ROWS`, so `affectedRows` counts matched rows.
+  - At most 128 prepared statements per connection (`maxPreparedStatements`); mysql2 closes the ones it evicts. Generated SQL varies with every filter combination, and mysql2's default of 16,000 per connection could fill the server-wide `max_prepared_stmt_count` for every client of the server.
   - A connect timeout of 10 s, and TLS from the connection settings (modes `disabled`, `required`, `verify-ca`, `verify-full`, optional CA PEM).
 - **Generated SQL** is built and compiled with Kysely (`MysqlDialect`) and executed with bound parameters. Stored queries run as prepared statements (`execute`).
 - **Self-connection guard:**
@@ -706,6 +707,8 @@ The analysis drives authorization (§8.2), MCP reachability (§18.3), cache inva
    - Values are encoded as in §9.5.
    - If more rows came back than the limit, `truncated` is set.
 5. **Translate errors** into stable codes, for example `query_timeout`, `target_unavailable` and `target_permission_denied`. Error messages from the database are never passed through and never logged (§20.2).
+   - `target_unavailable`: the database could not be reached (refused or lost connection, connect timeout, TLS failure, host not allowed).
+   - `target_permission_denied`: the server refused the read: missing privileges, a denied account or an unknown schema.
 
 ### 10.6 Table sources
 
@@ -738,7 +741,7 @@ Table sources (tables and views with a key) use SQL that `execution/table-reader
 | Stored queries shown in tables | Run once up to the limit and cached. Pages, sorting and filters are applied in memory, with offsets used only here. | 10,000 rows |
 | Metric, chart, record | Full result | Limit of the chart type, at most 10,000 rows |
 
-- **Live queries:** for stored queries with the live cache setting, the result is kept for 5 minutes as a paging snapshot referenced by the cursor. Reloading the page runs the query again. An expired snapshot returns `409 cursor_expired`.
+- **Live queries:** for stored queries with the live cache setting, the result is kept for 5 minutes as a paging snapshot referenced by the cursor. Pages after the first come from the snapshot; the query does not run again. Reloading the page or a manual refresh runs it again and starts a new snapshot. An expired snapshot returns `409 cursor_expired`.
 - **Query tables:** filters, search and sort apply to the cached result; the signed cursor carries the offset and, for live queries, the snapshot.
 - **Truncated results:** managers see a notice; users see the rows up to the limit.
 
@@ -847,14 +850,14 @@ In `edit` and `preview` mode, write requests run as a simulation and never chang
   | Table page | Live |
 
   Available durations: live, 30 s, 1 min, 5 min, 15 min, 1 h, 6 h, 24 h, or a custom number of seconds.
-- **Single flight:** concurrent misses for the same key share one database query.
+- **Single flight:** concurrent misses for the same key share one database query. A request that arrives after an invalidation of one of the load's dependencies does not join it; it starts its own load, so it never returns rows from before a write.
 - **Invalidation index:** maps from table key (`<connection>:<table>`) and from variable name to cache keys. The `dispose` callback keeps the index current.
   - Entries on a view with unknown base tables (no SHOW VIEW) depend on every table of their connection; any write to it evicts them.
   - Changes of table access, catalog or connection settings drop all entries of the connection.
   - A load that overlapped an invalidation of one of its dependencies is returned but not stored.
   - A write through the UI, public API or CSV import evicts every entry that depends on the table. View dependencies are already expanded to base tables, so a new payment also invalidates queries on a payment-status view.
   - Changing an instance variable evicts every entry that uses it.
-- **Stale fallback:** expired entries stay until LRU evicts them. If the target database is unreachable, they are served with `stale: true` and their age. Entries evicted by writes are deleted and never served as stale.
+- **Stale fallback:** expired entries stay until LRU evicts them. If the target database is unreachable (`target_unavailable`, §10.5), they are served with `stale: true` and their age. Entries evicted by writes are deleted and never served as stale. A read the server refuses (`target_permission_denied`) deletes the expired entry and is never answered from the cache, so revoked grants take effect at once.
 - **Authorization first:** authorization always runs before the cache lookup, and entries never contain authorization decisions.
 - **Manual refresh** is limited to once per 10 s per user and component. It bypasses the cache and replaces the entry.
 - **Freshness in the response:** every component result returns `fetchedAt`. A live query that runs longer than 2 s returns a hint that recommends a cache duration.
