@@ -21,6 +21,7 @@ import table from '../../../ui/table.module.css'
 import { AccessDialog } from './access-dialog.tsx'
 import { ConnectionDialog } from './connection-dialog.tsx'
 import styles from './connections.module.css'
+import { ReadScopePanel } from './read-scope.tsx'
 import { RelationDialog } from './relation-dialog.tsx'
 import {
   AccessWarnings,
@@ -220,6 +221,7 @@ export function ConnectionPage() {
               <p className={styles.muted}>
                 {t('connections.checkedAt', { time: formatDate(credential.checkedAt) })}
               </p>
+              {credential.purpose === 'read' && <ReadScopePanel connectionId={connectionId} />}
             </div>
           ))}
         </div>

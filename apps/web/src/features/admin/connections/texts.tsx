@@ -81,6 +81,7 @@ const accessWarningLabels: Record<AccessWarning['code'], MessageId> = {
   key_mismatch: 'access.warning.keyMismatch',
   view_dependencies_unknown: 'access.warning.viewDependenciesUnknown',
   view_key_nullable: 'access.warning.viewKeyNullable',
+  excluded_column_readable: 'access.warning.excludedColumnReadable',
 }
 
 const impactLabels: Record<ImpactItem['kind'], MessageId> = {
@@ -152,6 +153,7 @@ export function AccessWarnings(props: { warnings: AccessWarning[] }) {
         <li key={warning.code}>
           {t(accessWarningLabels[warning.code], {
             ops: (warning.ops ?? []).map((op) => t(opLabels[op])).join(', '),
+            columns: (warning.columns ?? []).join(', '),
           })}
         </li>
       ))}

@@ -53,6 +53,10 @@ export function AccessDialog(props: {
       ]),
     ),
   )
+  // Exclusions of columns the read user no longer sees (its grants leave them out) stay.
+  const hidden = (access?.exclusions ?? []).filter(
+    (entry) => !object.columns.some((column) => column.name === entry.column),
+  )
   const refresh = () =>
     client.invalidateQueries({ queryKey: ['admin', 'connection', props.connectionId] })
   const body = () => ({
@@ -61,9 +65,12 @@ export function AccessDialog(props: {
     displayTemplate: template.trim() === '' ? null : template,
     apiResource: resource.trim() === '' ? null : resource,
     mcpEnabled: mcp,
-    exclusions: Object.entries(visibility)
-      .filter(([, scope]) => scope !== 'shown')
-      .map(([column, scope]) => ({ column, scope: scope as ExclusionScope })),
+    exclusions: [
+      ...Object.entries(visibility)
+        .filter(([, scope]) => scope !== 'shown')
+        .map(([column, scope]) => ({ column, scope: scope as ExclusionScope })),
+      ...hidden,
+    ],
   })
   const save = useMutation({
     mutationFn: () =>
@@ -179,6 +186,13 @@ export function AccessDialog(props: {
         <div className={styles.block}>
           <p className={styles.blockTitle}>{t('access.columns')}</p>
           <p className={styles.muted}>{t('access.columns.hint')}</p>
+          {hidden.length > 0 && (
+            <p className={styles.muted}>
+              {t('access.columns.hidden', {
+                columns: hidden.map((entry) => entry.column).join(', '),
+              })}
+            </p>
+          )}
           {exclusionError !== undefined && <p className={styles.danger}>{exclusionError}</p>}
           <div className={`${table.wrap} ${styles.columns}`}>
             <table className={table.table}>
