@@ -1,8 +1,8 @@
 # Progress
 
-**Current milestone:** M4 – Queries, access control and cache (in progress)
+**Current milestone:** M4 – Queries, access control and cache (in review)
 
-**Next step:** Implement M4 as planned (see the log of 2026-11-14).
+**Next step:** Review M4 in a fresh session with a high model strength, then start M5 (medium; query builder UI: high).
 
 **Recommended model strength for M4:** strongest model, maximum effort.
 
@@ -14,7 +14,7 @@
 | M1 | Scaffold and operations: monorepo, CI, Dockerfile, build script, metadata store, health, logs, backup and restore, i18n and design token foundations | Medium | Done |
 | M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | Done |
 | M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | Done |
-| M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | In progress |
+| M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | In review |
 | M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | Open |
 | M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export | Medium (write path and base filters: high) | Open |
 | M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High | Open |
@@ -30,8 +30,8 @@ Status values: open, in progress, in review, done.
 - [ ] The admin creates roles and test accounts. A first OIDC sign-in shows up as pending and gets approved.
 - [ ] A manager builds every demo page through the UI alone, checks each one with preview as role, and publishes it.
 - [ ] Every test account sees exactly the pages and components of its roles. Components without rights are absent from both the HTML and the API responses.
-- [ ] Direct API calls outside a user's rights are rejected: a foreign component ID, extra payload fields, manipulated parameters. One hotel's front desk cannot read or change the other hotel's bookings, even with a manipulated ID.
-- [ ] A manager cannot grant rights above a ceiling. Saving SQL with `UPDATE`, `DROP`, multiple statements or tables without table access is rejected.
+- [ ] Direct API calls outside a user's rights are rejected: a foreign component ID, extra payload fields, manipulated parameters. One hotel's front desk cannot read or change the other hotel's bookings, even with a manipulated ID. (Met for reads in M4, through the API; changing follows with the write path in M6, the end-to-end test in M9.)
+- [x] A manager cannot grant rights above a ceiling. Saving SQL with `UPDATE`, `DROP`, multiple statements or tables without table access is rejected. (Through the API; the editor UI follows in M5.)
 - [ ] After the cashier records a payment, the payment status on the check-in and overview pages updates immediately, without waiting for the cache to expire.
 - [ ] A station helper records a stamp on a 375 px phone in under 10 s. A duplicate stamp is rejected with a clear message.
 - [ ] The route status page shows the 3 overdue participants with their phone numbers.
@@ -164,3 +164,31 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Page documents arrive in M4 as far as access control needs them: rights, data sources, component restrictions, base filters, page filters and table source settings, with draft and publish through the API. M5 adds the page UI, version history, restore and compare, and chart settings.
   - Forms are part of the page model with their table and mode only; fields and writes follow in M6. The hotel criterion is covered for reads in M4 and for writes in M6.
   - The query builder's spec and compiler come in M4, its UI in M5. The permission overview and page issues arrive as API; their UI follows in M5.
+- 2026-11-14: M4 implemented.
+  - Roles with assignment by admins (D14), instance variables, and their pages in a new design area.
+  - Access algebra in `packages/shared/src/access`, with property tests: restrictions never widen rights, the union over principals is monotone, and intersecting the static limits after the union equals intersecting per principal.
+  - SQL validation, fail-closed:
+    - The lexer checks the raw text, then writes a canonical text without comments and with one string form. That text is parsed and executed, so the parser and the database read the same statement.
+    - The walker resolves every name per scope; an audit pass rejects whatever it did not resolve.
+    - The read session drops SQL modes that change how quotes and strings are read.
+    - A corpus of bypass attempts runs on both dialects.
+  - Query library with immutable versions, parameter definitions, test runs with 100 rows, and the builder spec with its compiler (UI in M5).
+  - Reads run as prepared statements in read-only transactions. `KILL QUERY` stops a statement 2 s after the server timeout, over a separate connection. This closes the item carried over from M3.
+  - Table sources:
+    - Lookup columns over up to three relations and display values.
+    - Templates checked again at runtime (from the M3 review).
+    - Base filters that fail closed.
+    - NULL-aware keyset pages with HMAC-signed cursors.
+    - Counts with the estimate of D7.
+  - Cache with single flight, invalidation by table, views expanded and unknown view dependencies counted as all tables, and by variable. Also stale fallback, the 20 MB limit, live hints and paging snapshots.
+  - Sections and pages: draft with revision, publishing with pinned query versions, and issues (§8.6). Compiled pages, render models without server-only configuration, branded handles, the permission overview (API), and schema impact for queries and components.
+  - Verified:
+    - `pnpm check` green, with 536 server, 25 shared and 4 web tests.
+    - Coverage of the access algebra 100 % lines and 97.8 % branches; SQL validation, builder and `execution/sql` 99.7 % lines and 99.2 % branches.
+    - 132 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7, among them: hotels kept apart with manipulated keys, keyset pages against the full sort, a payment visible at once through `v_zahlungsstatus`, the event switch to 2025, and both timeouts including `KILL QUERY`.
+  - Decisions:
+    - The page document arrives in M4 as far as access control needs it.
+    - The MariaDB grammar of node-sql-parser rejects some column names such as `status`, so the MySQL grammar is the fallback.
+    - Unqualified names that could mean an excluded column in any visible scope are rejected.
+    - Words starting with a digit must be quoted.
+  - Not yet verified: the new pages for roles, variables and role assignment in the browser.

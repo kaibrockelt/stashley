@@ -178,7 +178,7 @@ routes (Fastify + Zod)  →  services  →  repositories (Kysely → metadata st
   - Only `execution` reads or writes rows in target databases.
   - `connections` and `catalog` read `information_schema` and grants.
   - Only `imports` uses the schema user.
-- **Authorization before execution:** `execution` accepts only `AuthorizedComponent` and `AuthorizedEndpoint` values, and only `access` can create them (§8.4). Lint rules (`no-restricted-imports`) enforce the module boundaries.
+- **Authorization before execution:** `execution` accepts only `AuthorizedComponent`, `AuthorizedFilter` and `AuthorizedEndpoint` values, and only `access` can create them (§8.4). A lint rule (`no-restricted-imports`) keeps every other module from importing `access/handles.ts` and `access/compile.ts`, except for types.
 - **Wiring:** there is no DI framework. A composition root, `createServer(config, overrides?)`, wires the services, and Fastify decorators expose them to routes. Tests pass overrides.
 - **Events:** modules publish typed in-process events that caches and compiled models listen to. Examples: `table-access.changed`, `catalog.refreshed`, `page.published`, `user.changed`, `variable.changed`, `rows.written`.
 
@@ -199,8 +199,8 @@ routes (Fastify + Zod)  →  services  →  repositories (Kysely → metadata st
 | `access` | Permission evaluation, authorized handles, permission overview | M4 |
 | `cache` | Query cache, single-flight, invalidation index | M4 |
 | `execution` | Query executor, table reader, lookups, write executor, error translation | M4 (reads), M6 (writes) |
-| `pages` | Sections, pages, drafts, versions, publishing, preview | M5 |
-| `runtime` | Component endpoints of the workspace (query, rows, options, export, refresh) | M5, M6 |
+| `pages` | Sections, pages, drafts, versions, publishing, preview | M4 (API), M5 (editor, versions, compare) |
+| `runtime` | Component endpoints of the workspace (query, rows, options, export, refresh) | M4 (reads), M6 (writes, export) |
 | `public-api` | REST endpoints, tokens, OpenAPI document | M7 |
 | `imports` | CSV import into existing tables, table creation | M7 |
 | `mcp` | OAuth authorization server, MCP transport and tools, consent, personal tokens, call log | M8 |
@@ -341,8 +341,8 @@ The lists below give each table's columns. Encrypted columns use the format desc
 | Table | Purpose and main columns |
 | --- | --- |
 | `queries` | `id`, `connection_id`, `name` (unique), `description`, `mode` (`builder`, `sql`), `cache_ttl_seconds` (0 means live), `latest_version`, `created_by`, timestamps, `archived_at` |
-| `query_versions` | `query_id`, `version`, `sql_text`, `builder_spec` (JSON), `parameters` (JSON), `analysis` (JSON, §10.2), `executable` (JSON, §10.4), `result_columns` (JSON), `created_by`, `created_at`. Immutable. |
-| `instance_variables` | `id`, `name` (unique), `type`, `value` (JSON), `description`, `updated_by`, `updated_at` |
+| `query_versions` | `query_id`, `version`, `sql_text`, `builder_spec` (JSON: the spec and the compiler's notes), `parameters` (JSON), `analysis` (JSON, §10.2), `executable` (JSON, §10.4), `result_columns` (JSON), `created_by`, `created_at`. Immutable. |
+| `instance_variables` | `id`, `name` (unique, fixed once created), `type`, `value` (JSON), `description`, `updated_by`, timestamps |
 
 **Pages**
 
@@ -460,7 +460,7 @@ effective(u, k)  = ( ⋃ over r ∈ principals(u) of compOps(r, k) )
   - Page filter options use the view right of the page.
 
   In every case each object involved must have `read` in its ceiling and none of the columns used may be excluded.
-- **Display templates** are checked on save and again whenever table access is listed. A stored template that no longer passes, because a column was excluded or removed or the target lost `read` or its table access, is flagged (`template_invalid`) and not used; the effective template falls back to the default, the first text column that is not excluded.
+- **Display templates** are checked on save, whenever table access is listed, and again when a page is compiled, for stored and component templates alike. A stored template that no longer passes, because a column was excluded or removed or the target lost `read` or its table access, is flagged (`template_invalid`) and not used; the effective template falls back to the default, the first text column that is not excluded.
 - **Changing a ceiling** takes effect on the next request through this formula. Nothing is rewritten in stored pages. Affected pages are flagged (§8.6).
 
 ### 8.4 Enforcement
@@ -471,19 +471,20 @@ Every data path passes through one of these functions of the `access` service:
 | --- | --- | --- |
 | `renderPage(ctx, pageId, mode)` | Workspace page delivery | Render model containing only delivered components, stripped of server-only configuration (SQL, base filter values, hidden defaults) |
 | `authorizeComponent(ctx, pageId, componentId, op)` | Runtime routes, MCP | `AuthorizedComponent` |
+| `authorizeFilter(ctx, pageId, filterId)` | Page filter options (D12) | `AuthorizedFilter` |
 | `authorizeEndpoint(token, resource, operation)` | Public API | `AuthorizedEndpoint` |
 | `authorizeDesign(ctx, action)` | Design and admin routes | Ensures the system role allows the action |
 
 - **Authorized handles** (`AuthorizedComponent`, `AuthorizedEndpoint`) are branded types created by a factory private to the `access` module. They carry the resolved source, effective operations, writable fields, server-side default values, base filter and lock strategy. Everything in `execution` takes such a handle as its first argument, so unauthorized execution does not compile.
 - **Unknown or invisible pages and components** return `404` on the internal API, which leaves nothing to probe for existence. Visible components without the requested operation return `403`.
-- **Invalidation:** access facts are held in memory and invalidated through events. These facts are table access, grant reports, compiled pages and the roles and status of users. Deactivating a user or changing their roles takes effect on the next request.
+- **Invalidation:** access facts (table access, grant reports, catalog, relations) and compiled pages are held in memory and rebuilt after the events of §5.1. The roles of a user are read on every request, and the session check runs first, so deactivating a user or changing their roles takes effect on the next request.
 
 ### 8.5 Modes
 
 | Mode | Who | Principals | Reads | Writes |
 | --- | --- | --- | --- | --- |
 | `runtime` | Everyone | Own roles ∪ `authenticated` | Effective rights | Effective rights |
-| `edit` | Admin, manager | n/a | Every component of the draft whose sources are within the ceiling (`read`) | Simulated against the ceiling (§11.2) |
+| `edit` | Admin, manager | n/a | Every component of the draft whose sources are within the ceiling and the database grants (`read`); the render model marks each component `readable` and lists its issues | Simulated against the ceiling (§11.2) |
 | `preview` | Admin, manager | Selected roles ∪ `authenticated` | Effective rights of those roles | Simulated with the rights of those roles (§11.2) |
 
 Admins and managers see every published page in navigation. In `runtime` mode their data rights still come only from their own roles.
@@ -496,6 +497,10 @@ Admins and managers see every published page in navigation. In `runtime` mode th
   - Excluded columns.
   - Restrictions that are not subsets of the page rights.
 - **Issues** are derived, never stored. The design UI shows them as markers. They are computed from the current table access, catalog and query analyses. Examples: a page whose grants now exceed a lowered ceiling, a block bound to a removed column, a query version that references a newly excluded column.
+  - Each issue has a path into the document, a code and a severity. Errors block saving and publishing; warnings (missing database grants) do not.
+  - Codes: `exceeds_ceiling`, `unknown_source`, `restriction_widens`, `unknown_role` (D15), `query_missing`, `version_missing`, `query_not_readable`, `object_not_exposed`, `object_not_readable`, `excluded_column`, `unknown_column`, `unknown_relation`, `template_*`, `parameter_not_bindable`, `unknown_input`, `duplicate`, `reserved`, `view_read_only`, `grant_missing` (warning).
+  - A component whose source has an error is not delivered: its ceiling counts as empty. A base filter is never dropped; if one of its columns becomes unreadable, the component goes with it.
+  - `GET /internal/design/issues` lists the issues of every draft and published version.
 
 ### 8.7 Permission overview
 
@@ -531,11 +536,11 @@ The admin overview is computed with the same algebra over every published page. 
 | Pool | Statements run when a connection is created |
 | --- | --- |
 | All | `SET NAMES utf8mb4`, `SET time_zone = '+00:00'` |
-| Read | `SET SESSION TRANSACTION READ ONLY`, plus the statement timeout: MariaDB `SET SESSION max_statement_time = <s>`, MySQL `SET SESSION max_execution_time = <ms>` |
+| Read | `SET SESSION TRANSACTION READ ONLY`, the statement timeout (MariaDB `SET SESSION max_statement_time = <s>`, MySQL `SET SESSION max_execution_time = <ms>`), and the session `sql_mode` without `ANSI`, `ANSI_QUOTES`, `NO_BACKSLASH_ESCAPES`, `ORACLE`, `MSSQL`, `DB2`, `POSTGRESQL` and `MAXDB`, which change how quotes, strings or the grammar are read (§10.2) |
 | Write | Adds `STRICT_ALL_TABLES` to the session `sql_mode`, so out-of-range or truncated values raise errors instead of warnings |
 
 - **Read-only transactions:** every read still runs inside an explicit `START TRANSACTION READ ONLY` … `COMMIT` (§10.5).
-- **Client-side timer:** the server timeout plus 2 s. When it fires, the server sends `KILL QUERY <thread id>` over a separate connection of the same user.
+- **Client-side timer:** the server timeout plus 2 s. When it fires, the server sends `KILL QUERY <thread id>` over a separate connection of the same user; the statement then fails as `query_timeout`. mysql2's own timeout, which drops the connection, follows 3 s later as the last resort.
 
 ### 9.3 Catalog
 
@@ -639,16 +644,19 @@ SQL is validated when a query version is saved. Validation is fail-closed: anyth
    - `?` placeholders, `@` and `@@` variables, and `:=`.
    - Anything after a trailing `;`.
 
-   It also collects named parameters (`:name`).
-2. **Parsing:** node-sql-parser parses the text with the connection's dialect (`MariaDB` or `MySQL`). There must be exactly one statement, and it must be a `SELECT`. `WITH`, `UNION`, joins and subqueries are allowed.
+   It also collects named parameters (`:name`), and rejects `INTO`, `PROCEDURE` and locking clauses (`FOR UPDATE`, `FOR SHARE`, `LOCK IN SHARE MODE`) at the token level (D16). Words that start with a digit but are not numbers (`2fa_secret`) must be quoted, since MySQL reads them as identifiers and a parser may read a number.
+
+   The lexer then writes the **canonical text**: comments removed, every string literal rewritten as `'…'` with doubled quotes and backslashes, and `?` for each parameter. This text is parsed and executed, so the parser cannot read the statement differently from the database.
+2. **Parsing:** node-sql-parser parses the canonical text with the connection's dialect (`MariaDB` or `MySQL`); the other grammar is the fallback, because the MariaDB grammar rejects some plain column names such as `status`. There must be exactly one statement, and it must be a `SELECT`. `WITH`, `UNION`, `INTERSECT`, `EXCEPT`, joins and subqueries are allowed.
 3. **AST walk** with an exhaustive visitor, which rejects unknown node types:
    - **Name resolution:** CTE names and aliases are resolved per scope.
    - **Schema:** a qualified name must point to the connection's own schema. `mysql`, `information_schema`, `performance_schema` and `sys` get a dedicated error code.
    - **Objects:** every object must have table access with `read` in its ceiling.
-   - **Columns:** every column is resolved against the catalog. An excluded column, or an unqualified name that could resolve to one, is rejected.
+   - **Columns:** every column is resolved against the catalog; names compare case-insensitively, like MySQL. An excluded column, or an unqualified name that could resolve to one in any visible scope, is rejected.
    - **Star:** `*` and `t.*` are allowed only on objects without exclusions.
    - **Functions** must be on an allowlist of built-in aggregate, window, string, numeric, date and time, control-flow, cast and JSON-read functions. A deny list returns a specific message for known dangerous functions: `LOAD_FILE`, `SLEEP`, `BENCHMARK`, lock functions, sequence functions, `LAST_INSERT_ID(expr)`, replication wait functions.
-   - **Clauses:** `INTO` targets and locking clauses (`FOR UPDATE`, `FOR SHARE`, `LOCK IN SHARE MODE`) are rejected.
+   - **Clauses:** `INTO` targets and locking clauses (`FOR UPDATE`, `FOR SHARE`, `LOCK IN SHARE MODE`) are rejected, as are select options (`SQL_CALC_FOUND_ROWS`), index hints, partitions, `NATURAL JOIN`, `LATERAL` and table functions.
+   - **Audit:** a second pass over the whole tree rejects any node type the walker does not know and any column reference or FROM item it did not resolve, and checks that the parser saw exactly the lexer's placeholders.
 4. **Analysis** is stored with the version:
    - Referenced objects and columns, and star references.
    - Functions and parameters.
@@ -681,7 +689,8 @@ The analysis drives authorization (§8.2), MCP reachability (§18.3), cache inva
   1. **User context:** `current_user_id`, `current_user_email`. These are reserved and set by the server.
   2. **Instance variables,** matched by name and set by the server.
   3. **Page filters and URL parameters,** but only for parameters the page declares as user-selectable.
-- **Client input:** a value from the client for a parameter of type 1 or 2 is rejected. Page filters and URL parameters only select data; they never restrict access.
+- **Client input:** a value from the client for a parameter of type 1 or 2 is rejected, and so is a value for a name the query does not use. Page filters and URL parameters reach a query only through a binding of the block (`parameter` ← filter or URL parameter); they only select data and never restrict access. Test runs in the editor may try other values for instance variables.
+- **Values** are checked by type and bound in their canonical form: integers beyond the safe range and decimals as strings, dates as `YYYY-MM-DD`, booleans as 1/0. Date-time values arrive as UTC instants and are bound as wall times of the connection time zone, like written values (§28, D13). An empty list binds `NULL`, so `IN (…)` matches nothing.
 - **Executable form,** stored with the version:
   - Named parameters, located by the lexer, are replaced with `?` placeholders in order. Repeated names are allowed.
   - List parameters expand to the right number of placeholders when the query runs.
@@ -718,6 +727,8 @@ Table sources (tables and views with a key) use SQL that `execution/table-reader
   - Backward paging reverses the comparison and the order, then reverses the rows.
 - **Counting:** a separate `COUNT(*)` with the same joins and filters (joins only where filters need them), cached separately. Unfiltered requests on objects with more than 1,000,000 estimated rows use the `information_schema` estimate, flagged as approximate (§28, D7).
 - **Treated like stored queries:** views without a key column, and stored queries shown in tables (§10.7).
+- **Model:** a table source compiles to a model (`execution/sql/table-model.ts`) when its page is compiled: aliases `t0` (the object) and `t1…` per relation prefix, and every object, join key and column used. Every object must be exposed and readable, no column (join keys included) may be excluded or unsupported, and display templates are checked again (§8.3).
+- **Values:** base filter values come from constants, instance variables or the user and are typed by column; a missing variable fails the read instead of dropping the condition. Date filters are calendar days in `APP_TIMEZONE`, compared as wall times of the connection (DATETIME) or in UTC (TIMESTAMP).
 
 ### 10.7 Result limits
 
@@ -727,7 +738,8 @@ Table sources (tables and views with a key) use SQL that `execution/table-reader
 | Stored queries shown in tables | Run once up to the limit and cached. Pages, sorting and filters are applied in memory, with offsets used only here. | 10,000 rows |
 | Metric, chart, record | Full result | Limit of the chart type, at most 10,000 rows |
 
-- **Live queries:** for stored queries with the live cache setting, the result is kept for 5 minutes as a paging snapshot referenced by the cursor. Reloading the page runs the query again.
+- **Live queries:** for stored queries with the live cache setting, the result is kept for 5 minutes as a paging snapshot referenced by the cursor. Reloading the page runs the query again. An expired snapshot returns `409 cursor_expired`.
+- **Query tables:** filters, search and sort apply to the cached result; the signed cursor carries the offset and, for live queries, the snapshot.
 - **Truncated results:** managers see a notice; users see the rows up to the limit.
 
 ### 10.8 Result shapes and charts
@@ -837,6 +849,9 @@ In `edit` and `preview` mode, write requests run as a simulation and never chang
   Available durations: live, 30 s, 1 min, 5 min, 15 min, 1 h, 6 h, 24 h, or a custom number of seconds.
 - **Single flight:** concurrent misses for the same key share one database query.
 - **Invalidation index:** maps from table key (`<connection>:<table>`) and from variable name to cache keys. The `dispose` callback keeps the index current.
+  - Entries on a view with unknown base tables (no SHOW VIEW) depend on every table of their connection; any write to it evicts them.
+  - Changes of table access, catalog or connection settings drop all entries of the connection.
+  - A load that overlapped an invalidation of one of its dependencies is returned but not stored.
   - A write through the UI, public API or CSV import evicts every entry that depends on the table. View dependencies are already expanded to base tables, so a new payment also invalidates queries on a payment-status view.
   - Changing an instance variable evicts every entry that uses it.
 - **Stale fallback:** expired entries stay until LRU evicts them. If the target database is unreachable, they are served with `stale: true` and their age. Entries evicted by writes are deleted and never served as stale.
@@ -856,10 +871,10 @@ interface PageDocument {
   kind: 'dashboard' | 'table'
   title: string
   description?: string               // also exposed through MCP
-  slug: string
   filters: PageFilter[]              // date | select (query source) | text
-  rows?: DashboardRow[]              // kind = 'dashboard'
-  table?: TablePageComponent         // kind = 'table'
+  parameters: UrlParameter[]         // values the page takes from its URL
+  rows: DashboardRow[]               // kind = 'dashboard'
+  table: TableComponent | null       // kind = 'table'
   access: PageAccess                 // §8.2
   mcp: { available: boolean }
 }
@@ -875,7 +890,9 @@ type DataSourceRef =
   | { kind: 'table'; tableAccessId: string; cacheTtlSeconds: number }
 ```
 
-- **IDs:** components have stable IDs within their page.
+- **IDs:** components and filters have stable IDs within their page. The slug, section and position belong to the page row, not the document.
+- **Bindings:** query blocks bind query parameters to page filters or URL parameters; table sources bind columns to them (`eq`, `in`, `contains`, `range`). A table source also carries its columns (own, lookup over up to three steps, display values), sort, search columns, base filter and page size.
+- **M4 scope:** blocks keep their display settings in `settings`, which the editor (M5) specifies; forms carry their table and mode, and their fields follow in M6.
 - **Block configuration** follows each block type: column mapping, formats, thresholds, chart type and height (`S`, `M`, `L`), form fields, editing options, row links.
 - **Table pages** add a detail view. Each related table in it is a component with its own data source and grants.
 
@@ -1036,8 +1053,8 @@ These are the resource groups of the internal API. The exact contracts are Zod s
 | Workspace | `GET /internal/navigation` · `GET /internal/pages/:slug?mode=&roles=` (render model) |
 | Components | Under `/internal/pages/:pageId/components/:componentId`: `POST …/query` · `POST …/count` · `GET …/rows/:key` · `POST …/rows` · `PATCH …/rows/:key` · `DELETE …/rows/:key` · `POST …/fields/:fieldId/options` · `POST …/export` (CSV) · `POST …/refresh` |
 | Page filters | `POST /internal/pages/:pageId/filters/:filterId/options` |
-| Design | `/internal/design/sections` · `/internal/design/pages` · `…/pages/:id/draft` · `…/pages/:id/publish` · `…/pages/:id/versions[/:version[/restore]]` · `/internal/design/queries[/:id[/versions]]` · `…/queries/validate` · `…/queries/run` (test run, 100 rows) · `/internal/design/roles` · `/internal/design/variables` · `/internal/design/catalog` · `/internal/design/issues` |
-| Administration | `/internal/admin/connections[/test, /:id[/grants, /schema, /schema/refresh, /schema/drifts[/:driftId/acknowledge]]]` · `/internal/admin/table-access` · `/internal/admin/relations` · `/internal/admin/users[/:id[/status, /roles, /links]]` · `/internal/admin/identity-providers` · `/internal/admin/api/endpoints` · `/internal/admin/api/tokens` · `/internal/admin/mcp/{settings, notice, tokens, calls}` · `/internal/admin/permissions` · `/internal/admin/audit[/export]` · `/internal/admin/settings` · `/internal/admin/imports` · `/internal/admin/config/{export, import}` |
+| Design | `/internal/design/sections` · `/internal/design/pages` · `…/pages/:id/draft` (`If-Match`) · `…/pages/:id/publish` · `…/pages/:id/versions[/:version[/restore]]` (M5) · `/internal/design/queries[/:id[/versions[/:version]]]` · `…/queries/validate` · `…/queries/run` (test run, 100 rows) · `/internal/design/roles` · `/internal/design/variables` · `/internal/design/catalog` (M5) · `/internal/design/issues` |
+| Administration | `/internal/admin/connections[/test, /:id[/grants, /schema, /schema/refresh, /schema/drifts[/:driftId/acknowledge]]]` · `/internal/admin/table-access` · `/internal/admin/relations` · `/internal/admin/users[/:id[/status, /roles, /links]]` (roles: `PUT …/roles`) · `/internal/admin/identity-providers` · `/internal/admin/api/endpoints` · `/internal/admin/api/tokens` · `/internal/admin/mcp/{settings, notice, tokens, calls}` · `/internal/admin/permissions` · `/internal/admin/audit[/export]` · `/internal/admin/settings` · `/internal/admin/imports` · `/internal/admin/config/{export, import}` |
 | Profile | `/internal/profile` · `…/password` · `…/mfa` · `…/mcp/connections` · `…/mcp/tokens` |
 | OAuth interaction | `GET /internal/oauth/interactions/:uid` · `POST …/consent` · `POST …/abort` |
 
@@ -1441,7 +1458,7 @@ Releases follow semantic versioning and `docs/CHANGELOG.md` (Keep a Changelog). 
 
 ## 28. Decisions requiring approval
 
-These decisions go beyond what the requirements fix, or interpret them. All of them were approved on 2026-11-12 and are recorded in `PROGRESS.md`.
+These decisions go beyond what the requirements fix, or interpret them. D1–D12 were approved on 2026-11-12, D13–D16 on 2026-11-14; all are recorded in `PROGRESS.md`.
 
 | ID | Decision | Reason |
 | --- | --- | --- |
@@ -1457,6 +1474,10 @@ These decisions go beyond what the requirements fix, or interpret them. All of t
 | D10 | In edit mode and preview, writes to target databases are simulated: full validation and `SELECT`-based checks, no DML (§11.2). Admins and managers write data only in runtime mode, through their own roles. | Building or previewing a page never changes data, yet still shows what a write would do. |
 | D11 | Drafts are saved explicitly, not automatically, and every save is audited. | Keeps the audit log meaningful and conflicts visible. |
 | D12 | Page filter options are authorized through the page's view right. Foreign key option lists, lookup columns and display templates are authorized through the right of their component. All of them are always limited by the ceiling and the column exclusions. | The requirements do not specify how these sources are authorized. They are part of a page or component the manager configured deliberately, like lookup columns. |
+| D13 | Date-time parameters arrive as UTC instants and are bound as wall times of the connection time zone, like written values (§9.5). | Most columns of the target databases are DATETIME in local time; the API exchanges instants in UTC. |
+| D14 | When managers may not create roles, only admins create, rename or delete roles; managers still grant rights to existing roles. | The requirements let admins turn off role creation by managers, but managers still need the roles for page rights. |
+| D15 | Grants to deleted roles stop taking effect and show as an issue on the page; stored pages are not rewritten. | Published versions stay as they were published; the next publish removes the stale grants. |
+| D16 | The SQL lexer rejects locking clauses itself, and `INTO` and `PROCEDURE` too. | node-sql-parser's MariaDB grammar does not know `LOCK IN SHARE MODE`, and the error must name the rule. |
 
 ## 29. Resolved questions
 
