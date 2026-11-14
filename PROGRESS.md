@@ -2,7 +2,7 @@
 
 **Current milestone:** M4 – Queries, access control and cache (in review)
 
-**Next step:** Review the SQL validation of M4 separately, then start M5 (medium; query builder UI: high).
+**Next step:** Once the operator accepts M4, start M5 (medium; query builder UI: high). The SQL validation of M4 is tested externally; that does not block M5.
 
 **Recommended model strength for M4:** strongest model, maximum effort.
 
@@ -206,3 +206,11 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - At most 128 prepared statements per target connection, so pooled connections cannot fill the server-wide `max_prepared_stmt_count`.
   - Verified with 541 server unit tests and 144 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7.
   - Open: the review of the SQL validation, and the nice-to-have findings.
+- 2026-11-14: The database now enforces exposures and exclusions as well, so they no longer rest on the SQL validation alone.
+  - Table access warns with `excluded_column_readable` when the read user may select a column excluded for everyone.
+  - The connection page shows the read user's scope: objects it may read without table access, readable excluded columns, and the `REVOKE` and `GRANT` statements that limit it to the exposed objects and columns (column grants where columns are excluded).
+  - The grant report records the account (`CURRENT_USER()`).
+  - Exclusions of columns the read user no longer sees stay stored and can be saved again.
+  - Verified with 547 server unit tests and 148 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7. On every engine, the suggested statements run as given, and the database then refuses the unexposed table and the excluded columns of a table and a view, while exposed data reads as before.
+  - Not checked in the browser: the read scope panel and the note on hidden exclusions in the access dialog.
+  - Decision: the SQL validation stays an open point that is tested externally (penetration test); it does not block M5.
