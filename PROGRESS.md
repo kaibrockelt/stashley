@@ -191,4 +191,11 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
     - The MariaDB grammar of node-sql-parser rejects some column names such as `status`, so the MySQL grammar is the fallback.
     - Unqualified names that could mean an excluded column in any visible scope are rejected.
     - Words starting with a digit must be quoted.
-  - Not yet verified: the new pages for roles, variables and role assignment in the browser.
+  - Checked in the browser on the test stand (MariaDB 12.3):
+    - Creating, editing and deleting roles and variables, including the confirmation step.
+    - A value the variable's type rejects shows at the field.
+    - Assigning a role in the user dialog, audited with old and new roles.
+    - The settings switch for role creation by managers.
+    - The user list now names the system role as such.
+    - Test data was removed; the two test accounts are disabled, since accounts cannot be deleted.
+  - Not checked in the browser: the role page as a manager without the right to manage roles; the route tests cover it.
