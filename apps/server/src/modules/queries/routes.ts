@@ -35,12 +35,9 @@ export function registerQueryRoutes(app: FastifyInstance, deps: { queries: Queri
   app.post('/internal/design/queries/validate', async (request) => {
     designer(request)
     const body = parse(queryValidate, request.body)
-    const { analysis, executable } = await queries.validate(
-      body.connectionId,
-      body.sql,
-      body.parameters,
-    )
-    return { analysis, limit: executable.limit }
+    const { sql, builder } = await queries.toSql(body.connectionId, body)
+    const { analysis, executable } = await queries.validate(body.connectionId, sql, body.parameters)
+    return { sql, analysis, limit: executable.limit, notes: builder?.notes ?? [] }
   })
 
   app.post('/internal/design/queries/run', { config: testRunLimit }, async (request) => {

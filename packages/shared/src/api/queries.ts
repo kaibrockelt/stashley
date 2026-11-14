@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { z } from 'zod'
 import { cacheTtl } from '../model/page.ts'
+import { querySpec, type QuerySpec } from '../model/query-spec.ts'
 import type { ValueKind } from '../values/column-kinds.ts'
 import { paramNamePattern, paramTypes, type ParamType } from '../values/params.ts'
 
@@ -80,25 +81,56 @@ export type QueryParameter = z.infer<typeof queryParameter>
 const queryFields = {
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(2000),
-  sql: z.string().min(1).max(100_000),
   parameters: z.array(queryParameter).max(50),
   cacheTtlSeconds: cacheTtl,
 }
+const queryText = z.string().min(1).max(100_000)
 
-export const queryCreate = z.object({ connectionId: z.uuid(), ...queryFields }).strict()
-export const queryUpdate = z.object(queryFields).partial().strict()
+/** A query is SQL text or a builder spec; the builder compiles its spec to SQL. */
+const oneSource = (value: { sql?: string | undefined; builder?: unknown }) =>
+  (value.sql === undefined) !== (value.builder === undefined)
+
+export const queryCreate = z
+  .object({
+    connectionId: z.uuid(),
+    ...queryFields,
+    sql: queryText.optional(),
+    builder: querySpec.optional(),
+  })
+  .strict()
+  .refine(oneSource, { message: 'either sql or builder', path: ['sql'] })
+
+/** `sql` on a builder query converts it to an SQL query; there is no way back (§10.1). */
+export const queryUpdate = z
+  .object({ ...queryFields, sql: queryText, builder: querySpec })
+  .partial()
+  .strict()
+  .refine((value) => value.sql === undefined || value.builder === undefined, {
+    message: 'either sql or builder',
+    path: ['sql'],
+  })
 
 /** A test run of unsaved SQL with test values (§ SQL-Editor: first 100 rows). */
 export const queryTestRun = z
   .object({
     connectionId: z.uuid(),
-    sql: queryFields.sql,
+    sql: queryText.optional(),
+    builder: querySpec.optional(),
     parameters: queryFields.parameters,
     values: z.record(z.string(), z.unknown()),
   })
   .strict()
+  .refine(oneSource, { message: 'either sql or builder', path: ['sql'] })
 
-export const queryValidate = queryTestRun.omit({ values: true })
+export const queryValidate = z
+  .object({
+    connectionId: z.uuid(),
+    sql: queryText.optional(),
+    builder: querySpec.optional(),
+    parameters: queryFields.parameters,
+  })
+  .strict()
+  .refine(oneSource, { message: 'either sql or builder', path: ['sql'] })
 
 export interface ResultColumn {
   name: string
@@ -128,6 +160,8 @@ export interface Query {
   cacheTtlSeconds: number
   latestVersion: number
   current: QueryVersion
+  /** Builder queries: the spec the SQL was compiled from, and notes on how it was compiled. */
+  builder: { spec: QuerySpec; notes: string[] } | null
   /** Pages whose draft or published version use this query. */
   usedBy: { pageId: string; title: string; publishedVersion: number | null }[]
   createdAt: string

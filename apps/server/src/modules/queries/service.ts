@@ -8,6 +8,7 @@ import type {
   QueryAnalysis,
   QueryParameter,
   QueryResult,
+  QuerySpec,
   QueryVersion,
   ResultColumn,
   SchemaDiff,
@@ -33,6 +34,7 @@ import { normalizeResult } from '../execution/results.ts'
 import { ParameterError, resolveParameters } from '../execution/sql/parameters.ts'
 import type { TableAccessService } from '../table-access/service.ts'
 import type { VariablesService } from '../variables/service.ts'
+import { BuilderError, compileSpec } from './builder/compile.ts'
 import { buildStatement, type Executable } from './sql-guard/executable.ts'
 import { SqlGuardError } from './sql-guard/lexer.ts'
 import { guardSql, type GuardContext } from './sql-guard/validate.ts'
@@ -122,14 +124,27 @@ export function checkDefinitions(
   return errors
 }
 
+/** SQL text, or a builder spec to compile into it. */
+export interface QuerySource {
+  sql?: string | undefined
+  builder?: QuerySpec | undefined
+}
+
+interface StoredBuilder {
+  spec: QuerySpec
+  notes: string[]
+}
+
 export class QueriesService {
   private readonly deps: QueriesDeps
   private readonly clock: Clock
   private usage: QueryUsage = () => Promise.resolve([])
+  private readonly zoneTables = new Map<string, Promise<boolean>>()
 
   constructor(deps: QueriesDeps) {
     this.deps = deps
     this.clock = deps.clock ?? systemClock
+    deps.events.on('connection.changed', ({ connectionId }) => this.zoneTables.delete(connectionId))
     deps.variables.addUsage(async (name) => {
       const rows = await deps.db
         .selectFrom('query_versions')
@@ -175,6 +190,64 @@ export class QueriesService {
       catalog: new Map(snapshot.objects.map((object) => [object.name, object])),
       access: (name) => byName.get(name),
       variables: new Set((await this.deps.variables.current()).keys()),
+    }
+  }
+
+  /** Whether the server can convert time zones; then TIMESTAMP buckets follow the connection. */
+  private timeZoneTables(connectionId: string): Promise<boolean> {
+    let probe = this.zoneTables.get(connectionId)
+    if (probe === undefined) {
+      probe = this.deps.executor.target(connectionId).then(async (target) => {
+        const result = await this.deps.executor.execute(connectionId, {
+          sql: "SELECT CONVERT_TZ('2000-01-01 00:00:00', '+00:00', ?) IS NOT NULL AS ok",
+          values: [target.timeZone],
+        })
+        return Number(result.rows[0]?.[0] ?? 0) === 1
+      })
+      probe.catch(() => this.zoneTables.delete(connectionId))
+      this.zoneTables.set(connectionId, probe)
+    }
+    return probe
+  }
+
+  /** The SQL text of a source; a builder spec is compiled first (§10.3). */
+  async toSql(
+    connectionId: string,
+    source: QuerySource,
+  ): Promise<{ sql: string; builder: StoredBuilder | null }> {
+    if (source.builder === undefined) return { sql: source.sql ?? '', builder: null }
+    const spec = source.builder
+    const snapshot = await this.deps.catalog.current(connectionId)
+    if (snapshot === undefined) throw fieldError('connectionId', 'schema_missing')
+    const catalog = new Map(snapshot.objects.map((object) => [object.name, object]))
+    const connection = await this.deps.connections.get(connectionId)
+    const sourceObject = (alias: string) =>
+      alias === 'base' ? spec.base : spec.joins.find((join) => join.alias === alias)?.target
+    const needsZones = spec.columns.some((column) => {
+      if (column.bucket === undefined || column.column === null) return false
+      const object = catalog.get(sourceObject(column.source) ?? '')
+      return object?.columns.some(
+        (entry) => entry.name === column.column && entry.kind === 'timestamp',
+      )
+    })
+    const relations = (await this.deps.tableAccess.relations(connectionId)).map((relation) => ({
+      sourceObject: relation.sourceObject,
+      sourceColumn: relation.sourceColumn,
+      targetObject: relation.targetObject,
+      targetColumn: relation.targetColumn,
+    }))
+    try {
+      const compiled = compileSpec(spec, {
+        catalog,
+        relations,
+        timeZone: connection.timezone,
+        timeZoneTables: needsZones ? await this.timeZoneTables(connectionId) : true,
+      })
+      return { sql: compiled.sql, builder: { spec, notes: compiled.notes } }
+    } catch (error) {
+      if (error instanceof BuilderError)
+        throw new AppError('validation_failed', { errors: error.errors })
+      throw error
     }
   }
 
@@ -257,13 +330,15 @@ export class QueriesService {
       cacheTtlSeconds: row.cache_ttl_seconds,
       latestVersion: row.latest_version,
       current: this.toVersion(version, await this.email(version.created_by)),
+      builder:
+        version.builder_spec === null ? null : (JSON.parse(version.builder_spec) as StoredBuilder),
       usedBy: await this.usage(id),
       createdAt: new Date(row.created_at).toISOString(),
       updatedAt: new Date(row.updated_at).toISOString(),
     }
   }
 
-  async list(connectionId?: string): Promise<Omit<Query, 'current' | 'usedBy'>[]> {
+  async list(connectionId?: string): Promise<Omit<Query, 'current' | 'usedBy' | 'builder'>[]> {
     let query = this.deps.db.selectFrom('queries').selectAll().where('archived_at', 'is', null)
     if (connectionId !== undefined) query = query.where('connection_id', '=', connectionId)
     const rows = await query.orderBy('name').execute()
@@ -327,11 +402,8 @@ export class QueriesService {
 
   async create(actor: Actor, input: CreateInput): Promise<Query> {
     await this.ensureNameFree(input.name)
-    const { analysis, executable } = await this.validate(
-      input.connectionId,
-      input.sql,
-      input.parameters,
-    )
+    const { sql, builder } = await this.toSql(input.connectionId, input)
+    const { analysis, executable } = await this.validate(input.connectionId, sql, input.parameters)
     const id = uuidv7()
     const now = this.clock()
     await writeTransaction(this.deps.db, async (trx) => {
@@ -342,7 +414,7 @@ export class QueriesService {
           connection_id: input.connectionId,
           name: input.name,
           description: input.description,
-          mode: 'sql',
+          mode: builder === null ? 'sql' : 'builder',
           cache_ttl_seconds: input.cacheTtlSeconds,
           latest_version: 1,
           created_by: actor.id,
@@ -356,8 +428,8 @@ export class QueriesService {
         .values({
           query_id: id,
           version: 1,
-          sql_text: input.sql,
-          builder_spec: null,
+          sql_text: sql,
+          builder_spec: builder === null ? null : JSON.stringify(builder),
           parameters: JSON.stringify(input.parameters),
           analysis: JSON.stringify(analysis),
           executable: JSON.stringify(executable),
@@ -385,14 +457,37 @@ export class QueriesService {
     const row = await this.row(id)
     const current = await this.versionRow(id, row.latest_version)
     if (input.name !== undefined) await this.ensureNameFree(input.name, id)
-    const sql = input.sql ?? current.sql_text
+    if (row.mode === 'sql' && input.builder !== undefined) {
+      throw fieldError('builder', 'not_allowed')
+    }
+    const storedBuilder =
+      current.builder_spec === null ? null : (JSON.parse(current.builder_spec) as StoredBuilder)
+    // New SQL text converts a builder query; a new spec recompiles it.
+    const source: QuerySource =
+      input.sql !== undefined
+        ? { sql: input.sql }
+        : input.builder !== undefined
+          ? { builder: input.builder }
+          : storedBuilder === null
+            ? { sql: current.sql_text }
+            : { builder: storedBuilder.spec }
+    const { sql, builder } =
+      input.sql === undefined && input.builder === undefined
+        ? { sql: current.sql_text, builder: storedBuilder }
+        : await this.toSql(row.connection_id, source)
+    const mode = builder === null ? 'sql' : 'builder'
     const parameters = input.parameters ?? (JSON.parse(current.parameters) as QueryParameter[])
-    const versioned = sql !== current.sql_text || JSON.stringify(parameters) !== current.parameters
+    const builderText = builder === null ? null : JSON.stringify(builder)
+    const versioned =
+      sql !== current.sql_text ||
+      JSON.stringify(parameters) !== current.parameters ||
+      builderText !== current.builder_spec
     const changes: Record<string, [unknown, unknown]> = {}
     for (const [key, before, after] of [
       ['name', row.name, input.name],
       ['description', row.description, input.description],
       ['cacheTtlSeconds', row.cache_ttl_seconds, input.cacheTtlSeconds],
+      ['mode', row.mode, mode],
     ] as const) {
       if (after !== undefined && after !== before) changes[key] = [before, after]
     }
@@ -413,7 +508,7 @@ export class QueriesService {
             query_id: id,
             version,
             sql_text: sql,
-            builder_spec: null,
+            builder_spec: builderText,
             parameters: JSON.stringify(parameters),
             analysis: JSON.stringify(validated.analysis),
             executable: JSON.stringify(validated.executable),
@@ -429,6 +524,7 @@ export class QueriesService {
           ...(input.name !== undefined && { name: input.name }),
           ...(input.description !== undefined && { description: input.description }),
           ...(input.cacheTtlSeconds !== undefined && { cache_ttl_seconds: input.cacheTtlSeconds }),
+          mode,
           latest_version: version,
           updated_at: now,
         })
@@ -465,11 +561,8 @@ export class QueriesService {
     user: { id: string; email: string },
     input: z.infer<typeof queryTestRun>,
   ): Promise<QueryResult & { durationMs: number }> {
-    const { analysis, executable } = await this.validate(
-      input.connectionId,
-      input.sql,
-      input.parameters,
-    )
+    const { sql } = await this.toSql(input.connectionId, input)
+    const { analysis, executable } = await this.validate(input.connectionId, sql, input.parameters)
     const target = await this.deps.executor.target(input.connectionId)
     let resolved
     try {

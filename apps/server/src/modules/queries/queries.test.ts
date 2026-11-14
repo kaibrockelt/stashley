@@ -208,3 +208,89 @@ describe('query library', () => {
     })
   })
 })
+
+describe('builder queries', () => {
+  it('compile their spec, validate it like SQL and convert to SQL only one way', async () => {
+    const s = await setupServer()
+    const demo = await setupDemo(s)
+    const spec = {
+      schemaVersion: 1,
+      base: 'anmeldung',
+      joins: [
+        {
+          alias: 'p',
+          from: 'base',
+          column: 'person_id',
+          target: 'person',
+          targetColumn: 'id',
+          kind: 'inner',
+        },
+      ],
+      columns: [
+        { name: 'land', source: 'p', column: 'land' },
+        { name: 'n', source: 'base', column: null, aggregate: 'count' },
+      ],
+      filters: [],
+      sort: [{ column: 'n', direction: 'desc' }],
+      limit: null,
+    }
+    const created = await s.admin.send('POST', '/internal/design/queries', {
+      connectionId: demo.connectionId,
+      name: 'Teilnehmer nach Land',
+      description: '',
+      builder: spec,
+      parameters: [],
+      cacheTtlSeconds: 300,
+    })
+    expect(created.statusCode).toBe(201)
+    const query = created.json<Query>()
+    expect(query.mode).toBe('builder')
+    expect(query.builder?.spec).toEqual(spec)
+    expect(query.current.sql).toContain('GROUP BY 1')
+    expect(query.current.analysis.objects).toEqual(['anmeldung', 'person'])
+
+    // An excluded column is rejected after compiling, like in SQL.
+    const excluded = await s.admin.send('POST', '/internal/design/queries/validate', {
+      connectionId: demo.connectionId,
+      builder: {
+        ...spec,
+        base: 'hotel',
+        joins: [],
+        columns: [{ name: 'k', source: 'base', column: 'kontakt_email' }],
+        sort: [],
+      },
+      parameters: [],
+    })
+    expect(problem(excluded).errors).toEqual([
+      { field: 'sql', code: 'excluded_column', params: { detail: 'kontakt_email' } },
+    ])
+    const unknown = await s.admin.send('POST', '/internal/design/queries/validate', {
+      connectionId: demo.connectionId,
+      builder: { ...spec, joins: [{ ...spec.joins[0], target: 'hotel' }] },
+      parameters: [],
+    })
+    expect(problem(unknown).errors).toEqual([
+      { field: 'builder.joins.0', code: 'unknown_relation' },
+      { field: 'builder.columns.0.column', code: 'unknown_column' },
+    ])
+
+    const converted = await s.admin.send('PATCH', `/internal/design/queries/${query.id}`, {
+      sql: query.current.sql,
+    })
+    expect(converted.json<Query>()).toMatchObject({ mode: 'sql', builder: null, latestVersion: 2 })
+    const back = await s.admin.send('PATCH', `/internal/design/queries/${query.id}`, {
+      builder: spec,
+    })
+    expect(problem(back).errors).toEqual([{ field: 'builder', code: 'not_allowed' }])
+    const both = await s.admin.send('POST', '/internal/design/queries', {
+      connectionId: demo.connectionId,
+      name: 'x',
+      description: '',
+      sql: 'SELECT 1',
+      builder: spec,
+      parameters: [],
+      cacheTtlSeconds: 0,
+    })
+    expect(both.statusCode).toBe(422)
+  })
+})
