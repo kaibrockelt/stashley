@@ -212,5 +212,5 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - The grant report records the account (`CURRENT_USER()`).
   - Exclusions of columns the read user no longer sees stay stored and can be saved again.
   - Verified with 547 server unit tests and 148 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7. On every engine, the suggested statements run as given, and the database then refuses the unexposed table and the excluded columns of a table and a view, while exposed data reads as before.
-  - Not checked in the browser: the read scope panel and the note on hidden exclusions in the access dialog.
+  - Checked in the browser on the test stand (MariaDB 12.3): after checking the grants again, the read scope lists the unexposed objects and the statements (`REVOKE` on the schema, `GRANT SELECT` on the one exposed table). The statements were not applied there. Not checked in the browser: the note on hidden exclusions in the access dialog.
   - Decision: the SQL validation stays an open point that is tested externally (penetration test); it does not block M5.

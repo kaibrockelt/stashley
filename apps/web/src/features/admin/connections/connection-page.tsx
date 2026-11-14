@@ -221,10 +221,14 @@ export function ConnectionPage() {
               <p className={styles.muted}>
                 {t('connections.checkedAt', { time: formatDate(credential.checkedAt) })}
               </p>
-              {credential.purpose === 'read' && <ReadScopePanel connectionId={connectionId} />}
             </div>
           ))}
         </div>
+        {connection.credentials.some((credential) => credential.purpose === 'read') && (
+          <div className={styles.block}>
+            <ReadScopePanel connectionId={connectionId} />
+          </div>
+        )}
       </Section>
 
       {(refreshResult !== undefined || openDrifts.length > 0) && (
