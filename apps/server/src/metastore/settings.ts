@@ -33,6 +33,10 @@ export const settingDefinitions = {
     }),
     defaultValue: { idleMinutes: 12 * 60, maxAgeDays: 7 },
   },
+  'roles.managerCreation': {
+    schema: z.object({ enabled: z.boolean() }),
+    defaultValue: { enabled: true },
+  },
   'audit.retention': {
     schema: z.object({ days: z.number().int().min(30).max(3650) }),
     defaultValue: { days: 365 },

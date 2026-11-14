@@ -21,11 +21,12 @@ export class InstanceSettingsService {
   }
 
   async get(): Promise<InstanceSettings> {
-    const [local, twoFactor, session, retention] = await Promise.all([
+    const [local, twoFactor, session, retention, roles] = await Promise.all([
       this.settings.get('auth.localLogin'),
       this.settings.get('auth.twoFactor'),
       this.settings.get('auth.session'),
       this.settings.get('audit.retention'),
+      this.settings.get('roles.managerCreation'),
     ])
     return {
       localLoginEnabled: local.enabled,
@@ -33,6 +34,7 @@ export class InstanceSettingsService {
       sessionIdleMinutes: session.idleMinutes,
       sessionMaxAgeDays: session.maxAgeDays,
       auditRetentionDays: retention.days,
+      managersCreateRoles: roles.enabled,
     }
   }
 
@@ -53,6 +55,7 @@ export class InstanceSettingsService {
       sessionIdleMinutes: input.sessionIdleMinutes ?? before.sessionIdleMinutes,
       sessionMaxAgeDays: input.sessionMaxAgeDays ?? before.sessionMaxAgeDays,
       auditRetentionDays: input.auditRetentionDays ?? before.auditRetentionDays,
+      managersCreateRoles: input.managersCreateRoles ?? before.managersCreateRoles,
     }
     const changes: Record<string, [unknown, unknown]> = {}
     for (const key of Object.keys(next) as (keyof InstanceSettings)[]) {
@@ -68,6 +71,7 @@ export class InstanceSettingsService {
       by,
     )
     await this.settings.set('audit.retention', { days: next.auditRetentionDays }, by)
+    await this.settings.set('roles.managerCreation', { enabled: next.managersCreateRoles }, by)
     await this.audit.record(actor, { action: 'settings.updated', changes })
     return next
   }

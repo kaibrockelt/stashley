@@ -3,4 +3,6 @@
 export * from './api/accounts.ts'
 export * from './api/connections.ts'
 export * from './api/errors.ts'
+export * from './api/roles.ts'
 export * from './values/column-kinds.ts'
+export * from './values/params.ts'

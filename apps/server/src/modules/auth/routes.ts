@@ -18,7 +18,7 @@ import type { SettingsRepository } from '../../metastore/settings.ts'
 import { parse } from '../../platform/http/validation.ts'
 import { csrfUserInfo } from '../../platform/http/security.ts'
 import type { Mailer } from '../mail/mailer.ts'
-import { toSessionUser } from '../users/repository.ts'
+import { toSessionUser, type UsersRepository } from '../users/repository.ts'
 import {
   clearSessionCookie,
   requireActive,
@@ -37,6 +37,7 @@ export interface AuthRouteDeps {
   cookie: CookieSettings
   timeZone: string
   baseUrl: string
+  users: UsersRepository
 }
 
 function meta(request: FastifyRequest): RequestMeta {
@@ -62,7 +63,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     return {
       state: auth?.state ?? 'anonymous',
       csrfToken: reply.generateCsrf({ userInfo: csrfUserInfo(request) }),
-      user: auth === null ? null : toSessionUser(auth.user),
+      user: auth === null ? null : toSessionUser(auth.user, await deps.users.roles(auth.user.id)),
       instance: {
         timeZone: deps.timeZone,
         localLogin: localLogin.enabled,

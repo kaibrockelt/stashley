@@ -12,6 +12,7 @@ import { systemActor } from './modules/audit/audit-log.ts'
 import { registerAuthRoutes } from './modules/auth/routes.ts'
 import { registerHealthRoutes, type Readiness } from './modules/system/health.ts'
 import { registerDataRoutes } from './modules/connections/routes.ts'
+import { registerRoleRoutes } from './modules/roles/routes.ts'
 import { registerAdminRoutes } from './modules/users/routes.ts'
 import { createServices, type ServiceOverrides, type Services } from './services.ts'
 import { registerSecurity } from './platform/http/security.ts'
@@ -105,6 +106,7 @@ export async function createServer(
     cookie: services.cookie,
     timeZone: config.timeZone,
     baseUrl: config.baseUrl.href.replace(/\/$/, ''),
+    users: services.users,
   })
   registerAdminRoutes(app, {
     users: services.users,
@@ -118,6 +120,7 @@ export async function createServer(
     catalog: services.catalog,
     tableAccess: services.tableAccess,
   })
+  registerRoleRoutes(app, { roles: services.roles, variables: services.variables })
 
   const jobs: JobDefinition[] = [
     {

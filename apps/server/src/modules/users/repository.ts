@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { AdminUser, SessionUser, Theme, UiLocale } from '@stashley/shared'
+import type { AdminUser, RoleRef, SessionUser, Theme, UiLocale } from '@stashley/shared'
 import { sql, type Kysely, type Updateable } from 'kysely'
 import { v7 as uuidv7 } from 'uuid'
 import type { Database, SystemRole, UsersTable, UserStatus } from '../../metastore/schema.ts'
@@ -12,7 +12,7 @@ export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase()
 }
 
-export function toSessionUser(user: UserRow): SessionUser {
+export function toSessionUser(user: UserRow, roles: RoleRef[]): SessionUser {
   return {
     id: user.id,
     email: user.email,
@@ -24,6 +24,7 @@ export function toSessionUser(user: UserRow): SessionUser {
     theme: user.theme as Theme,
     mfaEnabled: user.totp_enabled_at !== null,
     hasPassword: user.password_hash !== null,
+    roles,
   }
 }
 
@@ -113,6 +114,31 @@ export class UsersRepository {
     return Number(row.count)
   }
 
+  /** The user's roles in their configured order. */
+  async roles(userId: string, db: Kysely<Database> = this.db): Promise<RoleRef[]> {
+    return db
+      .selectFrom('user_roles')
+      .innerJoin('roles', 'roles.id', 'user_roles.role_id')
+      .select(['roles.id', 'roles.name'])
+      .where('user_roles.user_id', '=', userId)
+      .orderBy('roles.position')
+      .orderBy('roles.name')
+      .execute()
+  }
+
+  private async roleAssignments(
+    userIds?: string[],
+  ): Promise<{ user_id: string; role_id: string }[]> {
+    let query = this.db
+      .selectFrom('user_roles')
+      .innerJoin('roles', 'roles.id', 'user_roles.role_id')
+      .select(['user_roles.user_id', 'user_roles.role_id'])
+      .orderBy('roles.position')
+      .orderBy('roles.name')
+    if (userIds !== undefined) query = query.where('user_roles.user_id', 'in', userIds)
+    return query.execute()
+  }
+
   async list(filter: { status?: UserStatus; query?: string }): Promise<AdminUser[]> {
     let query = this.db.selectFrom('users').selectAll()
     if (filter.status !== undefined) query = query.where('status', '=', filter.status)
@@ -136,7 +162,8 @@ export class UsersRepository {
         'identity_providers.display_name as provider',
       ])
       .execute()
-    return users.map((user) => this.toAdminUser(user, identities))
+    const roles = await this.roleAssignments()
+    return users.map((user) => this.toAdminUser(user, identities, roles))
   }
 
   async getAdminUser(id: string): Promise<AdminUser | undefined> {
@@ -153,12 +180,13 @@ export class UsersRepository {
       ])
       .where('user_identities.user_id', '=', id)
       .execute()
-    return this.toAdminUser(user, identities)
+    return this.toAdminUser(user, identities, await this.roleAssignments([id]))
   }
 
   private toAdminUser(
     user: UserRow,
     identities: { id: string; user_id: string; email: string | null; provider: string }[],
+    roles: { user_id: string; role_id: string }[],
   ): AdminUser {
     return {
       id: user.id,
@@ -175,6 +203,7 @@ export class UsersRepository {
           provider: identity.provider,
           email: identity.email,
         })),
+      roleIds: roles.filter((entry) => entry.user_id === user.id).map((entry) => entry.role_id),
       createdAt: new Date(user.created_at).toISOString(),
       lastLoginAt: isoOrNull(user.last_login_at),
     }

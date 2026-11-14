@@ -7,7 +7,9 @@ import { SettingsRepository } from './metastore/settings.ts'
 import { AuditLog } from './modules/audit/audit-log.ts'
 import { CatalogService } from './modules/catalog/service.ts'
 import { ConnectionsService } from './modules/connections/service.ts'
+import { RolesService } from './modules/roles/service.ts'
 import { TableAccessService } from './modules/table-access/service.ts'
+import { VariablesService } from './modules/variables/service.ts'
 import { TargetPools, type HostResolver } from './target/pools.ts'
 import { sessionCookieName } from './modules/auth/sessions.ts'
 import { createOidcClient, OidcService, type OidcClient } from './modules/auth/oidc.ts'
@@ -96,7 +98,11 @@ export function createServices(
   const connections = new ConnectionsService({ db, keys, audit, pools, clock, events })
   const catalog = new CatalogService({ db, connections, audit, log, clock, events })
   const tableAccess = new TableAccessService({ db, connections, catalog, audit, clock, events })
+  const roles = new RolesService({ db, settings, audit, events, clock })
+  const variables = new VariablesService({ db, audit, events, clock })
   return {
+    roles,
+    variables,
     events,
     pools,
     connections,

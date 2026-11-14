@@ -46,6 +46,8 @@ export interface SessionUser {
   theme: Theme
   mfaEnabled: boolean
   hasPassword: boolean
+  /** Roles in their configured order. */
+  roles: { id: string; name: string }[]
 }
 
 export interface SessionResponse {
@@ -105,6 +107,7 @@ export interface AdminUser {
   mfaEnabled: boolean
   hasPassword: boolean
   identities: { id: string; provider: string; email: string | null }[]
+  roleIds: string[]
   createdAt: string
   lastLoginAt: string | null
 }
@@ -161,6 +164,8 @@ export interface InstanceSettings {
   sessionIdleMinutes: number
   sessionMaxAgeDays: number
   auditRetentionDays: number
+  /** Whether managers may create, rename and delete roles. */
+  managersCreateRoles: boolean
 }
 
 export const instanceSettingsUpdate = z.object({
@@ -174,6 +179,7 @@ export const instanceSettingsUpdate = z.object({
     .optional(),
   sessionMaxAgeDays: z.number().int().min(1).max(90).optional(),
   auditRetentionDays: z.number().int().min(30).max(3650).optional(),
+  managersCreateRoles: z.boolean().optional(),
 })
 
 export interface AuditEvent {
