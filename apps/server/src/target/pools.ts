@@ -36,6 +36,32 @@ export interface TargetSession {
 }
 
 const poolSizes: Record<CredentialPurpose, number> = { read: 10, write: 4, schema: 1 }
+
+/**
+ * SQL modes that change how the server reads string literals, quotes or the grammar. Stored
+ * queries are validated with MySQL's default rules (§10.2), so the read session runs without
+ * them: with `ANSI_QUOTES` a "string" would be an identifier, with `NO_BACKSLASH_ESCAPES`
+ * a string could end where the validation saw none.
+ */
+const unsafeReadModes = new Set([
+  'ANSI',
+  'ANSI_QUOTES',
+  'NO_BACKSLASH_ESCAPES',
+  'ORACLE',
+  'MSSQL',
+  'DB2',
+  'POSTGRESQL',
+  'MAXDB',
+])
+
+/** The session's SQL mode without the modes that change how statements are read. */
+export function readSqlMode(current: string): string {
+  return current
+    .split(',')
+    .map((mode) => mode.trim())
+    .filter((mode) => mode !== '' && !unsafeReadModes.has(mode.toUpperCase()))
+    .join(',')
+}
 const connectTimeoutMs = 10_000
 
 function sslOptions(spec: TargetSpec): ConnectionOptions['ssl'] {
@@ -86,6 +112,9 @@ async function setUp(raw: RawSession, spec: TargetSpec, purpose: CredentialPurpo
   await raw.query({ sql: 'SET NAMES utf8mb4' })
   await raw.query({ sql: "SET time_zone = '+00:00'" })
   if (purpose === 'read') {
+    const [modes] = await raw.query({ sql: 'SELECT @@SESSION.sql_mode AS m' })
+    const current = (modes as { m: string | null }[])[0]?.m ?? ''
+    await raw.query({ sql: 'SET SESSION sql_mode = ?', values: [readSqlMode(current)] })
     await raw.query({ sql: 'SET SESSION TRANSACTION READ ONLY' })
     if (server.engine === 'mariadb') {
       await raw.query({
