@@ -7,7 +7,11 @@ import { SettingsRepository } from './metastore/settings.ts'
 import { AuditLog } from './modules/audit/audit-log.ts'
 import { CatalogService } from './modules/catalog/service.ts'
 import { ConnectionsService } from './modules/connections/service.ts'
+import { AccessFacts } from './modules/access/facts.ts'
+import { AccessService } from './modules/access/service.ts'
 import { QueryCache } from './modules/cache/query-cache.ts'
+import { ComponentReader } from './modules/execution/component-reader.ts'
+import { PagesService } from './modules/pages/service.ts'
 import { ReadExecutor } from './modules/execution/executor.ts'
 import { QueriesService } from './modules/queries/service.ts'
 import { RolesService } from './modules/roles/service.ts'
@@ -116,7 +120,22 @@ export function createServices(
     events,
     clock,
   })
+  const pages = new PagesService({ db, audit, events, queries, variables, clock })
+  const facts = new AccessFacts({ db, connections, catalog, tableAccess, events })
+  const access = new AccessService({ facts, pages, queries, roles, events })
+  const reader = new ComponentReader({
+    executor,
+    cache,
+    variables,
+    cursorKey: keys.key('cursor'),
+    displayTimeZone: config.timeZone,
+    clock,
+  })
   return {
+    access,
+    facts,
+    pages,
+    reader,
     cache,
     executor,
     queries,

@@ -12,7 +12,9 @@ import { systemActor } from './modules/audit/audit-log.ts'
 import { registerAuthRoutes } from './modules/auth/routes.ts'
 import { registerHealthRoutes, type Readiness } from './modules/system/health.ts'
 import { registerDataRoutes } from './modules/connections/routes.ts'
+import { registerPageRoutes } from './modules/pages/routes.ts'
 import { registerQueryRoutes } from './modules/queries/routes.ts'
+import { registerRuntimeRoutes } from './modules/runtime/routes.ts'
 import { registerRoleRoutes } from './modules/roles/routes.ts'
 import { registerAdminRoutes } from './modules/users/routes.ts'
 import { createServices, type ServiceOverrides, type Services } from './services.ts'
@@ -123,6 +125,8 @@ export async function createServer(
   })
   registerRoleRoutes(app, { roles: services.roles, variables: services.variables })
   registerQueryRoutes(app, { queries: services.queries })
+  registerPageRoutes(app, { pages: services.pages, access: services.access })
+  registerRuntimeRoutes(app, { access: services.access, reader: services.reader })
 
   const jobs: JobDefinition[] = [
     {

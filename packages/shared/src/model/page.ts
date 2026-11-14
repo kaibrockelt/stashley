@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import { z } from 'zod'
-import { authenticatedPrincipal } from '../access/algebra.ts'
+import { authenticatedPrincipal, type SourceKey } from '../access/algebra.ts'
 import { tableOps } from '../api/connections.ts'
 import { paramNamePattern, paramTypes } from '../values/params.ts'
 
@@ -28,7 +28,10 @@ export const cacheTtl = z
   .min(0)
   .max(30 * 86400)
 
-export const sourceKey = z.string().regex(/^(query|table):[0-9a-f-]{36}$/)
+export const sourceKey = z
+  .string()
+  .regex(/^(query|table):[0-9a-f-]{36}$/)
+  .transform((value) => value as SourceKey)
 
 export const pageAccess = z.object({
   view: z.array(principal).max(200),
