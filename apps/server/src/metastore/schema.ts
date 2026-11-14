@@ -23,6 +23,108 @@ export interface Database {
   table_access: TableAccessTable
   column_exclusions: ColumnExclusionsTable
   virtual_relations: VirtualRelationsTable
+  sections: SectionsTable
+  pages: PagesTable
+  page_versions: PageVersionsTable
+  roles: RolesTable
+  user_roles: UserRolesTable
+  instance_variables: InstanceVariablesTable
+  queries: QueriesTable
+  query_versions: QueryVersionsTable
+}
+
+export interface SectionsTable {
+  id: string
+  name: string
+  position: number
+  created_at: number
+  updated_at: number
+}
+
+export interface PagesTable {
+  id: string
+  section_id: string | null
+  position: number
+  kind: 'dashboard' | 'table'
+  slug: string
+  /** JSON page document (§13.1). */
+  draft: string
+  draft_revision: number
+  draft_updated_by: string | null
+  draft_updated_at: number
+  published_version: number | null
+  created_at: number
+  archived_at: number | null
+}
+
+export interface PageVersionsTable {
+  page_id: string
+  version: number
+  /** JSON page document with pinned query versions. */
+  document: string
+  source_revision: number
+  published_by: string | null
+  published_at: number
+}
+
+export interface RolesTable {
+  id: string
+  name: string
+  description: string
+  home_page_id: string | null
+  position: number
+  created_at: number
+  updated_at: number
+}
+
+export interface UserRolesTable {
+  user_id: string
+  role_id: string
+}
+
+export interface InstanceVariablesTable {
+  id: string
+  name: string
+  type: 'string' | 'integer' | 'decimal' | 'date' | 'datetime' | 'boolean'
+  /** JSON value. */
+  value: string
+  description: string
+  updated_by: string | null
+  created_at: number
+  updated_at: number
+}
+
+export interface QueriesTable {
+  id: string
+  connection_id: string
+  name: string
+  description: string
+  mode: 'builder' | 'sql'
+  /** 0 means live. */
+  cache_ttl_seconds: number
+  latest_version: number
+  created_by: string | null
+  created_at: number
+  updated_at: number
+  archived_at: number | null
+}
+
+export interface QueryVersionsTable {
+  query_id: string
+  version: number
+  sql_text: string
+  /** JSON builder spec; null for SQL queries. */
+  builder_spec: string | null
+  /** JSON parameter definitions. */
+  parameters: string
+  /** JSON analysis (§10.2). */
+  analysis: string
+  /** JSON executable form (§10.4). */
+  executable: string
+  /** JSON result columns of the last test run, if any. */
+  result_columns: string | null
+  created_by: string | null
+  created_at: number
 }
 
 export interface ConnectionsTable {

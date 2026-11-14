@@ -20,6 +20,7 @@ import { UsersRepository } from './modules/users/repository.ts'
 import { UsersService } from './modules/users/service.ts'
 import { systemClock, type Clock } from './platform/clock.ts'
 import type { KeyRing } from './platform/crypto/keys.ts'
+import { EventBus } from './platform/events.ts'
 
 export interface ServiceOverrides {
   oidcClient?: OidcClient
@@ -86,13 +87,17 @@ export function createServices(
     clock,
   })
   const instanceSettings = new InstanceSettingsService(db, settings, audit)
+  const events = new EventBus((error, event) =>
+    log.error({ err: error, event }, 'event handler failed'),
+  )
   const pools = new TargetPools(
     overrides.resolveTargetHost === undefined ? {} : { resolveHost: overrides.resolveTargetHost },
   )
-  const connections = new ConnectionsService({ db, keys, audit, pools, clock })
-  const catalog = new CatalogService({ db, connections, audit, log, clock })
-  const tableAccess = new TableAccessService({ db, connections, catalog, audit, clock })
+  const connections = new ConnectionsService({ db, keys, audit, pools, clock, events })
+  const catalog = new CatalogService({ db, connections, audit, log, clock, events })
+  const tableAccess = new TableAccessService({ db, connections, catalog, audit, clock, events })
   return {
+    events,
     pools,
     connections,
     catalog,

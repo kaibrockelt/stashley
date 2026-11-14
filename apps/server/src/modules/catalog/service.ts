@@ -15,6 +15,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { writeTransaction } from '../../metastore/db.ts'
 import type { Database, SchemaSnapshotsTable } from '../../metastore/schema.ts'
 import { isoOrNull, systemClock, type Clock } from '../../platform/clock.ts'
+import type { EventBus } from '../../platform/events.ts'
 import { AppError } from '../../platform/http/problem.ts'
 import { systemActor, type Actor, type AuditInput, type AuditLog } from '../audit/audit-log.ts'
 import type { ConnectionsService } from '../connections/service.ts'
@@ -33,7 +34,11 @@ export interface CatalogDeps {
   audit: AuditLog
   log: FastifyBaseLogger
   clock?: Clock
+  events?: EventBus
 }
+
+/** Adds affected items of other modules (queries, components) to a schema impact report. */
+export type ImpactProvider = (connectionId: string, diff: SchemaDiff) => Promise<ImpactItem[]>
 
 /** The failure code of a schema read: the read user's connection failure, or `failed`. */
 function failureOf(error: unknown): string {
@@ -52,10 +57,15 @@ function contentHash(objects: CatalogObject[]): string {
 export class CatalogService {
   private readonly deps: CatalogDeps
   private readonly clock: Clock
+  private readonly impactProviders: ImpactProvider[] = []
 
   constructor(deps: CatalogDeps) {
     this.deps = deps
     this.clock = deps.clock ?? systemClock
+  }
+
+  addImpactProvider(provider: ImpactProvider): void {
+    this.impactProviders.push(provider)
   }
 
   private async latest(connectionId: string): Promise<SchemaSnapshotsTable | undefined> {
@@ -101,7 +111,7 @@ export class CatalogService {
       .selectAll()
       .where('connection_id', '=', connectionId)
       .execute()
-    return impactOf(diff, {
+    const own = impactOf(diff, {
       accesses: accesses.map((access) => ({
         id: access.id,
         objectName: access.object_name,
@@ -119,6 +129,10 @@ export class CatalogService {
         targetColumn: relation.target_column,
       })),
     })
+    const others = await Promise.all(
+      this.impactProviders.map((provider) => provider(connectionId, diff)),
+    )
+    return [...own, ...others.flat()]
   }
 
   /**
@@ -195,6 +209,8 @@ export class CatalogService {
       return this.followTypeChanges(trx, connectionId, objects)
     })
     for (const change of typeChanges) await this.deps.audit.record(actor, change)
+    this.deps.events?.emit('catalog.refreshed', { connectionId })
+    if (typeChanges.length > 0) this.deps.events?.emit('table-access.changed', { connectionId })
     await this.deps.audit.record(actor, {
       action: 'connection.schema_refreshed',
       subject: { kind: 'connection', id: connectionId, label: target.row.name },

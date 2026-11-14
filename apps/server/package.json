@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc -b",
     "dev": "node --conditions=@stashley/source --watch src/cli/index.ts serve",
-    "test": "vitest run",
+    "test": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
@@ -26,6 +26,7 @@
     "fastify": "5.12.8",
     "ipaddr.js": "2.5.0",
     "kysely": "0.29.8",
+    "lru-cache": "11.5.3",
     "mysql2": "3.24.6",
     "node-sql-parser": "5.4.0",
     "nodemailer": "10.4.0",

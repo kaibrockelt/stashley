@@ -16,6 +16,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { writeTransaction } from '../../metastore/db.ts'
 import type { ConnectionsTable, Database } from '../../metastore/schema.ts'
 import { isoOrNull, systemClock, type Clock } from '../../platform/clock.ts'
+import type { EventBus } from '../../platform/events.ts'
 import { decrypt, encrypt, type KeyRing } from '../../platform/crypto/keys.ts'
 import { AppError } from '../../platform/http/problem.ts'
 import { fieldError } from '../../platform/http/validation.ts'
@@ -36,6 +37,7 @@ export interface ConnectionsDeps {
   audit: AuditLog
   pools: TargetPools
   clock?: Clock
+  events?: EventBus
 }
 
 export interface ResolvedTarget {
@@ -402,6 +404,7 @@ export class ConnectionsService {
         changes,
       })
     }
+    this.deps.events?.emit('connection.changed', { connectionId: id })
     return this.get(id)
   }
 
@@ -412,9 +415,15 @@ export class ConnectionsService {
       .select('id')
       .where('connection_id', '=', id)
       .executeTakeFirst()
-    if (used !== undefined) throw new AppError('in_use')
+    const query = await this.deps.db
+      .selectFrom('queries')
+      .select('id')
+      .where('connection_id', '=', id)
+      .executeTakeFirst()
+    if (used !== undefined || query !== undefined) throw new AppError('in_use')
     await this.deps.db.deleteFrom('connections').where('id', '=', id).execute()
     await this.deps.pools.invalidate(id)
+    this.deps.events?.emit('connection.changed', { connectionId: id })
     await this.deps.audit.record(actor, {
       action: 'connection.deleted',
       subject: { kind: 'connection', id, label: connection.name },
@@ -445,6 +454,7 @@ export class ConnectionsService {
         missing: Object.fromEntries(reports.map((report) => [report.purpose, report.missing])),
       },
     })
+    this.deps.events?.emit('connection.changed', { connectionId: id })
     return this.get(id)
   }
 

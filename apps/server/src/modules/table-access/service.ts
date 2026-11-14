@@ -19,6 +19,7 @@ import type { z } from 'zod'
 import { writeTransaction } from '../../metastore/db.ts'
 import type { Database, TableAccessTable } from '../../metastore/schema.ts'
 import { systemClock, type Clock } from '../../platform/clock.ts'
+import type { EventBus } from '../../platform/events.ts'
 import { AppError } from '../../platform/http/problem.ts'
 import { fieldError } from '../../platform/http/validation.ts'
 import type { Actor, AuditLog } from '../audit/audit-log.ts'
@@ -46,6 +47,7 @@ export interface TableAccessDeps {
   catalog: CatalogService
   audit: AuditLog
   clock?: Clock
+  events?: EventBus
 }
 
 /** A relation usable in display templates and linked columns. */
@@ -460,6 +462,7 @@ export class TableAccessService {
         mcpEnabled: input.mcpEnabled,
       },
     })
+    this.changed(input.connectionId)
     return this.get(id)
   }
 
@@ -529,6 +532,7 @@ export class TableAccessService {
         changes,
       })
     }
+    this.changed(before.connectionId)
     return after
   }
 
@@ -541,6 +545,7 @@ export class TableAccessService {
       connectionId: access.connectionId,
       objectName: access.objectName,
     })
+    this.changed(access.connectionId)
   }
 
   async createRelation(actor: Actor, input: z.infer<typeof relationInput>): Promise<Relation> {
@@ -609,6 +614,7 @@ export class TableAccessService {
       connectionId: input.connectionId,
       details: { kind: input.kind },
     })
+    this.changed(input.connectionId)
     const created = (await this.relations(input.connectionId)).find(
       (relation) => relation.id === id,
     )
@@ -633,5 +639,10 @@ export class TableAccessService {
       },
       connectionId: row.connection_id,
     })
+    this.changed(row.connection_id)
+  }
+
+  private changed(connectionId: string): void {
+    this.deps.events?.emit('table-access.changed', { connectionId })
   }
 }
