@@ -23,7 +23,7 @@ import {
   TextField,
 } from '../../ui/controls.tsx'
 import table from '../../ui/table.module.css'
-import { useRoles } from '../design/roles.tsx'
+import { rolesKey, useRoles } from '../design/roles.tsx'
 
 const usersKey = ['admin', 'users'] as const
 
@@ -151,6 +151,8 @@ function UserDialog(props: { user: AdminUser | undefined; onClose: () => void })
       const before = [...(user?.roleIds ?? [])].sort().join()
       if ([...roleIds].sort().join() !== before) {
         await api('PUT', `/internal/admin/users/${id}/roles`, { roleIds })
+        // The role list counts users per role.
+        await client.invalidateQueries({ queryKey: rolesKey })
       }
       return updated
     },

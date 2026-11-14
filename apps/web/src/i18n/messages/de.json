@@ -185,7 +185,7 @@
   "field.reserved": "Dieser Name ist reserviert",
   "field.schemaMissing": "Lesen Sie zuerst das Schema",
   "field.status": "Status",
-  "field.systemRole": "Rolle",
+  "field.systemRole": "Systemrolle",
   "field.taken": "Bereits vergeben",
   "field.targetNotExposed": "Die verknüpfte Tabelle ist nicht freigegeben",
   "field.tooCommon": "Zu häufig verwendet",

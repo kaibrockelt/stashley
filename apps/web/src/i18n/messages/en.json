@@ -185,7 +185,7 @@
   "field.reserved": "This name is reserved",
   "field.schemaMissing": "Read the schema first",
   "field.status": "Status",
-  "field.systemRole": "Role",
+  "field.systemRole": "System role",
   "field.taken": "Already in use",
   "field.targetNotExposed": "The related table is not shared",
   "field.tooCommon": "Too common",
