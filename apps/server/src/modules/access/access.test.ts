@@ -641,6 +641,41 @@ describe('page and component rights', () => {
     expect(problem(await w.manager.request('GET', '/internal/admin/permissions')).code).toBe(
       'forbidden',
     )
+    // A schema change lists the published components it affects (§9.3).
+    const impact = await (
+      w.s.server.services.catalog as unknown as {
+        impact(
+          connectionId: string,
+          diff: unknown,
+        ): Promise<{ kind: string; id: string; reason: string }[]>
+      }
+    ).impact(w.demo.connectionId, {
+      addedObjects: [],
+      removedObjects: [],
+      changedObjects: [
+        {
+          object: 'hotelbuchung',
+          addedColumns: [],
+          removedColumns: ['anreise'],
+          changedColumns: [],
+          keysChanged: false,
+        },
+        {
+          object: 'v_zahlungsstatus',
+          addedColumns: [],
+          removedColumns: [],
+          changedColumns: [{ column: 'offen', fields: ['dataType'] }],
+          keysChanged: false,
+        },
+      ],
+    })
+    const components = impact.filter((item) => item.kind === 'component')
+    expect(components.map((item) => [item.id.split(':')[1], item.reason])).toEqual([
+      ['gaeste', 'column_removed'],
+      ['offene-posten', 'column_changed'],
+      ['summe', 'column_changed'],
+    ])
+    expect(components[0]?.id).toBe(`${page.id}:gaeste`)
     const used = (
       await w.manager.request('GET', `/internal/design/queries/${w.queries.offen.id}`)
     ).json<Query>()

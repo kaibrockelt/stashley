@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import type {
+  ImpactItem,
   Navigation,
   NavigationPage,
   OpMask,
@@ -11,6 +12,7 @@ import type {
   RenderComponent,
   RenderPage,
   RowLayout,
+  SchemaDiff,
   TableOp,
 } from '@stashley/shared'
 import {
@@ -395,6 +397,60 @@ export class AccessService {
       })
     }
     return out
+  }
+
+  /**
+   * Published components that read a removed or changed object or column, for the schema
+   * impact report (§9.3).
+   */
+  async impact(connectionId: string, diff: SchemaDiff): Promise<ImpactItem[]> {
+    const removed = new Set(diff.removedObjects)
+    const items: ImpactItem[] = []
+    for (const { row, document, version } of await this.deps.pages.published()) {
+      const page = await this.compile(this.deps.pages.pageInput(row, document, version))
+      for (const component of page.components.values()) {
+        const source = component.source
+        if (source?.connection.connectionId !== connectionId) continue
+        const objects =
+          source.kind === 'query'
+            ? source.stored.analysis.objects
+            : (source.model?.objects ?? [source.object.objectName])
+        const columns =
+          source.kind === 'query'
+            ? source.stored.analysis.columns
+            : (source.model?.columnsUsed ?? [])
+        const stars = source.kind === 'query' ? source.stored.analysis.stars : []
+        const used = (object: string, column: string) =>
+          columns.some(
+            (entry) =>
+              entry.object === object && entry.column.toLowerCase() === column.toLowerCase(),
+          )
+        let reason: ImpactItem['reason'] | undefined
+        if (objects.some((object) => removed.has(object))) reason = 'object_removed'
+        for (const change of diff.changedObjects) {
+          if (reason !== undefined || !objects.includes(change.object)) continue
+          if (change.typeChanged !== undefined) reason = 'type_changed'
+          else if (change.removedColumns.some((column) => used(change.object, column))) {
+            reason = 'column_removed'
+          } else if (
+            change.changedColumns.some((entry) => used(change.object, entry.column)) ||
+            (stars.includes(change.object) &&
+              change.addedColumns.length + change.removedColumns.length > 0)
+          ) {
+            reason = 'column_changed'
+          }
+        }
+        if (reason !== undefined) {
+          items.push({
+            kind: 'component',
+            id: `${row.id}:${component.id}`,
+            label: `${document.title} / ${component.block.title}`,
+            reason,
+          })
+        }
+      }
+    }
+    return items
   }
 
   /**

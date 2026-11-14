@@ -123,6 +123,7 @@ export function createServices(
   const pages = new PagesService({ db, audit, events, queries, variables, clock })
   const facts = new AccessFacts({ db, connections, catalog, tableAccess, events })
   const access = new AccessService({ facts, pages, queries, roles, events })
+  catalog.addImpactProvider((connectionId, diff) => access.impact(connectionId, diff))
   const reader = new ComponentReader({
     executor,
     cache,

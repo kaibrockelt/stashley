@@ -26,6 +26,25 @@ export default tseslint.config(
     },
   },
   {
+    // Only `access` creates authorized handles (§8.4); execution takes them as given.
+    files: ['apps/server/src/**/*.ts'],
+    ignores: ['apps/server/src/modules/access/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/access/handles.ts', '**/access/compile.ts'],
+              allowTypeImports: true,
+              message: 'Authorized handles come from the access service only.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ['**/*.mjs', '**/*.js'],
     ...tseslint.configs.disableTypeChecked,
     languageOptions: {
