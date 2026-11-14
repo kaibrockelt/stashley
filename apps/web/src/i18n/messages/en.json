@@ -120,6 +120,8 @@
   "drift.detected": "Found during the daily check on {time}",
   "drift.impact.exclusion": "Hidden column {label}",
   "drift.impact.relation": "Relation {label}",
+  "drift.impact.query": "Query {label}",
+  "drift.impact.component": "Component {label}",
   "drift.impact.tableAccess": "Sharing of {label}",
   "drift.impact.template": "Display value of {label}",
   "drift.keysChanged": "keys changed",

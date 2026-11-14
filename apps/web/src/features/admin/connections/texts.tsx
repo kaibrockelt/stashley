@@ -88,6 +88,8 @@ const impactLabels: Record<ImpactItem['kind'], MessageId> = {
   column_exclusion: 'drift.impact.exclusion',
   display_template: 'drift.impact.template',
   relation: 'drift.impact.relation',
+  query: 'drift.impact.query',
+  component: 'drift.impact.component',
 }
 
 const reasonLabels: Record<ImpactItem['reason'], MessageId> = {

@@ -7,12 +7,15 @@ export class TargetError extends Error {
   readonly failure: ConnectionFailure
   /** The driver's error code, safe to log (e.g. `ER_ACCESS_DENIED_ERROR`). */
   readonly driverCode: string | undefined
+  /** The server's error number, e.g. 1062; safe to log and return. */
+  readonly errno: number | undefined
 
-  constructor(failure: ConnectionFailure, driverCode?: string) {
+  constructor(failure: ConnectionFailure, driverCode?: string, errno?: number) {
     super(`Target database: ${failure}`)
     this.name = 'TargetError'
     this.failure = failure
     this.driverCode = driverCode
+    this.errno = errno
   }
 }
 
@@ -42,10 +45,12 @@ const failures: Record<string, ConnectionFailure> = {
 export function toTargetError(error: unknown): TargetError {
   if (error instanceof TargetError) return error
   const code = (error as { code?: unknown }).code
+  const number = (error as { errno?: unknown }).errno
   const driverCode = typeof code === 'string' ? code : undefined
+  const errno = typeof number === 'number' && number > 0 ? number : undefined
   const failure =
     driverCode !== undefined
       ? (failures[driverCode] ?? (driverCode.startsWith('ERR_TLS') ? 'tls_failed' : 'failed'))
       : 'failed'
-  return new TargetError(failure, driverCode)
+  return new TargetError(failure, driverCode, errno)
 }

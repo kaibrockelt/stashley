@@ -1,0 +1,547 @@
+// SPDX-FileCopyrightText: 2026 Stashley contributors
+// SPDX-License-Identifier: AGPL-3.0-only
+import type {
+  FieldError,
+  ImpactItem,
+  ObjectAccess,
+  Query,
+  QueryAnalysis,
+  QueryParameter,
+  QueryResult,
+  QueryVersion,
+  ResultColumn,
+  SchemaDiff,
+  queryCreate,
+  queryTestRun,
+  queryUpdate,
+} from '@stashley/shared'
+import { checkParamList, checkParamValue, isUserContextParam, toMask } from '@stashley/shared'
+import type { Kysely } from 'kysely'
+import { v7 as uuidv7 } from 'uuid'
+import type { z } from 'zod'
+import { writeTransaction } from '../../metastore/db.ts'
+import type { Database, QueriesTable, QueryVersionsTable } from '../../metastore/schema.ts'
+import { systemClock, type Clock } from '../../platform/clock.ts'
+import type { EventBus } from '../../platform/events.ts'
+import { AppError } from '../../platform/http/problem.ts'
+import { fieldError } from '../../platform/http/validation.ts'
+import type { Actor, AuditLog } from '../audit/audit-log.ts'
+import type { CatalogService } from '../catalog/service.ts'
+import type { ConnectionsService } from '../connections/service.ts'
+import type { ReadExecutor } from '../execution/executor.ts'
+import { normalizeResult } from '../execution/results.ts'
+import { ParameterError, resolveParameters } from '../execution/sql/parameters.ts'
+import type { TableAccessService } from '../table-access/service.ts'
+import type { VariablesService } from '../variables/service.ts'
+import { buildStatement, type Executable } from './sql-guard/executable.ts'
+import { SqlGuardError } from './sql-guard/lexer.ts'
+import { guardSql, type GuardContext } from './sql-guard/validate.ts'
+
+export interface QueriesDeps {
+  db: Kysely<Database>
+  connections: ConnectionsService
+  catalog: CatalogService
+  tableAccess: TableAccessService
+  variables: VariablesService
+  executor: ReadExecutor
+  audit: AuditLog
+  events: EventBus
+  clock?: Clock
+}
+
+/** Pages that use a query, for the editor and to refuse deleting a used query. */
+export type QueryUsage = (queryId: string) => Promise<Query['usedBy']>
+
+/** Rows of a test run in the SQL editor (§ SQL-Editor). */
+export const testRunRows = 100
+
+/** A stored query version, as execution and access control need it. */
+export interface StoredVersion {
+  queryId: string
+  connectionId: string
+  version: number
+  cacheTtlSeconds: number
+  parameters: QueryParameter[]
+  analysis: QueryAnalysis
+  executable: Executable
+}
+
+type CreateInput = z.infer<typeof queryCreate>
+type UpdateInput = z.infer<typeof queryUpdate>
+
+/** SQL validation failures become field errors on `sql`. */
+export function guardError(error: SqlGuardError): AppError {
+  const params: Record<string, string | number> = {}
+  if (error.detail !== undefined) params.detail = error.detail
+  if (error.position !== undefined) params.position = error.position
+  return new AppError('validation_failed', {
+    errors: [
+      {
+        field: 'sql',
+        code: error.code,
+        ...(Object.keys(params).length > 0 && { params }),
+      },
+    ],
+  })
+}
+
+/**
+ * Checks the manager's parameter definitions against the names the SQL uses: every
+ * selectable parameter needs exactly one definition; user context and instance variables
+ * are set by the server and cannot be defined (§10.4).
+ */
+export function checkDefinitions(
+  analysis: QueryAnalysis,
+  definitions: readonly QueryParameter[],
+  variables: ReadonlySet<string>,
+): FieldError[] {
+  const errors: FieldError[] = []
+  const used = new Set(analysis.parameters)
+  const seen = new Set<string>()
+  definitions.forEach((definition, index) => {
+    const field = `parameters.${index}`
+    if (isUserContextParam(definition.name) || variables.has(definition.name)) {
+      errors.push({ field: `${field}.name`, code: 'server_value' })
+    } else if (seen.has(definition.name)) {
+      errors.push({ field: `${field}.name`, code: 'duplicate' })
+    } else if (!used.has(definition.name)) {
+      errors.push({ field: `${field}.name`, code: 'unused' })
+    }
+    seen.add(definition.name)
+    if (definition.defaultValue !== null) {
+      const checked = definition.list
+        ? checkParamList(definition.type, definition.defaultValue)
+        : checkParamValue(definition.type, definition.defaultValue)
+      if (!checked.ok) errors.push({ field: `${field}.defaultValue`, code: checked.code })
+    }
+  })
+  for (const name of analysis.parameters) {
+    if (isUserContextParam(name) || variables.has(name) || seen.has(name)) continue
+    errors.push({ field: 'parameters', code: 'missing', params: { name } })
+  }
+  return errors
+}
+
+export class QueriesService {
+  private readonly deps: QueriesDeps
+  private readonly clock: Clock
+  private usage: QueryUsage = () => Promise.resolve([])
+
+  constructor(deps: QueriesDeps) {
+    this.deps = deps
+    this.clock = deps.clock ?? systemClock
+    deps.variables.addUsage(async (name) => {
+      const rows = await deps.db
+        .selectFrom('query_versions')
+        .innerJoin('queries', (join) =>
+          join
+            .onRef('queries.id', '=', 'query_versions.query_id')
+            .onRef('queries.latest_version', '=', 'query_versions.version'),
+        )
+        .select('query_versions.analysis')
+        .execute()
+      return rows.some((row) =>
+        (JSON.parse(row.analysis) as QueryAnalysis).variables.includes(name),
+      )
+    })
+    deps.catalog.addImpactProvider((connectionId, diff) => this.impact(connectionId, diff))
+  }
+
+  setUsage(usage: QueryUsage): void {
+    this.usage = usage
+  }
+
+  /** What stored SQL of a connection is validated against: catalog, table access, variables. */
+  async guardContext(connectionId: string): Promise<GuardContext> {
+    const connection = await this.deps.connections.get(connectionId)
+    const snapshot = await this.deps.catalog.current(connectionId)
+    if (snapshot === undefined) throw fieldError('connectionId', 'schema_missing')
+    const accesses = await this.deps.tableAccess.list(connectionId)
+    const byName = new Map<string, ObjectAccess>(
+      accesses.map((access) => [
+        access.objectName,
+        {
+          ceiling: toMask(access.ops),
+          excluded: new Set(
+            access.exclusions.filter((entry) => entry.scope === 'all').map((entry) => entry.column),
+          ),
+          active: access.state === 'active',
+        },
+      ]),
+    )
+    return {
+      engine: connection.engine ?? 'mysql',
+      database: connection.databaseName,
+      catalog: new Map(snapshot.objects.map((object) => [object.name, object])),
+      access: (name) => byName.get(name),
+      variables: new Set((await this.deps.variables.current()).keys()),
+    }
+  }
+
+  /** Validates SQL and parameter definitions; throws field errors. */
+  async validate(
+    connectionId: string,
+    sql: string,
+    definitions: readonly QueryParameter[],
+  ): Promise<{ analysis: QueryAnalysis; executable: Executable }> {
+    const ctx = await this.guardContext(connectionId)
+    let guarded
+    try {
+      guarded = guardSql(sql, ctx)
+    } catch (error) {
+      if (error instanceof SqlGuardError) throw guardError(error)
+      throw error
+    }
+    const errors = checkDefinitions(guarded.analysis, definitions, ctx.variables)
+    if (errors.length > 0) throw new AppError('validation_failed', { errors })
+    return {
+      analysis: guarded.analysis,
+      executable: { segments: guarded.segments, params: guarded.params, limit: guarded.limit },
+    }
+  }
+
+  private async row(id: string): Promise<QueriesTable> {
+    const row = await this.deps.db
+      .selectFrom('queries')
+      .selectAll()
+      .where('id', '=', id)
+      .where('archived_at', 'is', null)
+      .executeTakeFirst()
+    if (row === undefined) throw new AppError('not_found')
+    return row
+  }
+
+  private async versionRow(id: string, version: number): Promise<QueryVersionsTable> {
+    const row = await this.deps.db
+      .selectFrom('query_versions')
+      .selectAll()
+      .where('query_id', '=', id)
+      .where('version', '=', version)
+      .executeTakeFirst()
+    if (row === undefined) throw new AppError('not_found')
+    return row
+  }
+
+  private toVersion(row: QueryVersionsTable, createdBy: string | null): QueryVersion {
+    return {
+      version: row.version,
+      sql: row.sql_text,
+      parameters: JSON.parse(row.parameters) as QueryParameter[],
+      analysis: JSON.parse(row.analysis) as QueryAnalysis,
+      resultColumns:
+        row.result_columns === null ? null : (JSON.parse(row.result_columns) as ResultColumn[]),
+      createdAt: new Date(row.created_at).toISOString(),
+      createdBy,
+    }
+  }
+
+  private async email(userId: string | null): Promise<string | null> {
+    if (userId === null) return null
+    const user = await this.deps.db
+      .selectFrom('users')
+      .select('email')
+      .where('id', '=', userId)
+      .executeTakeFirst()
+    return user?.email ?? null
+  }
+
+  async get(id: string): Promise<Query> {
+    const row = await this.row(id)
+    const version = await this.versionRow(id, row.latest_version)
+    return {
+      id: row.id,
+      connectionId: row.connection_id,
+      name: row.name,
+      description: row.description,
+      mode: row.mode,
+      cacheTtlSeconds: row.cache_ttl_seconds,
+      latestVersion: row.latest_version,
+      current: this.toVersion(version, await this.email(version.created_by)),
+      usedBy: await this.usage(id),
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+    }
+  }
+
+  async list(connectionId?: string): Promise<Omit<Query, 'current' | 'usedBy'>[]> {
+    let query = this.deps.db.selectFrom('queries').selectAll().where('archived_at', 'is', null)
+    if (connectionId !== undefined) query = query.where('connection_id', '=', connectionId)
+    const rows = await query.orderBy('name').execute()
+    return rows.map((row) => ({
+      id: row.id,
+      connectionId: row.connection_id,
+      name: row.name,
+      description: row.description,
+      mode: row.mode,
+      cacheTtlSeconds: row.cache_ttl_seconds,
+      latestVersion: row.latest_version,
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+    }))
+  }
+
+  async versions(id: string): Promise<QueryVersion[]> {
+    await this.row(id)
+    const rows = await this.deps.db
+      .selectFrom('query_versions')
+      .leftJoin('users', 'users.id', 'query_versions.created_by')
+      .selectAll('query_versions')
+      .select('users.email')
+      .where('query_id', '=', id)
+      .orderBy('version', 'desc')
+      .execute()
+    return rows.map((row) => this.toVersion(row, row.email ?? null))
+  }
+
+  /** A version for execution; the latest when `version` is undefined (drafts). */
+  async stored(id: string, version?: number): Promise<StoredVersion | undefined> {
+    const query = await this.deps.db
+      .selectFrom('queries')
+      .selectAll()
+      .where('id', '=', id)
+      .executeTakeFirst()
+    if (query === undefined) return undefined
+    const row = await this.deps.db
+      .selectFrom('query_versions')
+      .selectAll()
+      .where('query_id', '=', id)
+      .where('version', '=', version ?? query.latest_version)
+      .executeTakeFirst()
+    if (row === undefined) return undefined
+    return {
+      queryId: id,
+      connectionId: query.connection_id,
+      version: row.version,
+      cacheTtlSeconds: query.cache_ttl_seconds,
+      parameters: JSON.parse(row.parameters) as QueryParameter[],
+      analysis: JSON.parse(row.analysis) as QueryAnalysis,
+      executable: JSON.parse(row.executable) as Executable,
+    }
+  }
+
+  private async ensureNameFree(name: string, id?: string): Promise<void> {
+    let query = this.deps.db.selectFrom('queries').select('id').where('name', '=', name)
+    if (id !== undefined) query = query.where('id', '!=', id)
+    if ((await query.executeTakeFirst()) !== undefined) throw fieldError('name', 'taken')
+  }
+
+  async create(actor: Actor, input: CreateInput): Promise<Query> {
+    await this.ensureNameFree(input.name)
+    const { analysis, executable } = await this.validate(
+      input.connectionId,
+      input.sql,
+      input.parameters,
+    )
+    const id = uuidv7()
+    const now = this.clock()
+    await writeTransaction(this.deps.db, async (trx) => {
+      await trx
+        .insertInto('queries')
+        .values({
+          id,
+          connection_id: input.connectionId,
+          name: input.name,
+          description: input.description,
+          mode: 'sql',
+          cache_ttl_seconds: input.cacheTtlSeconds,
+          latest_version: 1,
+          created_by: actor.id,
+          created_at: now,
+          updated_at: now,
+          archived_at: null,
+        })
+        .execute()
+      await trx
+        .insertInto('query_versions')
+        .values({
+          query_id: id,
+          version: 1,
+          sql_text: input.sql,
+          builder_spec: null,
+          parameters: JSON.stringify(input.parameters),
+          analysis: JSON.stringify(analysis),
+          executable: JSON.stringify(executable),
+          result_columns: null,
+          created_by: actor.id,
+          created_at: now,
+        })
+        .execute()
+    })
+    await this.deps.audit.record(actor, {
+      action: 'query.created',
+      subject: { kind: 'query', id, label: input.name },
+      connectionId: input.connectionId,
+      details: { version: 1, objects: analysis.objects, cacheTtlSeconds: input.cacheTtlSeconds },
+    })
+    this.deps.events.emit('query.changed', { queryId: id })
+    return this.get(id)
+  }
+
+  /**
+   * Name, description and cache duration belong to the query; changed SQL or parameters
+   * create a new immutable version, which reaches users when a page is published again.
+   */
+  async update(actor: Actor, id: string, input: UpdateInput): Promise<Query> {
+    const row = await this.row(id)
+    const current = await this.versionRow(id, row.latest_version)
+    if (input.name !== undefined) await this.ensureNameFree(input.name, id)
+    const sql = input.sql ?? current.sql_text
+    const parameters = input.parameters ?? (JSON.parse(current.parameters) as QueryParameter[])
+    const versioned = sql !== current.sql_text || JSON.stringify(parameters) !== current.parameters
+    const changes: Record<string, [unknown, unknown]> = {}
+    for (const [key, before, after] of [
+      ['name', row.name, input.name],
+      ['description', row.description, input.description],
+      ['cacheTtlSeconds', row.cache_ttl_seconds, input.cacheTtlSeconds],
+    ] as const) {
+      if (after !== undefined && after !== before) changes[key] = [before, after]
+    }
+    let version = row.latest_version
+    let validated: { analysis: QueryAnalysis; executable: Executable } | undefined
+    if (versioned) {
+      validated = await this.validate(row.connection_id, sql, parameters)
+      version += 1
+      changes.version = [row.latest_version, version]
+    }
+    if (Object.keys(changes).length === 0) return this.get(id)
+    const now = this.clock()
+    await writeTransaction(this.deps.db, async (trx) => {
+      if (validated !== undefined) {
+        await trx
+          .insertInto('query_versions')
+          .values({
+            query_id: id,
+            version,
+            sql_text: sql,
+            builder_spec: null,
+            parameters: JSON.stringify(parameters),
+            analysis: JSON.stringify(validated.analysis),
+            executable: JSON.stringify(validated.executable),
+            result_columns: null,
+            created_by: actor.id,
+            created_at: now,
+          })
+          .execute()
+      }
+      await trx
+        .updateTable('queries')
+        .set({
+          ...(input.name !== undefined && { name: input.name }),
+          ...(input.description !== undefined && { description: input.description }),
+          ...(input.cacheTtlSeconds !== undefined && { cache_ttl_seconds: input.cacheTtlSeconds }),
+          latest_version: version,
+          updated_at: now,
+        })
+        .where('id', '=', id)
+        .execute()
+    })
+    await this.deps.audit.record(actor, {
+      action: 'query.updated',
+      subject: { kind: 'query', id, label: input.name ?? row.name },
+      connectionId: row.connection_id,
+      changes,
+    })
+    this.deps.events.emit('query.changed', { queryId: id })
+    return this.get(id)
+  }
+
+  async remove(actor: Actor, id: string): Promise<void> {
+    const row = await this.row(id)
+    if ((await this.usage(id)).length > 0) throw new AppError('in_use')
+    await this.deps.db.deleteFrom('queries').where('id', '=', id).execute()
+    await this.deps.audit.record(actor, {
+      action: 'query.deleted',
+      subject: { kind: 'query', id, label: row.name },
+      connectionId: row.connection_id,
+    })
+    this.deps.events.emit('query.changed', { queryId: id })
+  }
+
+  /**
+   * Runs unsaved SQL with test values and returns the first 100 rows (§ SQL-Editor). Test
+   * values may stand in for instance variables; the user context is always the caller.
+   */
+  async testRun(
+    user: { id: string; email: string },
+    input: z.infer<typeof queryTestRun>,
+  ): Promise<QueryResult & { durationMs: number }> {
+    const { analysis, executable } = await this.validate(
+      input.connectionId,
+      input.sql,
+      input.parameters,
+    )
+    const target = await this.deps.executor.target(input.connectionId)
+    let resolved
+    try {
+      resolved = resolveParameters({
+        names: analysis.parameters,
+        definitions: input.parameters,
+        user,
+        variables: await this.deps.variables.current(),
+        input: input.values,
+        overrideVariables: true,
+        timeZone: target.timeZone,
+      })
+    } catch (error) {
+      if (error instanceof ParameterError) {
+        throw new AppError('validation_failed', { errors: error.errors })
+      }
+      throw error
+    }
+    const statement = buildStatement(executable, resolved.values, testRunRows + 1)
+    const raw = await this.deps.executor.execute(input.connectionId, statement)
+    const result = normalizeResult(raw.rows, raw.fields, testRunRows, raw.timeZone)
+    return {
+      columns: result.columns,
+      rows: result.rows,
+      truncated: result.truncated,
+      ...(result.invalidRows !== undefined && { invalidRows: result.invalidRows }),
+      durationMs: Math.round(raw.durationMs),
+    }
+  }
+
+  /** Queries of a connection whose latest version uses a removed or changed object (§9.3). */
+  private async impact(connectionId: string, diff: SchemaDiff): Promise<ImpactItem[]> {
+    const rows = await this.deps.db
+      .selectFrom('queries')
+      .innerJoin('query_versions', (join) =>
+        join
+          .onRef('query_versions.query_id', '=', 'queries.id')
+          .onRef('query_versions.version', '=', 'queries.latest_version'),
+      )
+      .select(['queries.id', 'queries.name', 'query_versions.analysis'])
+      .where('queries.connection_id', '=', connectionId)
+      .where('queries.archived_at', 'is', null)
+      .execute()
+    const removed = new Set(diff.removedObjects)
+    const items: ImpactItem[] = []
+    for (const row of rows) {
+      const analysis = JSON.parse(row.analysis) as QueryAnalysis
+      const item = (reason: ImpactItem['reason']) =>
+        items.push({ kind: 'query', id: row.id, label: row.name, reason })
+      if (analysis.objects.some((object) => removed.has(object))) {
+        item('object_removed')
+        continue
+      }
+      const used = (object: string, column: string) =>
+        analysis.columns.some(
+          (entry) => entry.object === object && entry.column.toLowerCase() === column.toLowerCase(),
+        )
+      for (const change of diff.changedObjects) {
+        if (!analysis.objects.includes(change.object)) continue
+        if (change.typeChanged !== undefined) item('type_changed')
+        else if (change.removedColumns.some((column) => used(change.object, column))) {
+          item('column_removed')
+        } else if (
+          change.changedColumns.some((entry) => used(change.object, entry.column)) ||
+          (analysis.stars.includes(change.object) &&
+            change.addedColumns.length + change.removedColumns.length > 0)
+        ) {
+          item('column_changed')
+        } else continue
+        break
+      }
+    }
+    return items
+  }
+}

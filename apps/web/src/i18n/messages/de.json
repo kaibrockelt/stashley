@@ -120,6 +120,8 @@
   "drift.detected": "Bei der täglichen Prüfung am {time} gefunden",
   "drift.impact.exclusion": "Ausgeblendete Spalte {label}",
   "drift.impact.relation": "Beziehung {label}",
+  "drift.impact.query": "Abfrage {label}",
+  "drift.impact.component": "Komponente {label}",
   "drift.impact.tableAccess": "Freigabe von {label}",
   "drift.impact.template": "Anzeigewert von {label}",
   "drift.keysChanged": "Schlüssel geändert",

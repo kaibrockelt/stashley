@@ -12,6 +12,7 @@ import { systemActor } from './modules/audit/audit-log.ts'
 import { registerAuthRoutes } from './modules/auth/routes.ts'
 import { registerHealthRoutes, type Readiness } from './modules/system/health.ts'
 import { registerDataRoutes } from './modules/connections/routes.ts'
+import { registerQueryRoutes } from './modules/queries/routes.ts'
 import { registerRoleRoutes } from './modules/roles/routes.ts'
 import { registerAdminRoutes } from './modules/users/routes.ts'
 import { createServices, type ServiceOverrides, type Services } from './services.ts'
@@ -121,6 +122,7 @@ export async function createServer(
     tableAccess: services.tableAccess,
   })
   registerRoleRoutes(app, { roles: services.roles, variables: services.variables })
+  registerQueryRoutes(app, { queries: services.queries })
 
   const jobs: JobDefinition[] = [
     {

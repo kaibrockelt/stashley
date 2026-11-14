@@ -10,7 +10,7 @@ import mysql, {
   type PoolConnection,
 } from 'mysql2/promise'
 import { resolveTargetHost } from './address-guard.ts'
-import { toTargetError } from './errors.ts'
+import { TargetError, toTargetError } from './errors.ts'
 import { parseServerVersion, type ServerVersion } from './version.ts'
 
 /** Where and how to reach a target database. */
@@ -28,12 +28,36 @@ export interface TargetUser {
   password: string
 }
 
+/** Column metadata of a result, from the driver's field descriptors. */
+export interface FieldInfo {
+  name: string
+  /** MySQL protocol type code, e.g. 246 for DECIMAL. */
+  columnType: number
+  flags: number
+  characterSet: number
+  columnLength: number
+}
+
+export interface ExecuteResult {
+  /** Rows as arrays in field order, so duplicate column names cannot overwrite each other. */
+  rows: unknown[][]
+  fields: FieldInfo[]
+}
+
 /** An open database session with its session setup applied. */
 export interface TargetSession {
   readonly server: ServerVersion
   readonly engine: Engine
   query<T extends object = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>
+  /**
+   * Runs a prepared statement (§9.1). On the read pool a statement that still runs 2 s after
+   * the server's own timeout is stopped with `KILL QUERY` over a separate connection (§9.2).
+   */
+  execute(sql: string, params: unknown[]): Promise<ExecuteResult>
 }
+
+/** Interrupted by `KILL QUERY` (1317), or by the server timeout: MariaDB 1969, MySQL 3024. */
+export const timeoutErrnos = new Set([1317, 1969, 3024])
 
 const poolSizes: Record<CredentialPurpose, number> = { read: 10, write: 4, schema: 1 }
 
@@ -102,6 +126,12 @@ function driverOptions(spec: TargetSpec, user: TargetUser, address: string): Con
 
 interface RawSession {
   query(options: { sql: string; values?: unknown[]; timeout?: number }): Promise<[unknown, unknown]>
+  execute(options: {
+    sql: string
+    values?: unknown[]
+    timeout?: number
+    rowsAsArray?: boolean
+  }): Promise<[unknown, unknown]>
 }
 
 /** Session setup (§9.2), run once on every new connection. */
@@ -133,7 +163,28 @@ async function setUp(raw: RawSession, spec: TargetSpec, purpose: CredentialPurpo
   return server
 }
 
-function session(raw: RawSession, server: ServerVersion, spec: TargetSpec): TargetSession {
+function fieldInfo(field: unknown): FieldInfo {
+  const value = field as Partial<FieldInfo>
+  return {
+    name: String(value.name ?? ''),
+    columnType: Number(value.columnType ?? 0),
+    flags: Number(value.flags ?? 0),
+    characterSet: Number(value.characterSet ?? 0),
+    columnLength: Number(value.columnLength ?? 0),
+  }
+}
+
+/** The client gives up this long after the server timeout should have stopped a statement. */
+const killGraceMs = 2_000
+/** mysql2's own timeout, which drops the connection, is the last resort after `KILL QUERY`. */
+const dropGraceMs = 5_000
+
+function session(
+  raw: RawSession,
+  server: ServerVersion,
+  spec: TargetSpec,
+  kill?: () => Promise<void>,
+): TargetSession {
   return {
     server,
     engine: server.engine,
@@ -142,11 +193,38 @@ function session(raw: RawSession, server: ServerVersion, spec: TargetSpec): Targ
         const [rows] = await raw.query({
           sql,
           values: params,
-          timeout: spec.queryTimeoutMs + 2_000,
+          timeout: spec.queryTimeoutMs + killGraceMs,
         })
         return rows as T[]
       } catch (error) {
         throw toTargetError(error)
+      }
+    },
+    async execute(sql: string, params: unknown[]) {
+      let killed = false
+      const timer =
+        kill === undefined
+          ? undefined
+          : setTimeout(() => {
+              killed = true
+              void kill().catch(() => undefined)
+            }, spec.queryTimeoutMs + killGraceMs)
+      try {
+        const [rows, fields] = await raw.execute({
+          sql,
+          values: params,
+          rowsAsArray: true,
+          timeout: spec.queryTimeoutMs + dropGraceMs,
+        })
+        return {
+          rows: rows as unknown[][],
+          fields: Array.isArray(fields) ? fields.map(fieldInfo) : [],
+        }
+      } catch (error) {
+        if (killed) throw new TargetError('timeout', 'ER_QUERY_INTERRUPTED', 1317)
+        throw toTargetError(error)
+      } finally {
+        if (timer !== undefined) clearTimeout(timer)
       }
     },
   }
@@ -282,7 +360,15 @@ export class TargetPools {
         }
         servers.set(connection.connection, server)
       }
-      return await fn(session(connection, server, spec))
+      const threadId = Number(connection.threadId)
+      const kill =
+        user.purpose === 'read' && Number.isSafeInteger(threadId)
+          ? () =>
+              once(this.resolveHost, spec, user, (other) =>
+                other.query(`KILL QUERY ${threadId}`),
+              ).then(() => undefined)
+          : undefined
+      return await fn(session(connection, server, spec, kill))
     } catch (error) {
       // A failed call may leave a transaction open; the next caller must not inherit it.
       if (reusable) {

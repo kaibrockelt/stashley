@@ -224,7 +224,8 @@ export interface SchemaDiff {
 }
 
 export interface ImpactItem {
-  kind: 'table_access' | 'column_exclusion' | 'display_template' | 'relation'
+  kind:
+    'table_access' | 'column_exclusion' | 'display_template' | 'relation' | 'query' | 'component'
   id: string
   label: string
   reason: 'object_removed' | 'column_removed' | 'column_changed' | 'key_changed' | 'type_changed'

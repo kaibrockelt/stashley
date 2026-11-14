@@ -29,6 +29,12 @@ export const errorCodes = {
   provider_unreachable: { status: 422, title: 'Identity provider unreachable' },
   connection_failed: { status: 422, title: 'Database connection failed' },
   in_use: { status: 409, title: 'Still in use' },
+  query_failed: { status: 422, title: 'Query failed' },
+  query_timeout: { status: 504, title: 'Query timed out' },
+  target_unavailable: { status: 503, title: 'Database unavailable' },
+  target_permission_denied: { status: 503, title: 'Database permission missing' },
+  cursor_invalid: { status: 400, title: 'Invalid cursor' },
+  cursor_expired: { status: 409, title: 'Cursor expired' },
   internal_error: { status: 500, title: 'Internal error' },
   service_unavailable: { status: 503, title: 'Service unavailable' },
 } as const satisfies Record<string, { status: number; title: string }>
