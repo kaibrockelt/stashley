@@ -487,4 +487,63 @@ describe.skipIf(targets.length === 0).each(targets)('page components on $name', 
     expect(limited.statusCode).toBe(429)
     expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0)
   })
+
+  // Runs last: it takes the read user's grants away for a moment.
+  it('serves no cached result once the read user lost its grants', async () => {
+    const events = (
+      await admin.send('POST', '/internal/design/queries', {
+        connectionId: connection.id,
+        name: 'Events kurz',
+        description: '',
+        sql: 'SELECT id, name FROM event ORDER BY id',
+        parameters: [],
+        cacheTtlSeconds: 1,
+      })
+    ).json<Query>()
+    const role = (roles.Kasse as Role).id
+    const shown = await page('revoked', {
+      schemaVersion: 1,
+      kind: 'dashboard',
+      title: 'Events',
+      filters: [],
+      parameters: [],
+      rows: [
+        {
+          id: 'r1',
+          layout: '12',
+          blocks: [
+            {
+              id: 'events',
+              type: 'chart',
+              title: 'Events',
+              restrictions: [],
+              source: { kind: 'query', queryId: events.id },
+              bindings: [],
+            },
+          ],
+        },
+      ],
+      table: null,
+      access: {
+        view: [role],
+        grants: [{ principal: role, source: `query:${events.id}`, ops: ['read'] }],
+      },
+      mcp: { available: false },
+    })
+    const client = users.kasse as TestClient
+    const path = `/internal/pages/${shown.id}/components/events/query`
+    expect((await client.send('POST', path, {})).statusCode).toBe(200)
+    await root.query('REVOKE SELECT, SHOW VIEW ON wanderverein.* FROM stashley_read')
+    try {
+      // Schema privileges apply to new sessions; the cache must stay as it is.
+      await server.services.pools.invalidate(connection.id)
+      await new Promise((resolve) => setTimeout(resolve, 1_200))
+      const refused = await client.send('POST', path, {})
+      expect(refused.statusCode).toBe(503)
+      expect(problem(refused).code).toBe('target_permission_denied')
+    } finally {
+      await root.query('GRANT SELECT, SHOW VIEW ON wanderverein.* TO stashley_read')
+      await server.services.pools.invalidate(connection.id)
+    }
+  })
 })

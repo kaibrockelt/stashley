@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { EventBus } from '../../platform/events.ts'
 import { AppError } from '../../platform/http/problem.ts'
+import { TargetUnreachable } from '../execution/errors.ts'
 import {
   maxEntryBytes,
   QueryCache,
@@ -183,12 +184,36 @@ describe('query cache', () => {
     expect(t.cache.size).toBe(0)
   })
 
+  it('serves no stale entry once the database refuses the read', async () => {
+    const t = setup()
+    const ok = { key: 'q:1', ttlSeconds: 60, dependencies: zahlungen, load: t.load('cached') }
+    await t.cache.load(ok)
+    t.advance(120_000)
+    await expect(
+      t.cache.load({ ...ok, load: () => Promise.reject(new AppError('target_permission_denied')) }),
+    ).rejects.toMatchObject({ code: 'target_permission_denied' })
+    // The refused entry is gone: a later outage cannot bring it back.
+    await expect(
+      t.cache.load({ ...ok, load: () => Promise.reject(new TargetUnreachable()) }),
+    ).rejects.toMatchObject({ code: 'target_unavailable' })
+    // A plain `target_unavailable` (e.g. no read user) is no outage either.
+    await t.cache.load({ ...ok, key: 'q:2' })
+    t.advance(120_000)
+    await expect(
+      t.cache.load({
+        ...ok,
+        key: 'q:2',
+        load: () => Promise.reject(new AppError('target_unavailable')),
+      }),
+    ).rejects.toMatchObject({ code: 'target_unavailable' })
+  })
+
   it('serves expired entries as stale only while the database is unavailable', async () => {
     const t = setup()
     const ok = { key: 'q:1', ttlSeconds: 60, dependencies: zahlungen, load: t.load('cached') }
     await t.cache.load(ok)
     t.advance(120_000)
-    const unavailable = () => Promise.reject(new AppError('target_unavailable'))
+    const unavailable = () => Promise.reject(new TargetUnreachable())
     expect(await t.cache.load({ ...ok, load: unavailable })).toEqual({
       value: 'cached',
       fetchedAt: 1_000_000,

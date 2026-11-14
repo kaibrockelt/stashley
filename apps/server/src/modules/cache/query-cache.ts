@@ -4,8 +4,7 @@ import { LRUCache } from 'lru-cache'
 import { v7 as uuidv7 } from 'uuid'
 import { systemClock, type Clock } from '../../platform/clock.ts'
 import type { EventBus } from '../../platform/events.ts'
-import { AppError } from '../../platform/http/problem.ts'
-import { isUnavailable } from '../execution/errors.ts'
+import { isRefused, isUnreachable } from '../execution/errors.ts'
 
 /** What a cached result depends on; writes and variable changes evict it (§12). */
 export interface CacheDependencies {
@@ -134,7 +133,7 @@ export class QueryCache {
         loaded = await options.load()
       } catch (error) {
         const stale = this.lru.get(options.key)
-        if (error instanceof AppError && isUnavailable(error) && stale !== undefined) {
+        if (isUnreachable(error) && stale !== undefined) {
           return {
             value: stale.value as T,
             fetchedAt: stale.fetchedAt,
@@ -142,6 +141,8 @@ export class QueryCache {
             tooLarge: false,
           }
         }
+        // Revoked grants take effect: what the database refuses is never served from here.
+        if (isRefused(error)) this.lru.delete(options.key)
         throw error
       }
       const fetchedAt = this.clock()
