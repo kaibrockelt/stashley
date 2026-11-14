@@ -60,6 +60,8 @@ export interface SessionResponse {
     mfaEnforced: boolean
     providers: { slug: string; displayName: string }[]
     smtp: boolean
+    /** Whether managers may create, rename and delete roles (D14). */
+    managersCreateRoles: boolean
   }
 }
 

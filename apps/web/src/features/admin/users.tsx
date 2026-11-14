@@ -13,6 +13,7 @@ import {
   Actions,
   Badge,
   Button,
+  CheckboxField,
   CopyField,
   Dialog,
   Form,
@@ -22,6 +23,7 @@ import {
   TextField,
 } from '../../ui/controls.tsx'
 import table from '../../ui/table.module.css'
+import { useRoles } from '../design/roles.tsx'
 
 const usersKey = ['admin', 'users'] as const
 
@@ -138,11 +140,20 @@ function UserDialog(props: { user: AdminUser | undefined; onClose: () => void })
   const user = props.user
   const [role, setRole] = useState<SystemRole>(user?.systemRole ?? 'user')
   const [name, setName] = useState(user?.displayName ?? '')
+  const [roleIds, setRoleIds] = useState<string[]>(user?.roleIds ?? [])
   const [link, setLink] = useState<{ result: LinkResult; label: string }>()
+  const allRoles = useRoles()
   const refresh = () => client.invalidateQueries({ queryKey: usersKey })
   const update = useMutation({
-    mutationFn: (body: Record<string, unknown>) =>
-      api<AdminUser>('PATCH', `/internal/admin/users/${user?.id ?? ''}`, body),
+    mutationFn: async (body: Record<string, unknown>) => {
+      const id = user?.id ?? ''
+      const updated = await api<AdminUser>('PATCH', `/internal/admin/users/${id}`, body)
+      const before = [...(user?.roleIds ?? [])].sort().join()
+      if ([...roleIds].sort().join() !== before) {
+        await api('PUT', `/internal/admin/users/${id}/roles`, { roleIds })
+      }
+      return updated
+    },
     onSuccess: async () => {
       await refresh()
       props.onClose()
@@ -200,6 +211,23 @@ function UserDialog(props: { user: AdminUser | undefined; onClose: () => void })
             onChange={setRole}
             options={roles}
           />
+        )}
+        {(allRoles.data?.data.length ?? 0) > 0 && (
+          <fieldset className={table.fieldset}>
+            <legend>{t('users.roles')}</legend>
+            {allRoles.data?.data.map((entry) => (
+              <CheckboxField
+                key={entry.id}
+                label={entry.name}
+                isSelected={roleIds.includes(entry.id)}
+                onChange={(selected) =>
+                  setRoleIds((current) =>
+                    selected ? [...current, entry.id] : current.filter((id) => id !== entry.id),
+                  )
+                }
+              />
+            ))}
+          </fieldset>
         )}
         <Actions>
           <Button type="submit" variant="primary" isDisabled={update.isPending}>
@@ -264,6 +292,8 @@ export function UsersPage() {
     ...(status !== 'all' && { status }),
     ...(query !== '' && { q: query }),
   })
+  const roles = useRoles()
+  const roleNames = new Map(roles.data?.data.map((role) => [role.id, role.name]))
   const users = useQuery({
     queryKey: [...usersKey, status, query],
     queryFn: () => api<{ data: AdminUser[] }>('GET', `/internal/admin/users?${params.toString()}`),
@@ -299,6 +329,7 @@ export function UsersPage() {
               <th>{t('field.displayName')}</th>
               <th>{t('field.email')}</th>
               <th>{t('field.systemRole')}</th>
+              <th>{t('users.roles')}</th>
               <th>{t('field.status')}</th>
               <th>{t('users.column.mfa')}</th>
               <th>{t('users.column.lastSignIn')}</th>
@@ -314,6 +345,9 @@ export function UsersPage() {
                 </td>
                 <td>{user.email}</td>
                 <td>{t(roleLabels[user.systemRole])}</td>
+                <td className={table.muted}>
+                  {user.roleIds.map((id) => roleNames.get(id) ?? '').join(', ')}
+                </td>
                 <td>
                   <Badge tone={statusTones[user.status]}>{t(statusLabels[user.status])}</Badge>
                 </td>

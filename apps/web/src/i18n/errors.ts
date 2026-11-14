@@ -56,6 +56,7 @@ const fieldMessages: Record<string, MessageId> = {
   duplicate: 'field.duplicate',
   type_mismatch: 'field.typeMismatch',
   used_by_relation: 'field.usedByRelation',
+  reserved: 'field.reserved',
 }
 
 /** Sign-in errors passed back from the OIDC callback as `?error=`. */

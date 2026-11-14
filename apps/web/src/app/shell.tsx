@@ -32,6 +32,13 @@ export function Shell() {
         </div>
         <nav aria-label={t('nav.label')} className={styles.nav}>
           <p className={styles.navEmpty}>{t('nav.empty')}</p>
+          {(user.systemRole === 'admin' || user.systemRole === 'manager') && (
+            <div className={styles.navGroup}>
+              <p className={styles.navHeading}>{t('nav.design')}</p>
+              <NavLink to="/design/roles">{t('roles.title')}</NavLink>
+              <NavLink to="/design/variables">{t('variables.title')}</NavLink>
+            </div>
+          )}
           {user.systemRole === 'admin' && (
             <div className={styles.navGroup}>
               <p className={styles.navHeading}>{t('nav.administration')}</p>

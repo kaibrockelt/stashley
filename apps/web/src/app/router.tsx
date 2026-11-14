@@ -153,6 +153,18 @@ const adminLayout = createRoute({
   },
 })
 
+const designLayout = createRoute({
+  getParentRoute: () => appLayout,
+  path: '/design',
+  component: Outlet,
+  beforeLoad: async () => {
+    const { user } = await session()
+    const role = user?.systemRole
+    // eslint-disable-next-line @typescript-eslint/only-throw-error
+    if (role !== 'admin' && role !== 'manager') throw redirect({ to: '/' })
+  },
+})
+
 const appRoutes = [
   createRoute({ getParentRoute: () => appLayout, path: '/', component: Home }),
   createRoute({
@@ -160,6 +172,21 @@ const appRoutes = [
     path: '/profile',
     component: lazyRouteComponent(() => import('../features/profile/profile.tsx'), 'ProfilePage'),
   }),
+  designLayout.addChildren([
+    createRoute({
+      getParentRoute: () => designLayout,
+      path: '/roles',
+      component: lazyRouteComponent(() => import('../features/design/roles.tsx'), 'RolesPage'),
+    }),
+    createRoute({
+      getParentRoute: () => designLayout,
+      path: '/variables',
+      component: lazyRouteComponent(
+        () => import('../features/design/variables.tsx'),
+        'VariablesPage',
+      ),
+    }),
+  ]),
   adminLayout.addChildren([
     createRoute({
       getParentRoute: () => adminLayout,

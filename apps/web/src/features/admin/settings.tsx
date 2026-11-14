@@ -71,6 +71,13 @@ function SettingsForm(props: { settings: InstanceSettings }) {
           error={errors.field(error, 'sessionMaxAgeDays')}
         />
       </Section>
+      <Section title={t('settings.section.design')}>
+        <SwitchField
+          label={t('settings.managersCreateRoles')}
+          isSelected={values.managersCreateRoles}
+          onChange={(value) => set('managersCreateRoles', value)}
+        />
+      </Section>
       <Section title={t('settings.section.audit')}>
         <TextField
           label={t('settings.auditRetention')}

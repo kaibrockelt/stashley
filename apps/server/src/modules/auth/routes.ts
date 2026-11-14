@@ -54,10 +54,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
   }
 
   app.get('/internal/session', async (request, reply): Promise<SessionResponse> => {
-    const [localLogin, twoFactor, providers] = await Promise.all([
+    const [localLogin, twoFactor, providers, roles] = await Promise.all([
       deps.settings.get('auth.localLogin'),
       deps.settings.get('auth.twoFactor'),
       deps.oidc.enabledProviders(),
+      deps.settings.get('roles.managerCreation'),
     ])
     const auth = request.auth
     return {
@@ -70,6 +71,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
         mfaEnforced: twoFactor.enforced,
         providers,
         smtp: deps.mailer.enabled,
+        managersCreateRoles: roles.enabled,
       },
     }
   })
