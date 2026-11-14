@@ -7,6 +7,7 @@ import { SettingsRepository } from './metastore/settings.ts'
 import { AuditLog } from './modules/audit/audit-log.ts'
 import { CatalogService } from './modules/catalog/service.ts'
 import { ConnectionsService } from './modules/connections/service.ts'
+import { QueryCache } from './modules/cache/query-cache.ts'
 import { ReadExecutor } from './modules/execution/executor.ts'
 import { QueriesService } from './modules/queries/service.ts'
 import { RolesService } from './modules/roles/service.ts'
@@ -103,6 +104,7 @@ export function createServices(
   const roles = new RolesService({ db, settings, audit, events, clock })
   const variables = new VariablesService({ db, audit, events, clock })
   const executor = new ReadExecutor({ connections, pools, events })
+  const cache = new QueryCache({ maxBytes: config.cacheMaxMb * 1024 * 1024, events, clock })
   const queries = new QueriesService({
     db,
     connections,
@@ -115,6 +117,7 @@ export function createServices(
     clock,
   })
   return {
+    cache,
     executor,
     queries,
     roles,
