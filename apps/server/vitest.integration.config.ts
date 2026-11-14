@@ -11,6 +11,8 @@ export default defineConfig({
   test: {
     include: ['test/**/*.test.ts'],
     pool: 'forks',
+    // Every file sets up the demo schema and users from scratch; they must not overlap.
+    fileParallelism: false,
     testTimeout: 60_000,
     hookTimeout: 120_000,
   },
