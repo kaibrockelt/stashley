@@ -5,6 +5,7 @@ import type mysql from 'mysql2/promise'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Server } from '../src/app.ts'
 import { AppError } from '../src/platform/http/problem.ts'
+import { maxPreparedStatements } from '../src/target/pools.ts'
 import type { TestClient } from '../src/test/client.ts'
 import {
   connectDemo,
@@ -134,6 +135,30 @@ describe.skipIf(targets.length === 0).each(targets)('reads on $name', ({ url }) 
     expect(result.truncated).toBe(true)
     const limited = await run('SELECT id FROM person ORDER BY id DESC LIMIT 2')
     expect(limited.json<QueryResult>().rows).toEqual([{ id: '5' }, { id: '4' }])
+  })
+
+  it('keeps a bounded number of prepared statements per connection', async () => {
+    const count = async () => {
+      const [[row]] = await root.query<mysql.RowDataPacket[]>(
+        "SHOW GLOBAL STATUS LIKE 'Prepared_stmt_count'",
+      )
+      return Number(row?.Value)
+    }
+    const target = await server.services.executor.target(connection.id)
+    const before = await count()
+    // One session, so every statement lands on the same connection.
+    const during = await server.services.pools.run(
+      connection.id,
+      target.spec,
+      target.reader,
+      async (session) => {
+        for (let i = 0; i < maxPreparedStatements + 172; i++) {
+          await session.execute(`SELECT ? + ${String(i)} AS n`, [1])
+        }
+        return count()
+      },
+    )
+    expect(during - before).toBeLessThanOrEqual(maxPreparedStatements)
   })
 
   it('runs every read inside a read-only transaction', async () => {

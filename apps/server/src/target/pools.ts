@@ -87,6 +87,13 @@ export function readSqlMode(current: string): string {
     .join(',')
 }
 const connectTimeoutMs = 10_000
+/**
+ * Prepared statements kept per connection. Generated SQL differs with every filter combination
+ * and list length; mysql2's default of 16,000 per connection would let a few pooled connections
+ * fill the server-wide `max_prepared_stmt_count` (16,382 by default) for every client of it.
+ * mysql2 closes the statements it evicts.
+ */
+export const maxPreparedStatements = 128
 
 function sslOptions(spec: TargetSpec): ConnectionOptions['ssl'] {
   const { mode, caPem } = spec.tls
@@ -120,6 +127,7 @@ function driverOptions(spec: TargetSpec, user: TargetUser, address: string): Con
     jsonStrings: true,
     flags: ['FOUND_ROWS'],
     connectTimeout: connectTimeoutMs,
+    maxPreparedStatements,
     ...(ssl !== undefined && { ssl }),
   }
 }
