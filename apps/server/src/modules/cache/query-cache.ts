@@ -61,7 +61,11 @@ const variableKey = (name: string) => `v:${name}`
 export class QueryCache {
   private readonly lru: LRUCache<string, Entry>
   private readonly index = new Map<string, Set<string>>()
-  private readonly inflight = new Map<string, Promise<Loaded<unknown>>>()
+  /** Running loads with the sequence number they started at and their dependency keys. */
+  private readonly inflight = new Map<
+    string,
+    { promise: Promise<Loaded<unknown>>; started: number; dependencies: string[] }
+  >()
   /** Sequence numbers of invalidations, so a load that started earlier is not stored. */
   private sequence = 0
   private readonly invalidated = new Map<string, number>()
@@ -125,7 +129,11 @@ export class QueryCache {
       }
     }
     const running = this.inflight.get(options.key)
-    if (running !== undefined) return running as Promise<Loaded<T>>
+    // A load that started before an invalidation of its dependencies may return old rows; a
+    // request that comes after the invalidation starts its own load instead of joining it.
+    if (running !== undefined && !this.outdated(running.dependencies, running.started)) {
+      return running.promise as Promise<Loaded<T>>
+    }
     const started = this.sequence
     const promise = (async (): Promise<Loaded<T>> => {
       let loaded: Awaited<ReturnType<LoadOptions<T>['load']>>
@@ -148,8 +156,7 @@ export class QueryCache {
       const fetchedAt = this.clock()
       const tooLarge = loaded.size > maxEntryBytes
       const dependencies = this.keysOf(options.dependencies, loaded.variables ?? [])
-      const outdated = dependencies.some((key) => (this.invalidated.get(key) ?? -1) >= started)
-      if (options.ttlSeconds > 0 && !tooLarge && !outdated) {
+      if (options.ttlSeconds > 0 && !tooLarge && !this.outdated(dependencies, started)) {
         this.store(options.key, {
           value: loaded.value,
           fetchedAt,
@@ -160,12 +167,19 @@ export class QueryCache {
       }
       return { value: loaded.value, fetchedAt, stale: false, tooLarge }
     })()
-    this.inflight.set(options.key, promise)
+    const entry = { promise, started, dependencies: this.keysOf(options.dependencies, []) }
+    this.inflight.set(options.key, entry)
     try {
       return await promise
     } finally {
-      this.inflight.delete(options.key)
+      // A newer load for the same key may have taken the slot meanwhile.
+      if (this.inflight.get(options.key) === entry) this.inflight.delete(options.key)
     }
+  }
+
+  /** Whether one of these dependencies was invalidated after `started`. */
+  private outdated(dependencies: readonly string[], started: number): boolean {
+    return dependencies.some((key) => (this.invalidated.get(key) ?? -1) >= started)
   }
 
   private store(key: string, entry: Entry): void {

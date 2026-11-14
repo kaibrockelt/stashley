@@ -184,6 +184,32 @@ describe('query cache', () => {
     expect(t.cache.size).toBe(0)
   })
 
+  it('does not hand a load that predates a write to requests after it', async () => {
+    const t = setup()
+    const releases: (() => void)[] = []
+    const slow = (value: string) => () =>
+      new Promise<{ value: string; size: number }>((resolve) => {
+        releases.push(() => resolve({ value, size: 10 }))
+      })
+    const options = { key: 'q:race', ttlSeconds: 300, dependencies: zahlungen }
+    const before = t.cache.load({ ...options, load: slow('old') })
+    const joined = t.cache.load({ ...options, load: slow('unused') })
+    await Promise.resolve()
+    t.cache.invalidateTables('c1', ['zahlung'])
+    const after = t.cache.load({ ...options, load: slow('new') })
+    await Promise.resolve()
+    expect(releases).toHaveLength(2)
+    // The newer load finishes first and is stored; the older one is not.
+    releases[1]?.()
+    releases[0]?.()
+    expect((await before).value).toBe('old')
+    expect((await joined).value).toBe('old')
+    expect((await after).value).toBe('new')
+    const cached = await t.cache.load({ ...options, load: slow('again') })
+    expect(cached.value).toBe('new')
+    expect(releases).toHaveLength(2)
+  })
+
   it('serves no stale entry once the database refuses the read', async () => {
     const t = setup()
     const ok = { key: 'q:1', ttlSeconds: 60, dependencies: zahlungen, load: t.load('cached') }
