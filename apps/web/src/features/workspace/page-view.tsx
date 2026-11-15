@@ -12,6 +12,7 @@ import stateStyles from '../../ui/state.module.css'
 import { useRenderPage } from './api.ts'
 import { Block } from './blocks/block.tsx'
 import { PageFilters } from './filters.tsx'
+import { PreviewBar } from './preview-bar.tsx'
 import { rowSpans } from './grid-layout.ts'
 import { PageContextProvider, type PageContextValue } from './page-context.tsx'
 import styles from './workspace.module.css'
@@ -147,8 +148,8 @@ export function PageView(props: { toolbar?: (page: RenderPage) => ReactNode }) {
               {t('editor.edit')}
             </Button>
           )}
-          {mode === 'preview' && props.toolbar?.(page.data)}
         </header>
+        {mode === 'preview' && designer && <PreviewBar roles={roles} />}
         <PageFilters onChange={setFilter} />
         <PageGrid page={page.data} />
       </div>

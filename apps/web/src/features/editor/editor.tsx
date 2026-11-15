@@ -33,6 +33,8 @@ import {
 import styles from './editor.module.css'
 import { IssueList, issuesAt } from './issues.tsx'
 import { PageSettingsDialog } from './page-settings-dialog.tsx'
+import { VersionsDialog } from './versions-dialog.tsx'
+import { PreviewRolesDialog } from '../workspace/preview-bar.tsx'
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
@@ -198,6 +200,8 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
   const [publishing, setPublishing] = useState(false)
   const [conflict, setConflict] = useState<PageDetail>()
   const [published, setPublished] = useState(false)
+  const [versionsOpen, setVersionsOpen] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   const refreshAll = async (saved: PageDetail) => {
     client.setQueryData(designKeys.page(saved.id), saved)
@@ -308,6 +312,10 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
         <div className={styles.toolbar} role="toolbar" aria-label={t('editor.toolbar')}>
           <Button onPress={() => setSettingsOpen(true)}>{t('editor.pageSettings')}</Button>
           {props.toolbar}
+          <Button onPress={() => setVersionsOpen(true)}>{t('versions.open')}</Button>
+          <Button isDisabled={dirty} onPress={() => setPreviewOpen(true)}>
+            {t('preview.open')}
+          </Button>
           <Button isDisabled={!dirty} onPress={() => setDocument(saved.draft)}>
             {t('editor.discard')}
           </Button>
@@ -469,6 +477,21 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
           onClose={() => setEditing(undefined)}
         />
       )}
+      {versionsOpen && (
+        <VersionsDialog
+          pageId={props.page.id}
+          draft={document}
+          revision={revision}
+          dirty={dirty}
+          onRestored={(restored) => {
+            setDocument(restored.draft)
+            setVersionsOpen(false)
+            void refreshAll(restored)
+          }}
+          onClose={() => setVersionsOpen(false)}
+        />
+      )}
+      {previewOpen && <PreviewRolesDialog selected={[]} onClose={() => setPreviewOpen(false)} />}
       {settingsOpen && (
         <PageSettingsDialog
           document={document}
