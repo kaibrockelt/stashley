@@ -3,7 +3,7 @@
 import { prepareChart, type ChartSettings } from '@stashley/shared'
 import { describe, expect, it } from 'vitest'
 import { chartPalettes } from '../../../ui/chart-palette.ts'
-import { buildOption, type ChartLabels } from './chart-options.ts'
+import { buildOption, plainText, type ChartLabels } from './chart-options.ts'
 
 const labels: ChartLabels = {
   dimension: (value) => (value.kind === 'value' ? String(value.value) : value.kind),
@@ -94,6 +94,16 @@ describe('buildOption', () => {
       { k: 'b', v: 5 },
     ])
     expect(funnel.series[0]).toMatchObject({ type: 'funnel', sort: 'none' })
+  })
+
+  it('keeps markup-like values plain', () => {
+    // `{a|x}` is zrender rich text and `{d0}` an ECharts template variable.
+    expect(plainText('{a|x} {d0}')).toBe('{\u200Ba|x} {\u200Bd0}')
+    expect(/\{[a-zA-Z0-9_]+\|/.test(plainText('{a|x}'))).toBe(false)
+    const bar = option({}, [{ k: '{fat|Rich}', v: 1 }])
+    expect(bar.xAxis).toMatchObject({ data: ['{\u200Bfat|Rich}'] })
+    const donut = option({ chart: 'donut' }, [{ k: 'Wert {d}', v: 1 }])
+    expect(donut.series[0]).toMatchObject({ data: [{ name: 'Wert {\u200Bd}' }] })
   })
 
   it('renders every tooltip on the canvas, never as HTML', () => {

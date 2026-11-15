@@ -44,12 +44,34 @@ function base(palette: ChartPalette): EChartsOption {
   }
 }
 
+/**
+ * Text from the data as plain text. zrender reads `{name|text}` as rich-text markup and
+ * ECharts fills templates such as `{b}` one after the other, so a value containing them
+ * would be shown altered. A zero-width space after each `{` breaks both patterns without
+ * changing what is shown.
+ */
+export function plainText(text: string): string {
+  return text.replaceAll('{', '{\u200B')
+}
+
+/** Labels whose results are plain text for ECharts. */
+function plainLabels(labels: ChartLabels): ChartLabels {
+  return {
+    dimension: (value, axis) => plainText(labels.dimension(value, axis)),
+    measure: (value, column) => plainText(labels.measure(value, column)),
+    column: (column) => plainText(labels.column(column)),
+    percent: (value) => plainText(labels.percent(value)),
+    funnelStage: (share, loss) => plainText(labels.funnelStage(share, loss)),
+  }
+}
+
 export function buildOption(
   data: ChartData,
   settings: ChartSettings,
   palette: ChartPalette,
-  labels: ChartLabels,
+  rawLabels: ChartLabels,
 ): EChartsOption {
+  const labels = plainLabels(rawLabels)
   const option = base(palette)
   // Tooltips render on the canvas: ECharts' HTML tooltips use style attributes, which the
   // CSP blocks, and would insert data values as HTML.
