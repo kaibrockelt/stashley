@@ -213,3 +213,6 @@ export interface DesignCatalog {
     kind: 'many_to_one' | 'one_to_one'
   }[]
 }
+
+/** A query in the library list, without its version details. */
+export type QuerySummary = Omit<Query, 'current' | 'usedBy' | 'builder'>

@@ -186,6 +186,14 @@ const appRoutes = [
   designLayout.addChildren([
     createRoute({
       getParentRoute: () => designLayout,
+      path: '/pages',
+      component: lazyRouteComponent(
+        () => import('../features/design/pages/pages-list.tsx'),
+        'PagesListPage',
+      ),
+    }),
+    createRoute({
+      getParentRoute: () => designLayout,
       path: '/roles',
       component: lazyRouteComponent(() => import('../features/design/roles.tsx'), 'RolesPage'),
     }),

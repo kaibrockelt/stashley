@@ -1,0 +1,47 @@
+/* SPDX-FileCopyrightText: 2026 Stashley contributors */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+.vertical {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.horizontal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.item {
+  position: relative;
+  min-width: 0;
+}
+
+.dragging {
+  z-index: 2;
+  opacity: 0.85;
+}
+
+.handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--target-min);
+  min-height: var(--target-min);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-muted);
+  cursor: grab;
+  touch-action: none;
+}
+
+.handle:hover {
+  border-color: var(--color-border);
+}
+
+.handle:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
