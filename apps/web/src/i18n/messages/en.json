@@ -486,6 +486,7 @@
   "editor.publish": "Publish",
   "editor.done": "Leave edit mode",
   "editor.dirty": "You have unsaved changes. Users see them only after saving and publishing.",
+  "editor.newerDraft": "Someone else has saved a newer draft in the meantime. Saving lets you compare both.",
   "editor.published": "Published. Users now see this version.",
   "editor.publish.title": "Publish page",
   "editor.publish.text": "Users see the saved draft from now on. The page uses the current version of each query:",

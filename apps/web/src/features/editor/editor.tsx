@@ -199,6 +199,8 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
   const detail = usePageDetail(props.page.id)
   const [document, setDocument] = useState<PageDocument>(props.initial.draft)
   const [revision, setRevision] = useState(props.initial.draftRevision)
+  // The saved draft the local document started from.
+  const [base, setBase] = useState<PageDocument>(props.initial.draft)
   const [editing, setEditing] = useState<Editing>()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [publishing, setPublishing] = useState(false)
@@ -210,6 +212,7 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
   const refreshAll = async (saved: PageDetail) => {
     client.setQueryData(designKeys.page(saved.id), saved)
     setRevision(saved.draftRevision)
+    setBase(saved.draft)
     await client.invalidateQueries({ queryKey: ['workspace', 'page', props.page.slug] })
     await client.invalidateQueries({ queryKey: ['workspace', 'component', props.page.id] })
     await client.invalidateQueries({ queryKey: designKeys.pages })
@@ -249,6 +252,14 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
   })
 
   const saved = detail.data ?? props.initial
+  // Another manager saved in the meantime. Without own edits the editor follows; with them,
+  // a notice says so and saving opens the comparison (E2).
+  const newer = saved.draftRevision !== revision
+  if (newer && same(document, base)) {
+    setDocument(saved.draft)
+    setBase(saved.draft)
+    setRevision(saved.draftRevision)
+  }
   const dirty = !same(saved.draft, document)
   const issues = saved.issues
   const renderedById = new Map<string, RenderComponent>()
@@ -320,7 +331,14 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
           <Button isDisabled={dirty} onPress={() => setPreviewOpen(true)}>
             {t('preview.open')}
           </Button>
-          <Button isDisabled={!dirty} onPress={() => setDocument(saved.draft)}>
+          <Button
+            isDisabled={!dirty}
+            onPress={() => {
+              setDocument(saved.draft)
+              setBase(saved.draft)
+              setRevision(saved.draftRevision)
+            }}
+          >
             {t('editor.discard')}
           </Button>
           <Button
@@ -347,6 +365,7 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
       </header>
       <div role="status">
         {dirty && <Notice tone="info">{t('editor.dirty')}</Notice>}
+        {newer && !same(document, base) && <Notice tone="info">{t('editor.newerDraft')}</Notice>}
         {published && !dirty && <Notice tone="success">{t('editor.published')}</Notice>}
       </div>
       {save.error !== null &&
@@ -519,6 +538,7 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
           busy={save.isPending}
           onTakeCurrent={() => {
             setDocument(conflict.draft)
+            setBase(conflict.draft)
             client.setQueryData(designKeys.page(conflict.id), conflict)
             setRevision(conflict.draftRevision)
             setConflict(undefined)

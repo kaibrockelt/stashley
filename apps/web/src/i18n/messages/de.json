@@ -486,6 +486,7 @@
   "editor.publish": "Veröffentlichen",
   "editor.done": "Bearbeitung beenden",
   "editor.dirty": "Du hast ungespeicherte Änderungen. Benutzer sehen sie erst nach Speichern und Veröffentlichen.",
+  "editor.newerDraft": "Inzwischen hat jemand anderes einen neueren Entwurf gespeichert. Beim Speichern kannst du beide vergleichen.",
   "editor.published": "Veröffentlicht. Benutzer sehen jetzt diesen Stand.",
   "editor.publish.title": "Seite veröffentlichen",
   "editor.publish.text": "Benutzer sehen ab jetzt den gespeicherten Entwurf. Die Seite nutzt die aktuelle Version jeder Abfrage:",
