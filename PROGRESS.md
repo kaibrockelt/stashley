@@ -2,9 +2,11 @@
 
 **Current milestone:** M5 – Pages and dashboards (in progress)
 
-**Next step:** M5 step 6, the page editor (edit mode, drag and drop, block settings, draft conflicts, publishing), then steps 7 (versions, compare, preview as role) and 8 (SQL editor). Stop before step 9, the query builder UI, so the operator can raise the effort. The SQL validation of M4 is tested externally; that does not block M5.
+**Next step:** M5 step 9, the query builder UI. It needs high effort; the operator raises it before the work starts. Then build the overview, route status and awards pages of the scenario through the UI, and the M5 closing report.
 
-**Recommended model strength for M5:** medium; query builder UI: high.
+**Recommended model strength for the next step:** high (query builder UI).
+
+The SQL validation of M4 is tested externally; that does not block M5.
 
 ## Milestones
 
@@ -237,3 +239,14 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Web: navigation, start page, grid, page filters in the URL, metric, record, table, text and chart blocks; the page route is a lazy chunk, initial load 192 KB gzip.
   - Verified: 557 server, shared and 29 web unit tests, typecheck, lint, i18n. Not yet run: the integration suite (new test for describing result columns) and a browser check.
   - Decision to confirm: the metric comparison comes from a second column of the same query, not from a separate comparison query, so a block keeps one data source.
+- 2026-11-15: M5 steps 6–8 implemented. Work stops before step 9, the query builder UI, as agreed.
+  - Page list in the design area: sections and pages with drag-and-drop order (pointer and keyboard), moving between sections, creating and deleting.
+  - Page editor in place (edit mode in the page header): rows and blocks by drag and drop or by choosing a row, layouts per block count, a block dialog for type, source, parameter bindings, chart, metric, record and table settings with role overrides and formats, rights of the page's viewers on the block's source and per-block hiding, and a suggested setup from the query's result columns. Page settings for title, description, viewers, page filters, URL parameters and MCP. Explicit save against the revision; a conflict shows the diff and lets the manager take the saved draft or save over it (E2). Publishing lists the pinned queries.
+  - Version history with compare (any two versions or the draft, pinned query versions left out) and restore into the draft; preview as role with a bar to change roles or go back to editing.
+  - Query library and SQL editor: CodeMirror (lazy) with highlighting and completion for exposed tables and columns, check, test run with typed test values for parameters and instance variables, the position of a validation problem, parameter definitions found in the SQL, builder queries read-only with one-way conversion, and the pages that use a query.
+  - Table blocks on table sources choose their own columns; linked columns, base filters and editing are set up with table pages in M6.
+  - Verified: 557 server, 63 shared and 43 web unit tests, typecheck, lint, i18n (738 keys), SPDX; 156 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7; initial load 193 KB gzip.
+  - Checked in the browser on the test stand (MariaDB 12.3): writing, checking, test-running and saving a query in the SQL editor; creating a page, setting its viewers, adding a chart block from the suggestion and a text block, keyboard drag and drop, saving, publishing, the version list, the runtime view with its table view, and preview. Test page and query were removed again.
+  - Found and fixed in the browser check: ECharts' HTML tooltips were blocked by the CSP and custom tooltip formatters put data values into HTML; tooltips now render on the canvas. The version compare no longer lists pinned query versions; the block dialog no longer requests a placeholder query.
+  - Not checked in the browser: the draft conflict dialog, page filters, metric, record and table blocks with real data (the test stand's database has no demo data before M9), restore, a preview with roles (the stand has no roles), and the layout at 375 px.
+  - Decision to confirm (from steps 1–5): the metric comparison comes from a second column of the same query.
