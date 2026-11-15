@@ -2,7 +2,7 @@
 
 **Current milestone:** M5 – Pages and dashboards (in review)
 
-**Next step:** Fix the approved M5 review findings B1 and S1–S7 (see log 2026-11-15; the review is in the notes of session m4-review), then the operator accepts M5. After that M6 – forms and table pages.
+**Next step:** The operator accepts M5 (review findings B1 and S1–S7 are fixed, see log 2026-11-15). After that M6 – forms and table pages.
 
 **Recommended model strength:** review of M5: high; M6: medium (write path and base filters: high).
 
@@ -67,7 +67,7 @@ D1–D12 approved on 2026-11-12, D13–D16 on 2026-11-14. Rationale for D1–D12
 | D12 | Page filter options are authorized through the page's view right; option lists, lookup columns and display templates through the right of their component. |
 | D13 | Date-time parameters arrive as UTC instants and are bound as wall times of the connection time zone, like written values (§9.5). (Approved 2026-11-14.) |
 | D14 | When managers may not create roles, only admins create, rename or delete roles; managers still grant rights to existing roles. (Approved 2026-11-14.) |
-| D15 | Grants to deleted roles stop taking effect and show as an issue on the page; stored pages are not rewritten. (Approved 2026-11-14.) |
+| D15 | Grants to deleted roles stop taking effect and show as a warning on the page; stored pages are not rewritten, and the page settings remove deleted roles in one step. (Approved 2026-11-14; warning instead of error since the M5 review.) |
 | D16 | The SQL lexer rejects locking clauses (`FOR UPDATE`, `FOR SHARE`, `LOCK IN SHARE MODE`) itself, because the MariaDB parser does not know all of them and the error must stay specific. (Approved 2026-11-14.) |
 
 Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an addition to the D8 list; approving a pending account keeps its session, so the user can continue without signing in again; the common-password list is the subset of 12+ characters from SecLists (MIT). npm is removed from the runtime image; dependencies must be at least three days old (`minimumReleaseAge`); the compose host port is configurable with `STASHLEY_PORT`. Earlier decisions: documentation site with VitePress on GitHub Pages; problem types as `urn:stashley:problem:<code>`; images at `ghcr.io/kaibrockelt/stashley`.
@@ -272,7 +272,8 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Examples: without the public API or MCP, a single-user mode, a team mode where everyone has the same rights.
   - Disabled modules are neither registered nor loaded. The rights model stays as it is; a simple mode only simplifies the editor and writes grants to `authenticated` under the hood.
   - To keep a separate build cheap later: the core never imports from the `api` and `mcp` modules (enforce with `no-restricted-imports` from M7 on).
-- 2026-11-15: M5 reviewed: 1 blocking finding, 7 should-fix, 10 nice-to-have. The operator approved B1 and S1–S7 for fixing; the nice-to-haves stay open.
+- 2026-11-15: M5 reviewed: 1 blocking finding, 7 should-fix, 10 nice-to-have. The operator approved B1 and S1–S7 for fixing, confirmed the open points and allowed clear, small nice-to-haves.
+  - Open points decided: the metric comparison comes from a second column of the same query (confirmed). A preview for roles without the view right keeps showing the page, and the preview bar says it would be a 404 for them (N1). Forms no longer offer views as sources (N3).
   - B1: a deleted role locks a page's draft. `unknown_role` becomes a warning; the editor shows deleted roles in viewers and restrictions so they can be removed.
   - S1: rejected saves show translated issues with the block title instead of raw codes.
   - S2: in the builder, a parameter's list form follows the operator; the server rejects list parameters outside `in`/`not_in` for builder sources.
@@ -281,3 +282,7 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - S5: restoring a version asks first and shows the diff against the draft.
   - S6: the text filter follows its URL value, so back and forward work.
   - S7: the table search is debounced.
+- 2026-11-15: M5 review findings fixed: B1, S1–S7 and the nice-to-haves N1, N3–N8. N9 (labels of chosen select filter values after a reload) and N10 (rich-text markup in chart labels, cosmetic) stay open.
+  - N4: chart options are rebuilt when the locale changes. N5: without own edits the editor follows a newer draft saved by someone else, otherwise it says so. N6: concurrent publishes get 409 instead of 500. N7: the navigation order is checked inside its write transaction and only moved pages report a change. N8: comment fix.
+  - The table source picker now opens on the connection of the current source; it used to start on the first connection.
+  - Verified: typecheck, lint, SPDX, i18n (858 keys); 559 server, 63 shared and 61 web unit tests; 160 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7; initial load 193.4 KB gzip. Not checked in the browser.
