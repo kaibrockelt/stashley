@@ -1,10 +1,10 @@
 # Progress
 
-**Current milestone:** M4 – Queries, access control and cache (in review)
+**Current milestone:** M5 – Pages and dashboards (open)
 
-**Next step:** Once the operator accepts M4, start M5 (medium; query builder UI: high). The SQL validation of M4 is tested externally; that does not block M5.
+**Next step:** Present the M5 plan and wait for the operator's approval. The SQL validation of M4 is tested externally; that does not block M5.
 
-**Recommended model strength for M4:** strongest model, maximum effort.
+**Recommended model strength for M5:** medium; query builder UI: high.
 
 ## Milestones
 
@@ -14,7 +14,7 @@
 | M1 | Scaffold and operations: monorepo, CI, Dockerfile, build script, metadata store, health, logs, backup and restore, i18n and design token foundations | Medium | Done |
 | M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | Done |
 | M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | Done |
-| M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | In review |
+| M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Done |
 | M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | Open |
 | M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | Open |
 | M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High | Open |
@@ -221,3 +221,4 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Verified with 552 server unit tests and 152 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7. On every engine, after the suggested statements the database refuses updates and deletes beyond the ceiling, writes to unexposed tables and views, and excluded columns, while allowed writes and the reads of a base filter's join still work.
   - Checked in the browser on the test stand (MariaDB 12.3): the write scope lists writes beyond the ceiling per object and suggests the statements (`REVOKE` on the schema and on unexposed tables, `GRANT` per ceiling). The statements were not applied there.
   - Carried forward to M6, at the operator's request: limit the write user's `INSERT` and `UPDATE` to the writable columns. Before implementing it, review whether it makes sense and what it affects (column sets that differ per component, generated and default values, `updated_at` set by the server, upserts, the simulation of D10), instead of applying it blindly.
+- 2026-11-15: M4 accepted by the operator. M5 starts with medium effort; the query builder UI needs high.
