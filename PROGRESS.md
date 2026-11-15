@@ -291,4 +291,8 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Found and fixed: discarding kept the rejected save's problems on screen; forms said "table or view".
   - Not reachable in the browser: N5, because queries do not refetch on window focus (`refetchOnWindowFocus: false`); the editor follows a newer draft only when the page detail is fetched again. S2 and S4 are covered by unit and integration tests only.
   - Seen on the stand, not changed: the draft of the awards page has three page filters with English labels ("Date", "Search", "Selection"), probably left from testing.
-- 2026-11-15: The operator accepted M5. Open from its review: N9 (labels of chosen select filter values after a reload) and N10 (rich-text markup in chart labels, cosmetic).
+- 2026-11-15: The operator accepted M5 and asked for N9 and N10 before M6; both are fixed.
+  - N9: the filter options route takes the chosen values and returns only their options, so a select filter restored from the URL shows its label.
+  - N10: chart labels from the data get a zero-width space after each `{`, so zrender rich-text markup and ECharts template variables in values are shown as they are.
+  - Verified: typecheck, lint, SPDX, i18n (860 keys); 559 server, 63 shared and 62 web unit tests; 160 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7; initial load 193.4 KB gzip. In the browser with a temporary query and page (removed afterwards): `?f.f1=AT` shows the label of AT; a donut with the categories `{fat|Rich}` and `Wert {d}` shows both unchanged.
+  - Seen, not changed: donut labels show the share with ECharts' own number format ("62.5 %"), not the locale's ("62,5 %").
