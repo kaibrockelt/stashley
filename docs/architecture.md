@@ -765,6 +765,12 @@ Table sources (tables and views with a key) use SQL that `execution/table-reader
   - NULL handling: a NULL measure is a gap, a NULL dimension gets an "(empty)" label.
   - Every chart can switch to a table view.
 - **Broken mappings:** a mapping that no longer fits the result is an issue (§8.6). Users see a neutral error state instead.
+- **Block settings** (`shared/model/block-settings.ts`) are Zod schemas per block type: column roles and formats per column, the metric value with comparison column, fixed target and thresholds, the chart type with axis, series, measures, group, orientation, normalization, gaps, sort and height, and the columns and row link of records and tables.
+  - Settings that do not parse are `settings_invalid`; metrics and charts without settings get the warning `settings_missing`.
+  - Mapped columns are checked against the result columns of the query version: `mapping_broken` for a missing column, `mapping_unsuitable` for a column whose role does not fit.
+- **Result columns** of a query version are learned once by running it for one row with every parameter unset, and stored on the version. A version that cannot run this way keeps them unknown, and only its settings are checked.
+- **Metric comparison:** the comparison value is a second column of the same query, so a block keeps one data source.
+- **Chart data** (`shared/values/chart-data.ts`) applies the limits per type, sorts, folds the "Other" bucket and normalizes stacks. The client turns it into ECharts options.
 
 ## 11. Write path
 
@@ -922,7 +928,9 @@ type DataSourceRef =
   5. Emit `page.published`.
 
   Rights and MCP availability are part of the published document.
-- **Restore** copies a version into the draft as a new revision. It takes effect only after publishing. The compare view shows a structured diff of two documents, per component and per setting.
+- **Restore** copies a version into the draft as a new revision. It takes effect only after publishing. Pinned query versions are dropped, so the draft uses the current versions. The compare view shows a structured diff of two documents (`shared/model/page-diff.ts`), per component and per setting. Rows, blocks, filters and table columns are matched by ID, so moves show as moves.
+- **Editor:** pages are edited in place in edit mode. The editor keeps a local copy of the draft and saves it explicitly against the loaded revision. On `409` it shows the diff between the saved draft and the own copy; the manager takes the saved draft or saves the own copy over it (E2). Previews render the saved draft.
+- **Navigation order** is set in one call (`PUT /internal/design/navigation`) with every section and page.
 
 ### 13.3 Compiled pages
 
@@ -1325,7 +1333,9 @@ AAD = "<table>:<row id>:<column>"
   - Foreign key fields use a ComboBox with server-side search: from 1 character, debounced, 50 results per page.
   - An exact unique match (for example a start number) is taken over directly, and Enter submits. This keeps mobile data entry to a few seconds.
 - **Bundle budget:** the initial load must stay under 300 KB gzip. CI checks this against the Vite manifest.
-  - Lazy chunks: ECharts (modular imports, one chunk per chart family), CodeMirror, dnd-kit, the design and admin areas, and locale data.
+  - Lazy chunks: ECharts (modular imports, one chunk for all chart types), CodeMirror, dnd-kit, the workspace page route with its blocks, the editor, the design and admin areas, and locale data.
+  - CodeMirror inserts its styles with the CSP nonce from `<meta name="csp-nonce">`.
+- **Markdown** in text blocks is rendered with micromark without its HTML extension (E1): HTML shows as text, and dangerous link protocols are dropped.
 - **Accessibility:** WCAG 2.2 AA.
   - React Aria provides keyboard support and semantics, and dnd-kit is used with its keyboard sensor.
   - Focus is visible, targets are at least 24 px, live regions announce results, and every chart has a table view.
@@ -1482,7 +1492,7 @@ These decisions go beyond what the requirements fix, or interpret them. D1–D12
 | D5 | The internal API returns `404` for pages and components the caller cannot see, and `403` only for visible ones. The public API returns `403` for operations a token lacks and `404` for disabled endpoints. | No existence probing on the internal API. The `403` the acceptance criteria require on the public API is kept. |
 | D6 | On the public API, `POST` only creates, `PUT /:id` only replaces existing rows, and `PUT /?on=<column>` is the idempotent upsert for integrations. `If-Match` is optional and enforced when sent (`412`). | Upserts absorb duplicate events from pipelines instead of creating duplicate rows. A mandatory `If-Match` would make a retried update fail after a successful first attempt. |
 | D7 | The row count estimate is used only for unfiltered requests on objects with more than 1,000,000 estimated rows. Filtered counts are exact within the query timeout, and on timeout the count is reported as unknown. | An unfiltered estimate says nothing about a filtered result. |
-| D8 | Libraries beyond the prescribed list: pino (bundled with Fastify), `fastify-type-provider-zod`, `@fastify/cookie`, `@fastify/static`, lru-cache, commander, nodemailer, ipaddr.js; for development: fast-check, `@axe-core/playwright`, ESLint, typescript-eslint, Prettier, VitePress (docs site). Dates use the native Temporal API of Node 26 on the server. | None of these overlap with prescribed libraries. All have licenses compatible with AGPL-3.0, and CI checks them. |
+| D8 | Libraries beyond the prescribed list: pino (bundled with Fastify), `fastify-type-provider-zod`, `@fastify/cookie`, `@fastify/static`, lru-cache, commander, nodemailer, ipaddr.js, micromark (M5, E1); for development: fast-check, `@axe-core/playwright`, ESLint, typescript-eslint, Prettier, VitePress (docs site). Dates use the native Temporal API of Node 26 on the server. | None of these overlap with prescribed libraries. All have licenses compatible with AGPL-3.0, and CI checks them. |
 | D9 | The runtime image is `node:26-slim` rather than distroless. | Native modules need glibc in either case. The slim image keeps the `stashley` CLI usable through `docker compose exec`. |
 | D10 | In edit mode and preview, writes to target databases are simulated: full validation and `SELECT`-based checks, no DML (§11.2). Admins and managers write data only in runtime mode, through their own roles. | Building or previewing a page never changes data, yet still shows what a write would do. |
 | D11 | Drafts are saved explicitly, not automatically, and every save is audited. | Keeps the audit log meaningful and conflicts visible. |
