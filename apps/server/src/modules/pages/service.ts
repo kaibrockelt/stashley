@@ -364,6 +364,13 @@ export class PagesService {
       throw new DraftConflict(await this.get(id))
     }
     const draft = parseDocument(row.draft)
+    // Settings are checked against the result columns; learn the missing ones first.
+    for (const ref of queryRefs(draft)) {
+      const stored = await this.deps.queries.stored(ref.queryId)
+      if (stored !== undefined && stored.resultColumns === null) {
+        await this.deps.queries.describe(ref.queryId, stored.version)
+      }
+    }
     await this.rejectErrors(row, draft)
     const pinned = structuredClone(draft)
     for (const ref of queryRefs(pinned)) {

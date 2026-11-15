@@ -475,6 +475,7 @@
   "issue.settings_invalid": "Die Block-Einstellungen sind unvollständig ({field}).",
   "issue.mapping_broken": "Die Abfrage liefert die Spalte {column} nicht mehr.",
   "issue.mapping_unsuitable": "Die Spalte {column} passt nicht an ihre Stelle im Diagramm.",
+  "issue.columns_unknown": "Die Ergebnisspalten der Abfrage sind noch nicht bekannt, die Zuordnung der Spalten ist deshalb ungeprüft. Ein Testlauf der Abfrage im Abfrage-Editor holt das nach.",
   "editor.edit": "Seite bearbeiten",
   "editor.toolbar": "Seiten-Editor",
   "editor.revision": "Entwurf, Revision {revision}",

@@ -28,6 +28,7 @@ const issueTexts: Record<string, MessageId> = {
   settings_invalid: 'issue.settings_invalid',
   mapping_broken: 'issue.mapping_broken',
   mapping_unsuitable: 'issue.mapping_unsuitable',
+  columns_unknown: 'issue.columns_unknown',
 }
 
 export function useIssueText(): (issue: Pick<PageIssue, 'code' | 'params'>) => string {

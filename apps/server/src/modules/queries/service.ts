@@ -41,6 +41,9 @@ import { buildStatement, type Executable } from './sql-guard/executable.ts'
 import { SqlGuardError } from './sql-guard/lexer.ts'
 import { guardSql, type GuardContext } from './sql-guard/validate.ts'
 
+/** How long a version whose description failed waits before it is tried again. */
+export const describeRetryMs = 10 * 60_000
+
 export interface QueriesDeps {
   db: Kysely<Database>
   connections: ConnectionsService
@@ -403,9 +406,11 @@ export class QueriesService {
     }
   }
 
-  private readonly described = new Set<string>()
+  /** Runs in flight, so concurrent callers share one, and when a version last failed. */
+  private readonly describing = new Map<string, Promise<ResultColumn[] | null>>()
+  private readonly failed = new Map<string, number>()
 
-  /** Stored result columns; a version without them is described once in the background. */
+  /** Stored result columns; a version without them is described in the background. */
   private resultColumns(id: string, row: QueryVersionsTable): ResultColumn[] | null {
     if (row.result_columns !== null) return JSON.parse(row.result_columns) as ResultColumn[]
     void this.describe(id, row.version).catch(() => undefined)
@@ -414,10 +419,29 @@ export class QueriesService {
 
   /**
    * Learns the result columns of a version (§10.8) by running it for one row with every
-   * parameter unset, and stores them. A failing run leaves them unknown; the version is not
-   * tried again until the process restarts. Returns the columns, or null.
+   * parameter unset, and stores them. Concurrent calls share one run. A failing run leaves
+   * them unknown and is tried again after `describeRetryMs`. Returns the columns, or null.
    */
-  async describe(id: string, version: number): Promise<ResultColumn[] | null> {
+  describe(id: string, version: number): Promise<ResultColumn[] | null> {
+    const key = `${id}:${version}`
+    const running = this.describing.get(key)
+    if (running !== undefined) return running
+    const failedAt = this.failed.get(key)
+    if (failedAt !== undefined && this.clock() - failedAt < describeRetryMs) {
+      return Promise.resolve(null)
+    }
+    const run = this.runDescribe(id, version)
+      .then((columns) => {
+        if (columns === null) this.failed.set(key, this.clock())
+        else this.failed.delete(key)
+        return columns
+      })
+      .finally(() => this.describing.delete(key))
+    this.describing.set(key, run)
+    return run
+  }
+
+  private async runDescribe(id: string, version: number): Promise<ResultColumn[] | null> {
     const query = await this.deps.db
       .selectFrom('queries')
       .select('connection_id')
@@ -431,9 +455,6 @@ export class QueriesService {
       .executeTakeFirst()
     if (query === undefined || row === undefined) return null
     if (row.result_columns !== null) return JSON.parse(row.result_columns) as ResultColumn[]
-    const key = `${id}:${version}`
-    if (this.described.has(key)) return null
-    this.described.add(key)
     const executable = JSON.parse(row.executable) as Executable
     const lists = new Set(
       (JSON.parse(row.parameters) as QueryParameter[])
@@ -447,17 +468,45 @@ export class QueriesService {
         buildStatement(executable, values, 1),
       )
       const { columns } = normalizeResult(raw.rows, raw.fields, 1, raw.timeZone)
-      await this.deps.db
-        .updateTable('query_versions')
-        .set({ result_columns: JSON.stringify(columns) })
-        .where('query_id', '=', id)
-        .where('version', '=', version)
-        .where('result_columns', 'is', null)
-        .execute()
+      await this.storeColumns(id, version, columns)
       return columns
     } catch {
       return null
     }
+  }
+
+  private async storeColumns(id: string, version: number, columns: ResultColumn[]) {
+    const result = await this.deps.db
+      .updateTable('query_versions')
+      .set({ result_columns: JSON.stringify(columns) })
+      .where('query_id', '=', id)
+      .where('version', '=', version)
+      .where('result_columns', 'is', null)
+      .executeTakeFirst()
+    // Compiled pages checked their settings without these columns.
+    if (Number(result.numUpdatedRows) > 0) this.deps.events.emit('query.described', { queryId: id })
+  }
+
+  /**
+   * A test run of exactly the SQL and parameters of a version without known columns teaches
+   * them, e.g. when the run with unset parameters failed (§10.8).
+   */
+  private async learnFromRun(
+    connectionId: string,
+    sql: string,
+    parameters: readonly QueryParameter[],
+    columns: ResultColumn[],
+  ) {
+    const versions = await this.deps.db
+      .selectFrom('query_versions')
+      .innerJoin('queries', 'queries.id', 'query_versions.query_id')
+      .select(['query_versions.query_id', 'query_versions.version'])
+      .where('queries.connection_id', '=', connectionId)
+      .where('query_versions.result_columns', 'is', null)
+      .where('query_versions.sql_text', '=', sql)
+      .where('query_versions.parameters', '=', JSON.stringify(parameters))
+      .execute()
+    for (const entry of versions) await this.storeColumns(entry.query_id, entry.version, columns)
   }
 
   /** Connections for the query editor; managers see names only. */
@@ -715,6 +764,7 @@ export class QueriesService {
     const statement = buildStatement(executable, resolved.values, testRunRows + 1)
     const raw = await this.deps.executor.execute(input.connectionId, statement)
     const result = normalizeResult(raw.rows, raw.fields, testRunRows, raw.timeZone)
+    await this.learnFromRun(input.connectionId, sql, input.parameters, result.columns)
     return {
       columns: result.columns,
       rows: result.rows,

@@ -475,6 +475,7 @@
   "issue.settings_invalid": "The block settings are incomplete ({field}).",
   "issue.mapping_broken": "The query no longer returns the column {column}.",
   "issue.mapping_unsuitable": "The column {column} does not fit its place in the chart.",
+  "issue.columns_unknown": "The query's result columns are not known yet, so the column mapping is unchecked. A test run of the query in the query editor catches up.",
   "editor.edit": "Edit page",
   "editor.toolbar": "Page editor",
   "editor.revision": "Draft revision {revision}",

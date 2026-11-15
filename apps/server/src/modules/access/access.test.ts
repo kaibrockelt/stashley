@@ -345,6 +345,31 @@ describe('manager limits (§8.6)', () => {
     ).json<PageDetail>()
     expect(stored.draftRevision).toBe(1)
     expect(stored.draft.access.grants).toEqual([])
+    // D15: a deleted role is a warning, so the draft stays editable and the role removable.
+    const gone = '01890000-0000-7000-8000-00000000beef'
+    const saved = await saveDraft(w.manager, page.id, page.draftRevision, {
+      ...base,
+      access: {
+        view: [...base.access.view, gone],
+        grants: [
+          ...base.access.grants,
+          { principal: gone, source: `table:${zahlung}`, ops: ['read'] },
+        ],
+      },
+    })
+    expect(saved.statusCode, saved.body).toBe(200)
+    expect(saved.json<PageDetail>().issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'access.view.2',
+          code: 'unknown_role',
+          severity: 'warning',
+        }),
+        expect.objectContaining({ path: 'access.grants.5.principal', severity: 'warning' }),
+      ]),
+    )
+    const published = await w.manager.send('POST', `/internal/design/pages/${page.id}/publish`)
+    expect(published.statusCode, published.body).toBe(200)
   })
 
   it('detect conflicting drafts and keep design routes from users', async () => {
@@ -594,20 +619,6 @@ describe('page and component rights', () => {
     expect(after.data.find((entry) => entry.pageId === kasse.id)?.published).toContainEqual(
       expect.objectContaining({ code: 'unknown_role' }),
     )
-    // The deleted role is only a warning: the draft can still be saved and published.
-    const detail = (
-      await w.manager.request('GET', `/internal/design/pages/${kasse.id}`)
-    ).json<PageDetail>()
-    const saved = await saveDraft(w.manager, kasse.id, detail.draftRevision, {
-      ...detail.draft,
-      title: 'Kasse neu',
-    })
-    expect(saved.statusCode).toBe(200)
-    expect(saved.json<PageDetail>().issues).toContainEqual(
-      expect.objectContaining({ code: 'unknown_role', severity: 'warning' }),
-    )
-    const republished = await w.manager.send('POST', `/internal/design/pages/${kasse.id}/publish`)
-    expect(republished.statusCode).toBe(200)
 
     // Losing a role takes effect on the next request.
     const lindenhof = await createPage(

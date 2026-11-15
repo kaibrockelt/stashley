@@ -441,6 +441,30 @@ describe.skipIf(targets.length === 0).each(targets)('page components on $name', 
     expect((await queries.stored(offen.id))?.resultColumns).toEqual(columns)
   })
 
+  it('learns the result columns from a test run of the same SQL', async () => {
+    await server.store.db
+      .updateTable('query_versions')
+      .set({ result_columns: null })
+      .where('query_id', '=', offen.id)
+      .execute()
+    const detail = (
+      await admin.request('GET', `/internal/design/queries/${offen.id}`)
+    ).json<Query>()
+    const run = await admin.send('POST', '/internal/design/queries/run', {
+      connectionId: connection.id,
+      sql: detail.current.sql,
+      parameters: detail.current.parameters,
+      values: {},
+    })
+    expect(run.statusCode, run.body).toBe(200)
+    const stored = await server.services.queries.stored(offen.id)
+    expect(stored?.resultColumns?.map((column) => column.name)).toEqual([
+      'anmeldung_id',
+      'startnummer',
+      'offen',
+    ])
+  })
+
   it('pages through query results in memory and lists filter options', async () => {
     const client = users.kasse as TestClient
     const pageId = pages.kasse?.id ?? ''

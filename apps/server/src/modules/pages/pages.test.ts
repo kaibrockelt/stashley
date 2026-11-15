@@ -11,8 +11,9 @@ import type {
   Query,
   Section,
 } from '@stashley/shared'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { TargetError } from '../../target/errors.ts'
+import { describeRetryMs } from '../queries/service.ts'
 import type { TestClient } from '../../test/client.ts'
 import { setupDemo, type Demo } from '../../test/demo.ts'
 import { createUser, problem, setupServer, type TestSetup } from '../../test/setup.ts'
@@ -335,12 +336,28 @@ describe('block settings issues', () => {
     ).toEqual([])
   })
 
-  it('leave result columns unknown when the query cannot run', async () => {
+  it('leave result columns unknown when the query cannot run, and try again later', async () => {
     const w = await world()
     const queries = w.s.server.services.queries
-    expect(await queries.describe(w.query.id, 1)).toBeNull()
-    // A version is described once per process.
-    expect(await queries.describe(w.query.id, 1)).toBeNull()
+    const runs = vi.spyOn(queries as unknown as { runDescribe: () => unknown }, 'runDescribe')
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      // Concurrent callers share one run.
+      const [first, second] = await Promise.all([
+        queries.describe(w.query.id, 1),
+        queries.describe(w.query.id, 1),
+      ])
+      expect([first, second]).toEqual([null, null])
+      expect(runs).toHaveBeenCalledTimes(1)
+      // A failed version waits before it is tried again.
+      expect(await queries.describe(w.query.id, 1)).toBeNull()
+      expect(runs).toHaveBeenCalledTimes(1)
+      vi.setSystemTime(Date.now() + describeRetryMs + 1)
+      expect(await queries.describe(w.query.id, 1)).toBeNull()
+      expect(runs).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
     expect(await queries.describe(crypto.randomUUID(), 1)).toBeNull()
     await storeColumns(w)
     expect((await queries.stored(w.query.id))?.resultColumns?.map((column) => column.name)).toEqual(

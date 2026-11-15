@@ -88,6 +88,7 @@ export class AccessService {
       'catalog.refreshed',
       'connection.changed',
       'query.changed',
+      'query.described',
       'roles.changed',
       'page.published',
       'page.changed',

@@ -15,6 +15,8 @@ export interface EventMap {
   'page.published': { pageId: string }
   'page.changed': { pageId: string }
   'query.changed': { queryId: string }
+  /** The result columns of a query version became known (§10.8). */
+  'query.described': { queryId: string }
   'roles.changed': Record<string, never>
   'user.changed': { userId: string }
   'variable.changed': { name: string }

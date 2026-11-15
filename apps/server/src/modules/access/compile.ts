@@ -345,6 +345,10 @@ export async function compilePage(input: PageInput, deps: CompileDeps): Promise<
       const columns =
         compiled?.source.kind === 'query' ? compiled.source.stored.resultColumns : null
       checkSettings(compiler, path, block.type, block.settings, columns)
+      // Without the result columns the mapping cannot be checked; say so instead of passing.
+      if (compiled?.source.kind === 'query' && columns === null && block.settings !== undefined) {
+        compiler.issue(`${path}.settings`, 'columns_unknown', undefined, true)
+      }
     }
     // A source used twice must have one ceiling; the stricter one wins.
     const ceiling = compiled?.ceiling ?? noOps
