@@ -186,6 +186,22 @@ const appRoutes = [
   designLayout.addChildren([
     createRoute({
       getParentRoute: () => designLayout,
+      path: '/queries',
+      component: lazyRouteComponent(
+        () => import('../features/design/queries/queries-list.tsx'),
+        'QueriesListPage',
+      ),
+    }),
+    createRoute({
+      getParentRoute: () => designLayout,
+      path: '/queries/$queryId',
+      component: lazyRouteComponent(
+        () => import('../features/design/queries/query-editor.tsx'),
+        'QueryEditorPage',
+      ),
+    }),
+    createRoute({
+      getParentRoute: () => designLayout,
       path: '/pages',
       component: lazyRouteComponent(
         () => import('../features/design/pages/pages-list.tsx'),
