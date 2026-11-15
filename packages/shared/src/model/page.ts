@@ -1,143 +1,50 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import { z } from 'zod'
-import { authenticatedPrincipal, type SourceKey } from '../access/algebra.ts'
-import { tableOps } from '../api/connections.ts'
-import { paramNamePattern, paramTypes } from '../values/params.ts'
+import { paramTypes } from '../values/params.ts'
+import { afterSave, fieldList, tableEditing } from './form.ts'
+import {
+  baseFilterCondition,
+  columnRef,
+  componentId,
+  componentRestriction,
+  identifier,
+  pageAccess,
+  parameterBinding,
+  paramName,
+  queryRef,
+  settings,
+  tableColumn,
+  tableRef,
+} from './refs.ts'
+
+export {
+  baseFilterCondition,
+  baseFilterOperators,
+  cacheTtl,
+  cacheTtlPresets,
+  columnRef,
+  componentId,
+  componentRestriction,
+  pageAccess,
+  parameterBinding,
+  queryRef,
+  relationStep,
+  sourceKey,
+  tableColumn,
+  tableRef,
+  type BaseFilterCondition,
+  type BaseFilterOperator,
+  type ColumnRef,
+  type ParameterBinding,
+  type TableColumn,
+} from './refs.ts'
 
 /**
  * The page document (architecture §13.1), schema version 1. M4 defines what access control
  * and execution need; block display settings (charts, formats) live in `settings` and are
- * specified by the page editor (M5), form fields by M6.
+ * specified by the page editor (M5), form fields and table editing by M6.
  */
-
-/** Stable IDs of components and filters within a page. */
-export const componentId = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,39}$/)
-const identifier = z.string().min(1).max(64)
-const paramName = z.string().regex(paramNamePattern)
-const principal = z.union([z.literal(authenticatedPrincipal), z.uuid()])
-const op = z.enum(tableOps)
-const opList = z.array(op).max(4)
-const settings = z.record(z.string(), z.unknown()).optional()
-
-export const cacheTtlPresets = [0, 30, 60, 300, 900, 3600, 21600, 86400] as const
-/** 0 is live; any other number of seconds up to 30 days. */
-export const cacheTtl = z
-  .number()
-  .int()
-  .min(0)
-  .max(30 * 86400)
-
-export const sourceKey = z
-  .string()
-  .regex(/^(query|table):[0-9a-f-]{36}$/)
-  .transform((value) => value as SourceKey)
-
-export const pageAccess = z.object({
-  view: z.array(principal).max(200),
-  grants: z.array(z.object({ principal, source: sourceKey, ops: opList }).strict()).max(2000),
-})
-
-export const componentRestriction = z.object({ principal, ops: opList }).strict()
-
-export const queryRef = z
-  .object({
-    kind: z.literal('query'),
-    queryId: z.uuid(),
-    /** Pinned when the page is published; drafts use the latest version. */
-    version: z.number().int().positive().optional(),
-  })
-  .strict()
-
-export const tableRef = z
-  .object({
-    kind: z.literal('table'),
-    tableAccessId: z.uuid(),
-    cacheTtlSeconds: cacheTtl,
-  })
-  .strict()
-
-/** One step along a relation: from the current object over `column` into `target`. */
-export const relationStep = z.object({ column: identifier, target: identifier }).strict()
-const path = z.array(relationStep).max(3)
-
-/** A column of the source object, or of an object reached over up to three relations. */
-export const columnRef = z.object({ path, column: identifier }).strict()
-export type ColumnRef = z.infer<typeof columnRef>
-
-/** A query parameter set from a page filter or a URL parameter of the page. */
-export const parameterBinding = z
-  .object({
-    parameter: paramName,
-    from: z.discriminatedUnion('kind', [
-      z.object({ kind: z.literal('filter'), filterId: componentId }).strict(),
-      z.object({ kind: z.literal('url'), name: paramName }).strict(),
-    ]),
-  })
-  .strict()
-export type ParameterBinding = z.infer<typeof parameterBinding>
-
-export const tableColumn = z.discriminatedUnion('kind', [
-  z
-    .object({
-      kind: z.literal('column'),
-      id: componentId,
-      column: columnRef,
-      label: z.string().max(200).optional(),
-    })
-    .strict(),
-  /** The display value of the record at the end of `path`, e.g. the person of a registration. */
-  z
-    .object({
-      kind: z.literal('display'),
-      id: componentId,
-      path: z.array(relationStep).min(1).max(3),
-      /** Overrides the target's display template. */
-      template: z.string().min(1).max(500).optional(),
-      label: z.string().max(200).optional(),
-    })
-    .strict(),
-])
-export type TableColumn = z.infer<typeof tableColumn>
-
-export const baseFilterOperators = [
-  'eq',
-  'ne',
-  'lt',
-  'lte',
-  'gt',
-  'gte',
-  'in',
-  'null',
-  'not_null',
-] as const
-export type BaseFilterOperator = (typeof baseFilterOperators)[number]
-
-const scalar = z.union([z.string().max(1000), z.number(), z.boolean()])
-
-/**
- * A fixed filter users cannot remove (§ Basisfilter). It takes only constants, instance
- * variables and the user context, never page filters or URL parameters.
- */
-export const baseFilterCondition = z
-  .object({
-    column: columnRef,
-    operator: z.enum(baseFilterOperators),
-    value: z
-      .discriminatedUnion('kind', [
-        z
-          .object({
-            kind: z.literal('constant'),
-            value: z.union([scalar, z.array(scalar).max(100)]),
-          })
-          .strict(),
-        z.object({ kind: z.literal('variable'), name: paramName }).strict(),
-        z.object({ kind: z.literal('user'), field: z.enum(['id', 'email']) }).strict(),
-      ])
-      .optional(),
-  })
-  .strict()
-export type BaseFilterCondition = z.infer<typeof baseFilterCondition>
 
 export const filterBindingOperators = ['eq', 'in', 'contains', 'range'] as const
 
@@ -161,9 +68,19 @@ export const tableConfig = z
     baseFilter: z.array(baseFilterCondition).max(20),
     bindings: z.array(columnBinding).max(20),
     pageSize: z.number().int().min(1).max(500),
+    /** Editing of table sources (M6); null: read-only. */
+    editing: tableEditing.nullable().default(null),
+    /** CSV export, while the user may read (§ Tabellenseiten); can be turned off. */
+    csvExport: z.boolean().default(true),
   })
   .strict()
 export type TableConfig = z.infer<typeof tableConfig>
+
+/** The settings M6 added to table configurations, as a new one starts. */
+export const tableConfigDefaults = {
+  editing: null,
+  csvExport: true,
+} as const satisfies Partial<TableConfig>
 
 const blockBase = {
   id: componentId,
@@ -183,38 +100,87 @@ const queryBlock = (type: 'metric' | 'chart' | 'record') =>
     })
     .strict()
 
+const tableShape = {
+  ...blockBase,
+  type: z.literal('table'),
+  source: z.discriminatedUnion('kind', [queryRef, tableRef]),
+  bindings: z.array(parameterBinding).max(50),
+  table: tableConfig.nullable(),
+  settings,
+}
+
+const tableSourceCheck = (block: { source: { kind: string }; table: unknown }) =>
+  (block.source.kind === 'table') === (block.table !== null)
+const tableSourceMessage = () => ({
+  message: 'table sources need a table configuration, queries none',
+  path: ['table'],
+})
+
 /** A table shows a stored query, or a table or view with its own configuration. */
 export const tableComponent = z
+  .object(tableShape)
+  .strict()
+  .refine(tableSourceCheck, tableSourceMessage())
+
+/**
+ * A related table in the detail view of a table page: the records of another object that
+ * refer to the shown record through `column`. It is a component with its own rights.
+ */
+export const detailTable = z
+  .object({
+    ...tableShape,
+    source: tableRef,
+    link: z.object({ column: z.string().min(1).max(64) }).strict(),
+  })
+  .strict()
+  .refine(tableSourceCheck, tableSourceMessage())
+export type DetailTable = z.infer<typeof detailTable>
+
+export const formModes = ['create', 'edit', 'upsert'] as const
+export type FormMode = (typeof formModes)[number]
+
+/**
+ * A form writes one exposed table (§ Formulare). In edit mode a page filter or URL parameter
+ * names the record; upserts find it by `upsertKey` (E8). The base filter applies in every
+ * mode (E9): rows outside it are never changed, new rows must meet it.
+ */
+export const formComponent = z
   .object({
     ...blockBase,
-    type: z.literal('table'),
-    source: z.discriminatedUnion('kind', [queryRef, tableRef]),
-    bindings: z.array(parameterBinding).max(50),
-    table: tableConfig.nullable(),
+    type: z.literal('form'),
+    source: tableRef,
+    mode: z.enum(formModes),
+    fields: fieldList.default([]),
+    record: z.object({ from: parameterBinding.shape.from }).strict().nullable().default(null),
+    upsertKey: z.array(z.string().min(1).max(64)).min(1).max(16).nullable().default(null),
+    baseFilter: z.array(baseFilterCondition).max(20).default([]),
+    afterSave: afterSave.default({ action: 'clear' }),
+    submitLabel: z.string().max(80).optional(),
     settings,
   })
   .strict()
-  .refine((block) => (block.source.kind === 'table') === (block.table !== null), {
-    message: 'table sources need a table configuration, queries none',
-    path: ['table'],
-  })
+export type FormComponent = z.infer<typeof formComponent>
 
-export const formModes = ['create', 'edit', 'upsert'] as const
+/** The settings of a new form besides its table and mode. */
+export function formDefaults(): Pick<
+  FormComponent,
+  'fields' | 'record' | 'upsertKey' | 'baseFilter' | 'afterSave'
+> {
+  return {
+    fields: [],
+    record: null,
+    upsertKey: null,
+    baseFilter: [],
+    afterSave: { action: 'clear' },
+  }
+}
 
 export const block = z.union([
   queryBlock('metric'),
   queryBlock('chart'),
   queryBlock('record'),
   tableComponent,
-  z
-    .object({
-      ...blockBase,
-      type: z.literal('form'),
-      source: tableRef,
-      mode: z.enum(formModes),
-      settings,
-    })
-    .strict(),
+  formComponent,
   z
     .object({
       ...blockBase,
@@ -291,6 +257,12 @@ export const pageDocument = z
     parameters: z.array(urlParameter).max(20),
     rows: z.array(dashboardRow).max(100),
     table: tableComponent.nullable(),
+    /** Table pages: the detail view of a record with the tables that refer to it (M6). */
+    detail: z
+      .object({ tables: z.array(detailTable).max(10) })
+      .strict()
+      .nullable()
+      .default(null),
     access: pageAccess,
     mcp: z.object({ available: z.boolean() }).strict(),
   })
@@ -299,11 +271,25 @@ export const pageDocument = z
     message: 'dashboards have rows, table pages one table',
     path: ['kind'],
   })
+  .refine((page) => page.kind === 'table' || page.detail === null, {
+    message: 'only table pages have a detail view',
+    path: ['detail'],
+  })
 export type PageDocument = z.infer<typeof pageDocument>
+/** A document as written, before defaults fill the fields M6 added. */
+export type PageDocumentInput = z.input<typeof pageDocument>
 
 /** Every component of a page with its position, in document order. */
 export function componentsOf(page: PageDocument): { component: Block; path: string }[] {
-  if (page.table !== null) return [{ component: page.table, path: 'table' }]
+  if (page.table !== null) {
+    return [
+      { component: page.table, path: 'table' },
+      ...(page.detail?.tables ?? []).map((component, index) => ({
+        component,
+        path: `detail.tables.${index}`,
+      })),
+    ]
+  }
   return page.rows.flatMap((row, rowIndex) =>
     row.blocks.map((component, blockIndex) => ({
       component,
@@ -321,6 +307,7 @@ export function emptyPage(kind: (typeof pageKinds)[number], title: string): Page
     parameters: [],
     rows: [],
     table: null,
+    detail: null,
     access: { view: [], grants: [] },
     mcp: { available: false },
   }

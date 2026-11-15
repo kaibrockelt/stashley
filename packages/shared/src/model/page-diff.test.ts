@@ -98,6 +98,8 @@ describe('diffPages', () => {
           baseFilter: [],
           bindings: [],
           pageSize: 50,
+          editing: null,
+          csvExport: true,
         },
         settings,
       },

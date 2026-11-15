@@ -251,6 +251,64 @@ describe('table access', () => {
     })
   })
 
+  it('stores the lock column and keeps it when an update leaves it out (E7)', async () => {
+    const s = await setup()
+    const missing = await s.expose('hotel', { lock: { mode: 'column', column: 'fehlt' } })
+    expect(missing.statusCode).toBe(422)
+    expect(missing.json<ProblemDocument>().errors).toEqual([
+      { field: 'lock.column', code: 'unknown_column' },
+    ])
+    const created = (
+      await s.expose('hotel', { lock: { mode: 'column', column: 'name' } })
+    ).json<TableAccess>()
+    expect(created).toMatchObject({
+      lock: { mode: 'column', column: 'name' },
+      lockStrategy: { kind: 'values' },
+    })
+    expect(withoutWriteWarning(created.warnings)).toContainEqual({
+      code: 'lock_column_invalid',
+      problem: 'unsuitable_column',
+    })
+    const body = {
+      ops: ['read'],
+      keyColumn: null,
+      displayTemplate: null,
+      apiResource: null,
+      mcpEnabled: false,
+      exclusions: [],
+    }
+    const kept = await s.admin.send('PUT', `/internal/admin/table-access/${created.id}`, body)
+    expect(kept.json<TableAccess>().lock).toEqual({ mode: 'column', column: 'name' })
+    const off = await s.admin.send('PUT', `/internal/admin/table-access/${created.id}`, {
+      ...body,
+      lock: { mode: 'none' },
+    })
+    expect(off.json<TableAccess>().lock).toEqual({ mode: 'none' })
+    expect(withoutWriteWarning(off.json<TableAccess>().warnings)).toEqual([])
+  })
+
+  it('warns when an excluded column rules out creating rows', async () => {
+    const s = await setup()
+    const strict = {
+      ...person,
+      columns: person.columns.map((entry) =>
+        entry.name === 'email' ? { ...entry, nullable: false } : entry,
+      ),
+    }
+    await storeSnapshot(s.server, [anmeldung, hotel, strict, status], Date.now() + 1000)
+    await s.expose('person', {
+      ops: ['read', 'create'],
+      exclusions: [
+        { column: 'email', scope: 'all' },
+        { column: 'telefon', scope: 'all' },
+      ],
+    })
+    expect((await s.list()).get('person')?.warnings).toContainEqual({
+      code: 'excluded_column_required',
+      columns: ['email'],
+    })
+  })
+
   it('keeps relations consistent with column kinds and view keys', async () => {
     const s = await setup()
     const relation = (fields: Record<string, unknown>) =>

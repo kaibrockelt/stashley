@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import { emptyPage, type Block, type PageDocument } from '@stashley/shared'
+import {
+  emptyPage,
+  formDefaults,
+  tableConfigDefaults,
+  type Block,
+  type PageDocument,
+} from '@stashley/shared'
 import { describe, expect, it } from 'vitest'
 import {
   addBlock,
@@ -175,6 +181,7 @@ describe('offered rights (§8.2)', () => {
     restrictions: [],
     source: { kind: 'table', tableAccessId, cacheTtlSeconds: 0 },
     mode,
+    ...formDefaults(),
   })
   const record = (id: string): Block => ({
     id,
@@ -188,6 +195,7 @@ describe('offered rights (§8.2)', () => {
       sort: null,
       searchColumns: [],
       baseFilter: [],
+      ...tableConfigDefaults,
       bindings: [],
       pageSize: 50,
     },

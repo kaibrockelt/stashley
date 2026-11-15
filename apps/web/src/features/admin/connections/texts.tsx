@@ -85,6 +85,7 @@ const accessWarningLabels: Record<AccessWarning['code'], MessageId> = {
   write_beyond_ceiling: 'access.warning.writeBeyondCeiling',
   excluded_column_writable: 'access.warning.excludedColumnWritable',
   excluded_column_required: 'access.warning.excludedColumnRequired',
+  lock_column_invalid: 'access.warning.lockColumnInvalid',
 }
 
 const impactLabels: Record<ImpactItem['kind'], MessageId> = {

@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { CatalogObject, ExclusionScope, TableAccess, TableOp } from '@stashley/shared'
+import type {
+  CatalogObject,
+  ExclusionScope,
+  LockSetting,
+  TableAccess,
+  TableOp,
+} from '@stashley/shared'
 import { isTextKind, tableOps } from '@stashley/shared'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -45,6 +51,7 @@ export function AccessDialog(props: {
   const [template, setTemplate] = useState(access?.displayTemplate ?? '')
   const [resource, setResource] = useState(access?.apiResource ?? '')
   const [mcp, setMcp] = useState(access?.mcpEnabled ?? false)
+  const [lock, setLock] = useState<LockSetting>(access?.lock ?? { mode: 'auto' })
   const [visibility, setVisibility] = useState<Record<string, Visibility>>(
     Object.fromEntries(
       object.columns.map((column) => [
@@ -65,6 +72,7 @@ export function AccessDialog(props: {
     displayTemplate: template.trim() === '' ? null : template,
     apiResource: resource.trim() === '' ? null : resource,
     mcpEnabled: mcp,
+    ...(!isView && { lock }),
     exclusions: [
       ...Object.entries(visibility)
         .filter(([, scope]) => scope !== 'shown')
@@ -183,6 +191,36 @@ export function AccessDialog(props: {
             onChange={setMcp}
           />
         </div>
+        {!isView && (
+          <SelectField
+            label={t('access.lock')}
+            value={lock.mode === 'column' ? `column:${lock.column}` : lock.mode}
+            onChange={(value) =>
+              setLock(
+                value.startsWith('column:')
+                  ? { mode: 'column', column: value.slice('column:'.length) }
+                  : { mode: value === 'none' ? 'none' : 'auto' },
+              )
+            }
+            description={
+              access === undefined
+                ? t('access.lock.hint')
+                : access.lockStrategy.kind === 'values'
+                  ? t('access.lock.values')
+                  : t('access.lock.current', { column: access.lockStrategy.column })
+            }
+            error={errors.field(save.error, 'lock.column') ?? errors.field(save.error, 'lock')}
+            options={[
+              { id: 'auto', label: t('access.lock.auto') },
+              { id: 'none', label: t('access.lock.none') },
+              ...object.columns
+                .filter((column) =>
+                  ['integer', 'bigint', 'datetime', 'timestamp'].includes(column.kind),
+                )
+                .map((column) => ({ id: `column:${column.name}`, label: column.name })),
+            ]}
+          />
+        )}
         <div className={styles.block}>
           <p className={styles.blockTitle}>{t('access.columns')}</p>
           <p className={styles.muted}>{t('access.columns.hint')}</p>

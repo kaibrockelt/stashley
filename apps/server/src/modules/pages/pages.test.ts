@@ -4,7 +4,7 @@ import type {
   DesignCatalog,
   DesignConnection,
   PageDetail,
-  PageDocument,
+  PageDocumentInput,
   PageSummary,
   PageVersionDetail,
   PageVersionSummary,
@@ -62,7 +62,7 @@ async function createPage(w: World, slug: string, sectionId: string | null = nul
 }
 
 function chartPage(w: World, settings: Record<string, unknown> | undefined, title = 'Übersicht') {
-  const document: PageDocument = {
+  const document: PageDocumentInput = {
     schemaVersion: 1,
     kind: 'dashboard',
     title,
@@ -92,7 +92,7 @@ function chartPage(w: World, settings: Record<string, unknown> | undefined, titl
   return document
 }
 
-const save = (client: TestClient, id: string, revision: number, document: PageDocument) =>
+const save = (client: TestClient, id: string, revision: number, document: PageDocumentInput) =>
   client.request('PUT', `/internal/design/pages/${id}/draft`, document, {
     'if-match': `"${revision}"`,
   })

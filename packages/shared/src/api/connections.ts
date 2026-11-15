@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { z } from 'zod'
 import type { ValueKind } from '../values/column-kinds.ts'
+import {
+  lockSetting,
+  type LockProblem,
+  type LockSetting,
+  type LockStrategy,
+} from '../values/lock.ts'
 
 export const engines = ['mariadb', 'mysql'] as const
 export type Engine = (typeof engines)[number]
@@ -270,6 +276,8 @@ const tableAccessFields = {
     .nullable(),
   mcpEnabled: z.boolean(),
   exclusions: z.array(z.object({ column: identifier, scope: z.enum(exclusionScopes) })).max(500),
+  /** Optimistic locking (E7); absent on an update: unchanged. New table access starts with `auto`. */
+  lock: lockSetting.optional(),
 }
 
 export const tableAccessCreate = z.object({
@@ -301,8 +309,11 @@ export interface AccessWarning {
     | 'excluded_column_writable'
     /** A column excluded for everyone is required (NOT NULL without default): no row can be created. */
     | 'excluded_column_required'
+    /** The configured lock column cannot be used (`problem`); updates compare original values. */
+    | 'lock_column_invalid'
   ops?: TableOp[]
   columns?: string[]
+  problem?: LockProblem
 }
 
 /**
@@ -353,6 +364,9 @@ export interface TableAccess {
    * object. Writable fields stay within them (E6).
    */
   writableColumns: { create: string[] | null; update: string[] | null }
+  lock: LockSetting
+  /** How updates detect concurrent edits, from `lock` and the catalog. */
+  lockStrategy: LockStrategy
   warnings: AccessWarning[]
   updatedAt: string
 }

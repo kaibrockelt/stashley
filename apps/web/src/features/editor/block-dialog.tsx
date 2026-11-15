@@ -17,8 +17,10 @@ import {
   analyzeShape,
   chartTypes,
   effectiveColumns,
+  formDefaults,
   isDimension,
   parseSettings,
+  tableConfigDefaults,
   type ChartType,
 } from '@stashley/shared'
 import { useMutation } from '@tanstack/react-query'
@@ -873,6 +875,7 @@ function TableSourceFields(props: { block: Block; onBlock: (block: Block) => voi
         sort: null,
         searchColumns: [],
         baseFilter: [],
+        ...tableConfigDefaults,
         bindings: [],
         pageSize: 50,
       },
@@ -1012,6 +1015,7 @@ export function BlockDialog(props: {
         type,
         mode: 'create',
         source: { kind: 'table', tableAccessId: unsetId, cacheTtlSeconds: 0 },
+        ...formDefaults(),
       })
     else if (type === 'table')
       setBlock({

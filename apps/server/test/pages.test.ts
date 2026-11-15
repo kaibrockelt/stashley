@@ -6,7 +6,7 @@ import type {
   CountResult,
   FilterOptions,
   PageDetail,
-  PageDocument,
+  PageDocumentInput,
   ProblemDocument,
   Query,
   Role,
@@ -68,7 +68,7 @@ describe.skipIf(targets.length === 0).each(targets)('page components on $name', 
     return client
   }
 
-  async function page(slug: string, document: PageDocument): Promise<PageDetail> {
+  async function page(slug: string, document: PageDocumentInput): Promise<PageDetail> {
     const created = (
       await admin.send('POST', '/internal/design/pages', {
         sectionId: null,
@@ -92,7 +92,7 @@ describe.skipIf(targets.length === 0).each(targets)('page components on $name', 
     return published.json<PageDetail>()
   }
 
-  const guests = (hotelId: number, roleId: string, title: string): PageDocument => ({
+  const guests = (hotelId: number, roleId: string, title: string): PageDocumentInput => ({
     schemaVersion: 1,
     kind: 'table',
     title,

@@ -192,6 +192,9 @@ export interface TableAccessTable {
   api_resource: string
   mcp_enabled: number
   state: 'active' | 'pending_grants'
+  /** Optimistic locking (E7). */
+  lock_mode: 'auto' | 'column' | 'none'
+  lock_column: string | null
   created_at: number
   updated_at: number
 }

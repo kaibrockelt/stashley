@@ -13,7 +13,7 @@ import type {
   tableAccessCreate,
   tableAccessUpdate,
 } from '@stashley/shared'
-import { tableOps } from '@stashley/shared'
+import { lockStrategy, tableOps, type LockSetting } from '@stashley/shared'
 import type { Kysely } from 'kysely'
 import { v7 as uuidv7 } from 'uuid'
 import type { z } from 'zod'
@@ -89,6 +89,17 @@ function keyFamily(kind: string | undefined): string | undefined {
   if (kind === 'integer' || kind === 'bigint') return 'integer'
   if (kind === 'string' || kind === 'enum') return 'string'
   return kind
+}
+
+function lockOf(row: TableAccessTable): LockSetting {
+  if (row.lock_mode === 'column' && row.lock_column !== null) {
+    return { mode: 'column', column: row.lock_column }
+  }
+  return row.lock_mode === 'none' ? { mode: 'none' } : { mode: 'auto' }
+}
+
+function lockColumns(lock: LockSetting): Pick<TableAccessTable, 'lock_mode' | 'lock_column'> {
+  return { lock_mode: lock.mode, lock_column: lock.mode === 'column' ? lock.column : null }
 }
 
 function defaultResource(objectName: string): string {
@@ -386,6 +397,11 @@ export class TableAccessService {
     if (requiredExcluded.length > 0) {
       warnings.push({ code: 'excluded_column_required', columns: requiredExcluded })
     }
+    const lock = lockOf(row)
+    const locking = lockStrategy(object, excluded, lock)
+    if (locking.problem !== undefined) {
+      warnings.push({ code: 'lock_column_invalid', problem: locking.problem })
+    }
     let effectiveTemplate = defaultTemplate(object, row.key_column, excluded)
     if (row.display_template !== null) {
       const problem =
@@ -413,6 +429,8 @@ export class TableAccessService {
         create: writeColumns('INSERT'),
         update: writeColumns('UPDATE'),
       },
+      lock,
+      lockStrategy: locking.strategy,
       warnings,
       updatedAt: new Date(row.updated_at).toISOString(),
     }
@@ -482,10 +500,19 @@ export class TableAccessService {
     if (existingId !== undefined) clash = clash.where('id', '!=', existingId)
     if ((await clash.executeTakeFirst()) !== undefined) throw fieldError('apiResource', 'taken')
 
+    // A named lock column must exist; whether it suits shows as a warning (§9.3 may change it).
+    const lock = input.lock
+    if (lock?.mode === 'column' && !columns.has(lock.column)) {
+      throw fieldError('lock.column', 'unknown_column')
+    }
+    if (lock !== undefined && lock.mode !== 'auto' && object.type === 'view') {
+      throw fieldError('lock', 'view_read_only')
+    }
     return {
       object,
       keyColumn,
       exclusions,
+      lock,
       apiResource,
       displayTemplate:
         input.displayTemplate === null || input.displayTemplate === ''
@@ -540,6 +567,7 @@ export class TableAccessService {
           api_resource: values.apiResource,
           mcp_enabled: input.mcpEnabled ? 1 : 0,
           state: 'active',
+          ...lockColumns(values.lock ?? { mode: 'auto' }),
           created_at: now,
           updated_at: now,
         })
@@ -558,6 +586,7 @@ export class TableAccessService {
         displayTemplate: values.displayTemplate,
         apiResource: values.apiResource,
         mcpEnabled: input.mcpEnabled,
+        lock: values.lock ?? { mode: 'auto' },
       },
     })
     this.changed(input.connectionId)
@@ -601,6 +630,7 @@ export class TableAccessService {
           display_template: values.displayTemplate,
           api_resource: values.apiResource,
           mcp_enabled: input.mcpEnabled ? 1 : 0,
+          ...(values.lock !== undefined && lockColumns(values.lock)),
           updated_at: this.clock(),
         })
         .where('id', '=', id)
@@ -616,6 +646,7 @@ export class TableAccessService {
       'apiResource',
       'mcpEnabled',
       'exclusions',
+      'lock',
     ] as const) {
       if (JSON.stringify(before[field]) !== JSON.stringify(after[field])) {
         changes[field] = [before[field], after[field]]

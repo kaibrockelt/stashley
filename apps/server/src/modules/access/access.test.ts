@@ -3,7 +3,7 @@
 import type {
   Navigation,
   PageDetail,
-  PageDocument,
+  PageDocumentInput,
   PermissionEntry,
   Query,
   RenderPage,
@@ -96,7 +96,7 @@ function access(w: World, name: string): TableAccess {
   return entry
 }
 
-function kassePage(w: World): PageDocument {
+function kassePage(w: World): PageDocumentInput {
   const zahlung = access(w, 'zahlung').id
   return {
     schemaVersion: 1,
@@ -159,7 +159,7 @@ function kassePage(w: World): PageDocument {
 }
 
 /** A hotel's guest page: bookings of its own contingents only (§ Gästeseiten). */
-function guestPage(w: World, hotelId: number, roleId: string, title: string): PageDocument {
+function guestPage(w: World, hotelId: number, roleId: string, title: string): PageDocumentInput {
   const buchung = access(w, 'hotelbuchung').id
   return {
     schemaVersion: 1,
@@ -216,7 +216,7 @@ function guestPage(w: World, hotelId: number, roleId: string, title: string): Pa
 async function createPage(
   w: World,
   slug: string,
-  document: PageDocument,
+  document: PageDocumentInput,
   publish = true,
 ): Promise<PageDetail> {
   const created = await w.manager.send('POST', '/internal/design/pages', {
@@ -258,7 +258,7 @@ describe('manager limits (§8.6)', () => {
     ).json<PageDetail>()
     const base = kassePage(w)
     const zahlung = access(w, 'zahlung').id
-    const attempt = async (document: PageDocument) => {
+    const attempt = async (document: PageDocumentInput) => {
       const response = await saveDraft(w.manager, page.id, page.draftRevision, document)
       expect(response.statusCode).toBe(422)
       return problem(response).errors

@@ -148,6 +148,7 @@ export function SelectField<K extends string>(props: {
   onChange: (value: K) => void
   options: { id: K; label: string }[]
   error?: string | undefined
+  description?: string | undefined
   /** The label is read by screen readers only, e.g. in a table row. */
   isLabelHidden?: boolean
 }) {
@@ -169,6 +170,11 @@ export function SelectField<K extends string>(props: {
           ▾
         </span>
       </AriaButton>
+      {props.description !== undefined && (
+        <Text slot="description" className={styles.description}>
+          {props.description}
+        </Text>
+      )}
       <FieldError className={styles.error}>{props.error}</FieldError>
       <Popover className={styles.popover}>
         <ListBox className={styles.listbox}>
