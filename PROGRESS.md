@@ -229,3 +229,4 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - E3: Builder queries store the spec and the SQL. Converting to SQL drops the spec from the next version on; the way back is an older version.
   - E4: The awards criterion is met in M5 with the table of medal candidates. The form "record award" can be placed as a block with table and mode; its fields follow in M6.
   - E5: Column role overrides (for example a number used as a dimension) live per block in its settings, not on the query.
+- 2026-11-15: The operator delivered a provisional app icon (`stashley-icon.svg` and `.png`, outside the repo). It replaces the placeholder in `apps/web/src/brand/` and the favicon when it fits, at the latest in M9 or after the MVP. Check the SVG's size (143 KB) against the bundle budget before inlining it.
