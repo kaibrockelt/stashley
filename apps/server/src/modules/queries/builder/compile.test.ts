@@ -365,6 +365,29 @@ describe('query builder compiler', () => {
     ])
   })
 
+  it('takes list parameters only for in and not in', () => {
+    const lists = new Map([
+      ['states', true],
+      ['state', false],
+    ])
+    const filter = (operator: 'eq' | 'in', name: string) => ({
+      source: 'base',
+      column: 'status',
+      operator,
+      value: { kind: 'parameter' as const, name },
+    })
+    const context = { ...ctx, parameterLists: lists }
+    expect(errors({ filters: [filter('in', 'states'), filter('eq', 'state')] }, context)).toEqual(
+      [],
+    )
+    expect(errors({ filters: [filter('eq', 'states'), filter('in', 'state')] }, context)).toEqual([
+      { field: 'builder.filters.0.value', code: 'list_not_allowed' },
+      { field: 'builder.filters.1.value', code: 'list_expected' },
+    ])
+    // Undefined names are left to the parameter check, instance variables to the server.
+    expect(errors({ filters: [filter('eq', 'other')] }, context)).toEqual([])
+  })
+
   it('keeps hostile constants inside their literals', () => {
     const compiled = compileSpec(
       spec({

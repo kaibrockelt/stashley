@@ -83,6 +83,8 @@ const errorTexts: Record<string, MessageId> = {
   not_numeric: 'builder.error.not_numeric',
   not_allowed: 'builder.error.not_allowed',
   invalid: 'builder.error.invalid',
+  list_expected: 'builder.error.list_expected',
+  list_not_allowed: 'builder.error.list_not_allowed',
 }
 
 const countAll = '*'

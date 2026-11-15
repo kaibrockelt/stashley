@@ -847,6 +847,8 @@
   "builder.error.not_numeric": "Summe und Durchschnitt brauchen eine Zahlenspalte.",
   "builder.error.not_allowed": "Dieser Vergleich hat keinen Wert.",
   "builder.error.invalid": "Der Wert passt nicht zum Vergleich.",
+  "builder.error.list_expected": "„ist einer von“ braucht einen Parameter, der eine Liste nimmt.",
+  "builder.error.list_not_allowed": "Dieser Vergleich nimmt einen einzelnen Wert, der Parameter ist aber eine Liste.",
   "preview.nothing": "Mit diesen Rechten ist auf der Seite nichts sichtbar.",
   "page.nothingForYou": "Deine Fachrollen dürfen keinen Block dieser Seite lesen. Admins und Manager sehen jede Seite, Blöcke aber nur mit den Rechten einer Fachrolle. Die Vorschau als Fachrolle zeigt die Seite so, wie ihre Benutzer sie sehen."
 }

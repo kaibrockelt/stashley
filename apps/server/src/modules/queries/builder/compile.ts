@@ -44,6 +44,8 @@ export interface BuilderContext {
   timeZone: string
   /** The server has time zone tables, so TIMESTAMP values can be converted for buckets. */
   timeZoneTables: boolean
+  /** Defined parameters and whether each takes a list; a list fits only `in` and `not_in`. */
+  parameterLists?: ReadonlyMap<string, boolean>
 }
 
 export type BuilderNote = 'timestamp_buckets_utc'
@@ -239,6 +241,14 @@ export function compileSpec(spec: QuerySpec, ctx: BuilderContext): CompiledSpec 
     if (value === undefined) {
       fail(`${field}.value`, 'required')
       return
+    }
+    if (value.kind === 'parameter') {
+      const list = ctx.parameterLists?.get(value.name)
+      const wantsList = filter.operator === 'in' || filter.operator === 'not_in'
+      if (list !== undefined && list !== wantsList) {
+        fail(`${field}.value`, wantsList ? 'list_expected' : 'list_not_allowed')
+        return
+      }
     }
     const parameter = value.kind === 'parameter' ? sql.raw(`:${value.name}`) : undefined
     const constant = value.kind === 'constant' ? value.value : undefined

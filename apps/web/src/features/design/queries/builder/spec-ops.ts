@@ -394,21 +394,29 @@ export function specParameters(
   return out
 }
 
-/** Definitions for the spec's parameters: existing ones stay, new ones take their column's type. */
+/**
+ * Definitions for the spec's parameters: existing ones keep their type, requirement and
+ * default, new ones take their column's type. The list form always follows the operator, and
+ * a default that no longer fits it is dropped.
+ */
 export function syncSpecDefinitions(
   definitions: readonly QueryParameter[],
   wanted: readonly { name: string; type: ParamType; list: boolean }[],
 ): QueryParameter[] {
-  return wanted.map(
-    (entry) =>
-      definitions.find((definition) => definition.name === entry.name) ?? {
+  return wanted.map((entry) => {
+    const existing = definitions.find((definition) => definition.name === entry.name)
+    if (existing === undefined) {
+      return {
         name: entry.name,
         type: entry.type,
         list: entry.list,
         required: false,
         defaultValue: null,
-      },
-  )
+      }
+    }
+    if (existing.list === entry.list) return existing
+    return { ...existing, list: entry.list, defaultValue: null }
+  })
 }
 
 type Scalar = string | number | boolean

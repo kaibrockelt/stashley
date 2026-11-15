@@ -218,6 +218,7 @@ export class QueriesService {
   async toSql(
     connectionId: string,
     source: QuerySource,
+    definitions: readonly QueryParameter[] = [],
   ): Promise<{ sql: string; builder: StoredBuilder | null }> {
     if (source.builder === undefined) return { sql: source.sql ?? '', builder: null }
     const spec = source.builder
@@ -246,6 +247,9 @@ export class QueriesService {
         relations,
         timeZone: connection.timezone,
         timeZoneTables: needsZones ? await this.timeZoneTables(connectionId) : true,
+        parameterLists: new Map(
+          definitions.map((definition) => [definition.name, definition.list]),
+        ),
       })
       return { sql: compiled.sql, builder: { spec, notes: compiled.notes } }
     } catch (error) {
@@ -528,7 +532,7 @@ export class QueriesService {
 
   async create(actor: Actor, input: CreateInput): Promise<Query> {
     await this.ensureNameFree(input.name)
-    const { sql, builder } = await this.toSql(input.connectionId, input)
+    const { sql, builder } = await this.toSql(input.connectionId, input, input.parameters)
     const { analysis, executable } = await this.validate(input.connectionId, sql, input.parameters)
     const id = uuidv7()
     const now = this.clock()
@@ -597,12 +601,12 @@ export class QueriesService {
           : storedBuilder === null
             ? { sql: current.sql_text }
             : { builder: storedBuilder.spec }
+    const parameters = input.parameters ?? (JSON.parse(current.parameters) as QueryParameter[])
     const { sql, builder } =
       input.sql === undefined && input.builder === undefined
         ? { sql: current.sql_text, builder: storedBuilder }
-        : await this.toSql(row.connection_id, source)
+        : await this.toSql(row.connection_id, source, parameters)
     const mode = builder === null ? 'sql' : 'builder'
-    const parameters = input.parameters ?? (JSON.parse(current.parameters) as QueryParameter[])
     const builderText = builder === null ? null : JSON.stringify(builder)
     const versioned =
       sql !== current.sql_text ||
@@ -687,7 +691,7 @@ export class QueriesService {
     user: { id: string; email: string },
     input: z.infer<typeof queryTestRun>,
   ): Promise<QueryResult & { durationMs: number }> {
-    const { sql } = await this.toSql(input.connectionId, input)
+    const { sql } = await this.toSql(input.connectionId, input, input.parameters)
     const { analysis, executable } = await this.validate(input.connectionId, sql, input.parameters)
     const target = await this.deps.executor.target(input.connectionId)
     let resolved

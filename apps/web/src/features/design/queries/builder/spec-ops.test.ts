@@ -333,6 +333,11 @@ describe('filters and parameters', () => {
       kept,
       { name: 'states', type: 'string', list: true, required: false, defaultValue: null },
     ])
+    // Switching `in` to `eq` turns the list into a single value and drops the list default.
+    const list = { ...kept, name: 'states', list: true, defaultValue: ['a', 'b'] }
+    expect(syncSpecDefinitions([list], [{ name: 'states', type: 'string', list: false }])).toEqual([
+      { ...list, list: false, defaultValue: null },
+    ])
   })
 
   it('reads the target of server field errors', () => {
