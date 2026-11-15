@@ -10,27 +10,28 @@ import { Button } from '../../ui/controls.tsx'
 import controls from '../../ui/controls.module.css'
 import { modeFields, usePageContext } from './page-context.tsx'
 import styles from './workspace.module.css'
+import { useDebounced } from '../../ui/use-debounced.ts'
 
 type Filter = RenderPage['filters'][number]
 
-function useDebounced<T>(value: T, ms = 250): T {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), ms)
-    return () => clearTimeout(timer)
-  }, [value, ms])
-  return debounced
-}
-
 function TextFilter(props: { filter: Filter; value: unknown; onChange: (value: unknown) => void }) {
   const id = useId()
-  const [text, setText] = useState(typeof props.value === 'string' ? props.value : '')
+  const current = typeof props.value === 'string' ? props.value : ''
+  const [text, setText] = useState(current)
+  // The value last taken from or sent to the URL.
+  const [synced, setSynced] = useState(current)
+  if (current !== synced) {
+    // The URL changed from outside (back, forward, a link): the field follows it.
+    setSynced(current)
+    setText(current)
+  }
   const debounced = useDebounced(text)
-  const { onChange, value } = props
+  const { onChange } = props
   useEffect(() => {
-    if (debounced !== (typeof value === 'string' ? value : ''))
-      onChange(debounced === '' ? undefined : debounced)
-  }, [debounced, onChange, value])
+    // Only a settled entry of the user's own is sent.
+    if (debounced !== text || debounced === synced) return
+    onChange(debounced === '' ? undefined : debounced)
+  }, [debounced, text, synced, onChange])
   return (
     <div className={styles.filter}>
       <label htmlFor={id}>{props.filter.label}</label>

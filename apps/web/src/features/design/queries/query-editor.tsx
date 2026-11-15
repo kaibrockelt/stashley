@@ -12,7 +12,7 @@ import type {
 import { analyzeShape, paramTypes } from '@stashley/shared'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { api, ApiError } from '../../../api/client.ts'
 import { useErrorText } from '../../../i18n/errors.ts'
 import type { MessageId } from '../../../i18n/locale.ts'
@@ -45,6 +45,7 @@ import { parameterNames, syncDefinitions, testValue } from './param-values.ts'
 import { lineAndColumn, sqlProblemTexts } from './sql-problems.ts'
 import styles from './queries.module.css'
 import { ttlOptions, useTtlLabel } from './ttl.ts'
+import { useDebounced } from '../../../ui/use-debounced.ts'
 
 // CodeMirror is a lazy chunk (§22).
 const SqlEditor = lazy(() => import('./sql-editor-view.tsx'))
@@ -87,15 +88,6 @@ interface Validation {
 }
 
 type Mode = 'builder' | 'sql'
-
-function useDebounced<T>(value: T, ms: number): T {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), ms)
-    return () => clearTimeout(timer)
-  }, [value, ms])
-  return debounced
-}
 
 /** The SQL problem of a failed validation or run, with its position (§10.2). */
 function useSqlProblem() {

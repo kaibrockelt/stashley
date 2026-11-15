@@ -6,6 +6,7 @@ import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useT } from '../../../i18n/use-t.ts'
 import { Button } from '../../../ui/controls.tsx'
+import { useDebounced } from '../../../ui/use-debounced.ts'
 import { useNavigation } from '../api.ts'
 import { BlockFrame, BlockState, FreshnessLine, LimitHint } from './block-frame.tsx'
 import workspace from '../workspace.module.css'
@@ -36,9 +37,11 @@ export function TableBlock(props: { component: RenderComponent }) {
   const tableSource = component.sourceKind === 'table'
   const [sort, setSort] = useState(component.table?.sort ?? undefined)
   const [search, setSearch] = useState('')
+  // Every search is a read on the target database: wait until the user pauses typing.
+  const debouncedSearch = useDebounced(search.trim())
   const [cursors, setCursors] = useState<string[]>([])
   const pageSize = value.pageSize ?? component.table?.pageSize ?? 50
-  const options = { sort, search, cursor: cursors.at(-1), pageSize }
+  const options = { sort, search: debouncedSearch, cursor: cursors.at(-1), pageSize }
   const { query, refresh } = useComponentData<ComponentResult | TableResult>(component.id, options)
   const count = useComponentCount(component.id, options, tableSource)
   const slugs = usePageSlugs()
