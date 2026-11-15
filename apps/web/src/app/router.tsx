@@ -23,6 +23,7 @@ import {
 import { MfaChallenge, MfaRequiredSetup, Pending } from '../features/auth/mfa.tsx'
 import { SignIn } from '../features/auth/sign-in.tsx'
 import { Home } from '../features/workspace/home.tsx'
+import type { PageSearch } from '../features/workspace/page-view.tsx'
 import { useT } from '../i18n/use-t.ts'
 import { StateView } from '../ui/state.tsx'
 import styles from '../ui/state.module.css'
@@ -167,6 +168,13 @@ const designLayout = createRoute({
 
 const appRoutes = [
   createRoute({ getParentRoute: () => appLayout, path: '/', component: Home }),
+  createRoute({
+    getParentRoute: () => appLayout,
+    path: '/pages/$slug',
+    // Filter values and URL parameters are validated by the server against the page (§13.6).
+    validateSearch: (search: Record<string, unknown>): PageSearch => search,
+    component: lazyRouteComponent(() => import('../features/workspace/page-route.tsx'), 'PageRoute'),
+  }),
   createRoute({
     getParentRoute: () => appLayout,
     path: '/profile',

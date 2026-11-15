@@ -127,6 +127,9 @@ export interface RenderComponent {
   issues?: PageIssue[]
 }
 
+/** `Omit` per member of a union, so the members stay distinguishable. */
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
+
 export interface RenderPage {
   id: string
   slug: string
@@ -136,7 +139,7 @@ export interface RenderPage {
   mode: PageMode
   /** Published version, or null in edit and preview mode (the draft). */
   version: number | null
-  filters: Omit<PageFilter, 'source' | 'valueColumn' | 'labelColumn'>[]
+  filters: DistributiveOmit<PageFilter, 'source' | 'valueColumn' | 'labelColumn'>[]
   parameters: { name: string; type: string; list: boolean }[]
   rows: { id: string; layout: RowLayout; components: RenderComponent[] }[]
   table: RenderComponent | null

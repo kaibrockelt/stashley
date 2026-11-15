@@ -31,3 +31,10 @@ export function applyTheme(root: HTMLElement, theme: Theme): void {
   if (theme === 'system') root.removeAttribute('data-theme')
   else root.setAttribute('data-theme', theme)
 }
+
+/** The theme in effect: the `data-theme` attribute, or the system preference. */
+export function resolvedTheme(root: HTMLElement, prefersDark: boolean): 'light' | 'dark' {
+  const attribute = root.getAttribute('data-theme')
+  if (attribute === 'light' || attribute === 'dark') return attribute
+  return prefersDark ? 'dark' : 'light'
+}

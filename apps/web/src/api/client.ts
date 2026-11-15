@@ -7,9 +7,12 @@ export class ApiError extends Error {
   readonly code: ErrorCode
   readonly errors: FieldError[]
   readonly errorId: string | undefined
+  /** The whole problem document, e.g. the current draft of a `409` conflict. */
+  readonly body: Record<string, unknown>
 
   constructor(problem: ProblemDocument) {
     super(problem.title)
+    this.body = problem as unknown as Record<string, unknown>
     this.name = 'ApiError'
     this.status = problem.status
     this.code = problem.code
@@ -59,6 +62,7 @@ export async function api<T>(
   method: Method,
   url: string,
   body?: unknown,
+  headers: Record<string, string> = {},
   retry = true,
 ): Promise<T> {
   const response = await fetch(url, {
@@ -68,6 +72,7 @@ export async function api<T>(
       accept: 'application/json',
       ...(method !== 'GET' && { 'x-csrf-token': csrfToken }),
       ...(body !== undefined && { 'content-type': 'application/json' }),
+      ...headers,
     },
     ...(body !== undefined && { body: JSON.stringify(body) }),
   })
@@ -78,7 +83,7 @@ export async function api<T>(
   const error = await parseError(response)
   if (error.code === 'csrf_failed' && retry) {
     await fetchSession()
-    return api<T>(method, url, body, false)
+    return api<T>(method, url, body, headers, false)
   }
   throw error
 }
