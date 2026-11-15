@@ -889,7 +889,7 @@ function TableSourceFields(props: { block: Block; onBlock: (block: Block) => voi
         />
       )}
       <SelectField
-        label={t('editor.tableSource')}
+        label={t(block.type === 'form' ? 'editor.formSource' : 'editor.tableSource')}
         value={tableAccessId}
         onChange={choose}
         options={[
@@ -1144,7 +1144,11 @@ export function BlockDialog(props: {
               (block.type === 'table' && block.source.kind === 'table')) && (
               <TableSourceFields block={block} onBlock={setBlock} />
             )}
-            {unsetTable && <p className={styles.muted}>{t('editor.chooseTable')}</p>}
+            {unsetTable && (
+              <p className={styles.muted}>
+                {t(block.type === 'form' ? 'editor.chooseFormTable' : 'editor.chooseTable')}
+              </p>
+            )}
             {queryBlock && !unset && 'bindings' in block && (
               <BindingsFields
                 block={block}

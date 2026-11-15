@@ -337,6 +337,8 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
               setDocument(saved.draft)
               setBase(saved.draft)
               setRevision(saved.draftRevision)
+              // The problems of a rejected save no longer apply.
+              save.reset()
             }}
           >
             {t('editor.discard')}
