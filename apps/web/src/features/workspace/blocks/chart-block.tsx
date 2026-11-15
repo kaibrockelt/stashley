@@ -57,6 +57,7 @@ export function ChartBlock(props: { component: RenderComponent }) {
   const settings = parsed.ok ? parsed.value : undefined
   const result = query.data
   const labels = useChartLabels(result, settings)
+  const locale = useIntl().locale
   const prepared = useMemo(() => {
     if (settings === undefined || result === undefined) return undefined
     const roles = effectiveColumns(result.columns, settings.roles)
@@ -68,9 +69,9 @@ export function ChartBlock(props: { component: RenderComponent }) {
       prepared === undefined || settings === undefined
         ? undefined
         : buildOption(prepared, settings, chartPalettes[theme], labels),
-    // Labels depend on the locale and settings, which the other inputs already cover.
+    // Labels are new functions on every render; they change with the locale and settings.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [prepared, settings, theme],
+    [prepared, settings, theme, locale],
   )
 
   const footer = (
