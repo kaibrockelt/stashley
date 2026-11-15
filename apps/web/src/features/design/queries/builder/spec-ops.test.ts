@@ -38,6 +38,7 @@ const object = (
   name,
   type: 'table',
   keyColumn: 'id',
+  ceiling: ['read'],
   columns: columns.map(([column, kind]) => ({
     name: column,
     kind,

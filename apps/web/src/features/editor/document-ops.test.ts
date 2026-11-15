@@ -8,6 +8,7 @@ import {
   grantOf,
   moveBlock,
   newId,
+  offeredOps,
   removeBlock,
   removeRow,
   reorderBlocks,
@@ -162,5 +163,44 @@ describe('deleted roles (D15)', () => {
     expect(clean.access.view).toEqual(['authenticated', kept])
     expect(clean.access.grants.map((grant) => grant.principal)).toEqual([kept])
     expect(clean.rows[0]?.blocks[0]?.restrictions).toEqual([{ principal: kept, ops: [] }])
+  })
+})
+
+describe('offered rights (§8.2)', () => {
+  const tableAccessId = '0196f3a4-3333-7000-8000-000000000001'
+  const form = (id: string, mode: 'create' | 'edit'): Block => ({
+    id,
+    type: 'form',
+    title: id,
+    restrictions: [],
+    source: { kind: 'table', tableAccessId, cacheTtlSeconds: 0 },
+    mode,
+  })
+  const record = (id: string): Block => ({
+    id,
+    type: 'table',
+    title: id,
+    restrictions: [],
+    source: { kind: 'table', tableAccessId, cacheTtlSeconds: 0 },
+    bindings: [],
+    table: {
+      columns: [],
+      sort: null,
+      searchColumns: [],
+      baseFilter: [],
+      bindings: [],
+      pageSize: 50,
+    },
+  })
+
+  it('offers what the blocks on the source can do, within the ceiling', () => {
+    const page = addRow(emptyPage('dashboard', 'Ehrung'), record('b1'))
+    expect(offeredOps(page, record('b1'), undefined)).toEqual(['read'])
+    // The edited block replaces its saved version and adds its own capability.
+    expect(offeredOps(page, form('b2', 'edit'), undefined)).toEqual(['read', 'update'])
+    expect(offeredOps(page, form('b2', 'create'), ['read', 'update'])).toEqual(['read'])
+    expect(offeredOps(page, form('b1', 'create'), undefined)).toEqual(['create'])
+    expect(offeredOps(page, chart('b3'), undefined)).toEqual(['read'])
+    expect(offeredOps(page, text('b4'), undefined)).toEqual([])
   })
 })

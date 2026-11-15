@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { cacheTtl } from '../model/page.ts'
 import { querySpec, type QuerySpec } from '../model/query-spec.ts'
 import type { ValueKind } from '../values/column-kinds.ts'
+import type { TableOp } from './connections.ts'
 import { paramNamePattern, paramTypes, type ParamType } from '../values/params.ts'
 
 /**
@@ -196,6 +197,8 @@ export interface DesignCatalogObject {
   name: string
   type: 'table' | 'view'
   keyColumn: string | null
+  /** The permission ceiling: what pages may offer on this object at most. */
+  ceiling: TableOp[]
   /** Columns without those excluded for everyone. */
   columns: { name: string; kind: ValueKind; nullable: boolean; key: boolean }[]
 }

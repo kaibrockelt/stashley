@@ -505,6 +505,7 @@ export class QueriesService {
         keyColumn:
           access.keyColumn ??
           (object.primaryKey.length === 1 ? (object.primaryKey[0] ?? null) : null),
+        ceiling: access.ops,
         columns,
       })
     }

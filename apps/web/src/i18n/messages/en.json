@@ -619,6 +619,7 @@
   "editor.op.update": "Edit",
   "editor.op.delete": "Delete",
   "editor.hideHere": "Hidden here",
+  "editor.opNotOffered": "{op} (has no effect here)",
   "editor.everyone": "Everyone signed in",
   "editor.deletedRole": "Deleted role",
   "editor.deletedRoles": "{count, plural, one {The page names a deleted role} other {The page names # deleted roles}}. Their rights no longer take effect.",

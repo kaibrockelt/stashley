@@ -10,7 +10,7 @@ import type {
   Role,
   Section,
 } from '@stashley/shared'
-import { useQuery } from '@tanstack/react-query'
+import { useQueries as useParallelQueries, useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client.ts'
 
 /** Server state of the design area, shared by the page list, the editor and the query editor. */
@@ -79,6 +79,29 @@ export function useCatalog(connectionId: string | undefined) {
     enabled: connectionId !== undefined && connectionId !== '',
     staleTime: 60_000,
   })
+}
+
+/**
+ * The exposed object behind a table access, searched across the catalogs of every
+ * connection, with the connection it belongs to.
+ */
+export function useTableObject(tableAccessId: string | undefined) {
+  const connections = useDesignConnections()
+  const catalogs = useParallelQueries({
+    queries: (connections.data ?? []).map((connection) => ({
+      queryKey: designKeys.catalog(connection.id),
+      queryFn: () => api<DesignCatalog>('GET', `/internal/design/catalog/${connection.id}`),
+      staleTime: 60_000,
+      enabled: tableAccessId !== undefined,
+    })),
+  })
+  for (const catalog of catalogs) {
+    const object = catalog.data?.objects.find((entry) => entry.tableAccessId === tableAccessId)
+    if (object !== undefined && catalog.data !== undefined)
+      return { object, connectionId: catalog.data.connectionId, loading: false }
+  }
+  const loading = connections.isPending || catalogs.some((catalog) => catalog.isPending)
+  return { object: undefined, connectionId: undefined, loading }
 }
 
 export function useVariables() {

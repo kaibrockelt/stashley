@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { TableOp } from '../api/connections.ts'
+import type { Block } from '../model/page.ts'
 
 /**
  * The access algebra (architecture §8). Pure functions over bitmasks; the server's `access`
@@ -164,6 +165,19 @@ export type ComponentKind =
   | { type: 'table'; editing?: OpMask }
   | { type: 'form'; mode: 'create' | 'edit' | 'upsert' }
   | { type: 'text' }
+
+/** How access control sees a block of a page document. */
+export function componentKindOf(block: Block): ComponentKind {
+  switch (block.type) {
+    case 'form':
+      return { type: 'form', mode: block.mode }
+    case 'table':
+      // Editing operations of table sources arrive with M6.
+      return { type: 'table' }
+    default:
+      return { type: block.type }
+  }
+}
 
 /** capability(k): what a component can do at all (§8.2). */
 export function capabilityOf(kind: ComponentKind): OpMask {

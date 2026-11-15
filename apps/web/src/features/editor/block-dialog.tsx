@@ -46,9 +46,10 @@ import {
   useQueries,
   useQueryDetail,
   useRoles,
+  useTableObject,
 } from '../design/design-api.ts'
 import { renderMarkdown } from '../workspace/blocks/text-block.tsx'
-import { grantOf, setGrant, sourceKeyOf, withDescription } from './document-ops.ts'
+import { grantOf, offeredOps, setGrant, sourceKeyOf, withDescription } from './document-ops.ts'
 import styles from './editor.module.css'
 
 type BlockType = Block['type']
@@ -97,6 +98,8 @@ const formatLabels: Record<ColumnFormat['kind'] | 'auto', MessageId> = {
   datetime: 'editor.format.datetime',
   relative: 'editor.format.relative',
 }
+
+const tableOpOrder: readonly TableOp[] = ['read', 'create', 'update', 'delete']
 
 const opLabels: Record<TableOp, MessageId> = {
   read: 'editor.op.read',
@@ -701,13 +704,15 @@ function RightsFields(props: {
       ? t('editor.everyone')
       : (roles.data?.find((role) => role.id === principal)?.name ??
         (roles.data === undefined ? principal : t('editor.deletedRole')))
+  const table =
+    props.block.type !== 'text' && props.block.source.kind === 'table'
+      ? props.block.source.tableAccessId
+      : undefined
+  const object = useTableObject(table === undefined || table === unsetId ? undefined : table)
   const viewers = props.document.access.view
   if (viewers.length === 0) return <Notice tone="info">{t('editor.noViewers')}</Notice>
   if (source === undefined) return <p className={styles.muted}>{t('editor.textRights')}</p>
-  const ops: TableOp[] =
-    props.block.type !== 'text' && props.block.source.kind === 'table'
-      ? ['read', 'create', 'update', 'delete']
-      : ['read']
+  const offered = offeredOps(props.document, props.block, object.object?.ceiling)
   return (
     <fieldset className={styles.fieldset}>
       <legend>{t('editor.rights')}</legend>
@@ -715,13 +720,19 @@ function RightsFields(props: {
       {viewers.map((principal) => {
         const granted = grantOf(props.document, principal, source)
         const restricted = props.block.restrictions.some((entry) => entry.principal === principal)
+        // Granted operations beyond what is offered stay visible, so they can be removed.
+        const ops = tableOpOrder.filter((op) => offered.includes(op) || granted.includes(op))
         return (
           <div key={principal} className={styles.rightsRow}>
             <strong>{name(principal)}</strong>
             {ops.map((op) => (
               <CheckboxField
                 key={op}
-                label={t(opLabels[op])}
+                label={
+                  offered.includes(op)
+                    ? t(opLabels[op])
+                    : t('editor.opNotOffered', { op: t(opLabels[op]) })
+                }
                 isSelected={granted.includes(op)}
                 onChange={(selected) =>
                   props.onDocument(
@@ -819,12 +830,23 @@ function TableSourceFields(props: { block: Block; onBlock: (block: Block) => voi
   const t = useT()
   const connections = useDesignConnections()
   const block = props.block
-  const [connectionId, setConnectionId] = useState<string>(connections.data?.[0]?.id ?? none)
+  const tableAccessId =
+    block.type !== 'text' && block.source.kind === 'table' ? block.source.tableAccessId : none
+  // An existing source opens on its own connection.
+  const current = useTableObject(
+    tableAccessId === none || tableAccessId === unsetId ? undefined : tableAccessId,
+  )
+  const [connectionId, setConnectionId] = useState<string>(none)
   const effectiveConnection =
-    connectionId === none ? (connections.data?.[0]?.id ?? none) : connectionId
+    connectionId !== none
+      ? connectionId
+      : (current.connectionId ?? connections.data?.[0]?.id ?? none)
   const catalog = useCatalog(effectiveConnection === none ? undefined : effectiveConnection)
   if (block.type !== 'table' && block.type !== 'form') return null
-  const tableAccessId = block.source.kind === 'table' ? block.source.tableAccessId : none
+  // Views are read only, so forms do not offer them (the issue `view_read_only` stays).
+  const choices = (catalog.data?.objects ?? []).filter(
+    (entry) => block.type !== 'form' || entry.type !== 'view',
+  )
   const object = catalog.data?.objects.find((entry) => entry.tableAccessId === tableAccessId)
   const choose = (id: string) => {
     const chosen = catalog.data?.objects.find((entry) => entry.tableAccessId === id)
@@ -872,7 +894,7 @@ function TableSourceFields(props: { block: Block; onBlock: (block: Block) => voi
         onChange={choose}
         options={[
           { id: none, label: t('editor.choose') },
-          ...(catalog.data?.objects ?? []).map((entry) => ({
+          ...choices.map((entry) => ({
             id: entry.tableAccessId,
             label: entry.name,
           })),

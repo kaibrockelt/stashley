@@ -17,6 +17,7 @@ import type {
 import {
   authenticatedPrincipal,
   capabilityOf,
+  componentKindOf,
   componentsOf,
   grantsAboveCeiling,
   hasOp,
@@ -116,18 +117,6 @@ export interface CompileDeps {
 }
 
 const read = opBits.read
-
-function kindOf(block: Block): ComponentKind {
-  switch (block.type) {
-    case 'form':
-      return { type: 'form', mode: block.mode }
-    case 'table':
-      // Editing operations of table sources arrive with M6.
-      return { type: 'table' }
-    default:
-      return { type: block.type }
-  }
-}
 
 class PageCompiler {
   readonly issues: PageIssue[] = []
@@ -317,7 +306,7 @@ export async function compilePage(input: PageInput, deps: CompileDeps): Promise<
   for (const { component: block, path } of componentsOf(document)) {
     if (ids.has(block.id)) compiler.issue(`${path}.id`, 'duplicate')
     ids.add(block.id)
-    const kind = kindOf(block)
+    const kind = componentKindOf(block)
     const capability = capabilityOf(kind)
     let compiled:
       | { source: CompiledQuerySource | CompiledTableSource; ceiling: OpMask; dbGrants: OpMask }

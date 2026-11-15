@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
+import { capabilityOf, componentKindOf, noOps, toMask, toOps } from '@stashley/shared'
 import type { Block, DashboardRowInput, PageDocument, TableOp } from './types.ts'
 import { layoutsFor } from '../workspace/grid-layout.ts'
 
@@ -197,6 +198,28 @@ export function grantOf(document: PageDocument, principal: string, source: strin
     document.access.grants.find((grant) => grant.principal === principal && grant.source === source)
       ?.ops ?? []
   )
+}
+
+/**
+ * Operations the rights of `block`'s source can usefully grant (§8.2): what the blocks of the
+ * page that use this source can do, within the source's ceiling. `block` is the edited
+ * version and replaces its saved one; an unknown ceiling limits nothing.
+ */
+export function offeredOps(
+  document: PageDocument,
+  block: Block,
+  ceiling: readonly TableOp[] | undefined,
+): TableOp[] {
+  const source = sourceKeyOf(block)
+  if (source === undefined) return []
+  const users = [
+    ...blocksOf(document).filter((entry) => entry.id !== block.id && sourceKeyOf(entry) === source),
+    block,
+  ]
+  let mask = noOps
+  for (const entry of users) mask |= capabilityOf(componentKindOf(entry))
+  if (ceiling !== undefined) mask &= toMask(ceiling)
+  return toOps(mask)
 }
 
 export function setGrant(

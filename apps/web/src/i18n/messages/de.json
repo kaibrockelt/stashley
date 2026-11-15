@@ -619,6 +619,7 @@
   "editor.op.update": "Ändern",
   "editor.op.delete": "Löschen",
   "editor.hideHere": "Hier ausblenden",
+  "editor.opNotOffered": "{op} (wirkt hier nicht)",
   "editor.everyone": "Alle angemeldeten",
   "editor.deletedRole": "Gelöschte Fachrolle",
   "editor.deletedRoles": "{count, plural, one {Die Seite nennt eine gelöschte Fachrolle} other {Die Seite nennt # gelöschte Fachrollen}}. Ihre Rechte wirken nicht mehr.",

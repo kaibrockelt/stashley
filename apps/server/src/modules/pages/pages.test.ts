@@ -246,6 +246,10 @@ describe('design catalog', () => {
     const hotel = catalog.objects.find((object) => object.name === 'hotel')
     expect(hotel?.columns.map((column) => column.name)).not.toContain('kontakt_email')
     expect(hotel?.columns.find((column) => column.name === 'id')?.key).toBe(true)
+    // The ceiling comes along, so the editor offers only rights it allows (views read only).
+    expect(catalog.objects.find((object) => object.name === 'v_zahlungsstatus')?.ceiling).toEqual([
+      'read',
+    ])
     expect(catalog.relations).toContainEqual(
       expect.objectContaining({ sourceObject: 'anmeldung', targetObject: 'person' }),
     )
