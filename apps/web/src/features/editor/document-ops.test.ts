@@ -136,8 +136,8 @@ describe('deleted roles (D15)', () => {
     const base = addRow(emptyPage('dashboard', 'Kasse'), {
       ...chart('b1'),
       restrictions: [
-        { principal: gone as never, ops: [] },
-        { principal: kept as never, ops: [] },
+        { principal: gone, ops: [] },
+        { principal: kept, ops: [] },
       ],
     })
     return {
@@ -145,8 +145,8 @@ describe('deleted roles (D15)', () => {
       access: {
         view: ['authenticated', kept, gone] as never,
         grants: [
-          { principal: kept as never, source: source as never, ops: ['read'] },
-          { principal: gone as never, source: source as never, ops: ['read'] },
+          { principal: kept, source: source, ops: ['read'] },
+          { principal: gone, source: source, ops: ['read'] },
         ],
       },
     }

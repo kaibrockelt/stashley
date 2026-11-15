@@ -31,7 +31,7 @@ import {
   setRowLayout,
 } from './document-ops.ts'
 import styles from './editor.module.css'
-import { IssueList, issuesAt } from './issues.tsx'
+import { IssueList, issuesAt, issuesOf } from './issues.tsx'
 import { PageSettingsDialog } from './page-settings-dialog.tsx'
 import { VersionsDialog } from './versions-dialog.tsx'
 import { PreviewRolesDialog } from '../workspace/preview-bar.tsx'
@@ -82,8 +82,12 @@ function PublishDialog(props: {
       isOpen
       onOpenChange={(open) => !open && props.onClose()}
     >
-      {errors.message(props.error) !== undefined && (
-        <Notice tone="error">{errors.message(props.error)}</Notice>
+      {props.error instanceof ApiError && props.error.errors.length > 0 ? (
+        <IssueList issues={issuesOf(props.error.errors)} document={props.document} />
+      ) : (
+        errors.message(props.error) !== undefined && (
+          <Notice tone="error">{errors.message(props.error)}</Notice>
+        )
       )}
       <p>{t('editor.publish.text')}</p>
       {ids.size > 0 && (
@@ -345,20 +349,16 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
         {dirty && <Notice tone="info">{t('editor.dirty')}</Notice>}
         {published && !dirty && <Notice tone="success">{t('editor.published')}</Notice>}
       </div>
-      {save.error !== null && !(save.error instanceof ApiError && save.error.status === 409) && (
-        <Notice tone="error">
-          {errors.message(save.error) ?? t('error.generic')}
-          {save.error instanceof ApiError && save.error.errors.length > 0 && (
-            <ul className={styles.issues}>
-              {save.error.errors.map((error, index) => (
-                <li key={index}>
-                  <code>{error.field}</code>: {error.code}
-                </li>
-              ))}
-            </ul>
-          )}
-        </Notice>
-      )}
+      {save.error !== null &&
+        !(save.error instanceof ApiError && save.error.status === 409) &&
+        (save.error instanceof ApiError && save.error.errors.length > 0 ? (
+          <>
+            <Notice tone="error">{t('editor.saveRejected')}</Notice>
+            <IssueList issues={issuesOf(save.error.errors)} document={document} />
+          </>
+        ) : (
+          <Notice tone="error">{errors.message(save.error) ?? t('error.generic')}</Notice>
+        ))}
       <IssueList issues={pageIssues} />
 
       {document.kind === 'table' ? (

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { PageIssue } from '@stashley/shared'
+import type { FieldError, PageDocument, PageIssue } from '@stashley/shared'
+import { componentsOf } from '@stashley/shared'
 import type { MessageId } from '../../i18n/locale.ts'
 import { useT } from '../../i18n/use-t.ts'
 import { Notice } from '../../ui/controls.tsx'
@@ -43,10 +44,37 @@ export function issuesAt(issues: readonly PageIssue[], prefix: string): PageIssu
   return issues.filter((issue) => issue.path === prefix || issue.path.startsWith(`${prefix}.`))
 }
 
-export function IssueList(props: { issues: readonly PageIssue[] }) {
+/** Field errors of a rejected save or publish, as issues (§8.6). */
+export function issuesOf(errors: readonly FieldError[]): PageIssue[] {
+  return errors.map((error) => ({
+    path: error.field,
+    code: error.code,
+    severity: 'error',
+    ...(error.params !== undefined && { params: error.params }),
+  }))
+}
+
+/** The title of the block an issue lies in, or undefined for page-wide issues. */
+export function blockOf(document: PageDocument, path: string): string | undefined {
+  const entry = componentsOf(document).find(
+    (candidate) => path === candidate.path || path.startsWith(`${candidate.path}.`),
+  )
+  return entry === undefined ? undefined : entry.component.title || entry.component.id
+}
+
+export function IssueList(props: {
+  issues: readonly PageIssue[]
+  /** Names the block of each issue, for lists that cover the whole page. */
+  document?: PageDocument
+}) {
   const t = useT()
   const text = useIssueText()
   if (props.issues.length === 0) return null
+  const where = (issue: PageIssue) => {
+    if (props.document === undefined) return ''
+    const block = blockOf(props.document, issue.path)
+    return block === undefined ? '' : `${t('issue.inBlock', { title: block })} `
+  }
   const errors = props.issues.filter((issue) => issue.severity === 'error')
   return (
     <Notice tone={errors.length > 0 ? 'error' : 'info'}>
@@ -54,6 +82,7 @@ export function IssueList(props: { issues: readonly PageIssue[] }) {
         {props.issues.map((issue, index) => (
           <li key={`${issue.path}:${issue.code}:${index}`}>
             <strong>{issue.severity === 'error' ? t('issue.error') : t('issue.warning')}:</strong>{' '}
+            {where(issue)}
             {text(issue)}
           </li>
         ))}
