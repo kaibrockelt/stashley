@@ -1,8 +1,8 @@
 # Progress
 
-**Current milestone:** M6 – Forms and table pages (open)
+**Current milestone:** M6 – Forms and table pages (in progress)
 
-**Next step:** Plan M6 – forms and table pages – in a fresh session; start with the review of the write user's column limits (see log 2026-11-15).
+**Next step:** M6 step 1, column grants of the write user (plan approved 2026-11-15, see log).
 
 **Recommended model strength:** M6: medium (write path and base filters: high).
 
@@ -18,7 +18,7 @@ The SQL validation of M4 is tested externally; that does not block M6.
 | M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | Done |
 | M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Done |
 | M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | Done |
-| M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | Open |
+| M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | In progress |
 | M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High | Open |
 | M8 | MCP server: authorization server, metadata, tools, MCP exposure, privacy notice, call log | High | Open |
 | M9 | Demo scenario and acceptance: seed script, configuration export and import, end-to-end suite, accessibility, performance, documentation, release pipeline | Medium (final review: high) | Open |
@@ -297,3 +297,18 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Verified: typecheck, lint, SPDX, i18n (860 keys); 559 server, 63 shared and 62 web unit tests; 160 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7; initial load 193.4 KB gzip. In the browser with a temporary query and page (removed afterwards): `?f.f1=AT` shows the label of AT; a donut with the categories `{fat|Rich}` and `Wert {d}` shows both unchanged.
   - Seen, not changed: donut labels show the share with ECharts' own number format ("62.5 %"), not the locale's ("62,5 %").
   - For M6, if it fits, otherwise after the MVP (operator, 2026-11-15): donut labels format the share through the locale. The label formatter in `apps/web/src/features/workspace/blocks/chart-options.ts` uses the template `'{b}: {d} %'`; a formatter function with `labels.percent` (as the other charts do) fixes it.
+- 2026-11-15: M6 started. Review of the write user's column limits, tried on MariaDB 12.3 and MySQL 9.7 with column-level `INSERT` and `UPDATE` only:
+  - An `INSERT` naming granted columns works; the others get their defaults. `ON UPDATE CURRENT_TIMESTAMP` sets `updated_at` without a privilege on it. `version = version + 1` and `SELECT … FOR UPDATE` work with column privileges.
+  - Writing any other column (an excluded one, `updated_at` or `id` named explicitly) fails with error 1143 on both engines.
+  - Result: column grants are not needed before forms write data. The write path writes only a component's writable fields, its row schema is strict, and excluded columns cannot be configured, so column grants are defense in depth. The other direction is needed: where a DBA sets column grants, writable fields must stay within them, or forms offer fields that fail with 1143.
+  - Limiting per component makes no sense: one write user serves every page, the union of fields changes with each publish, and the statements would be stale at once.
+  - Gaps found: an excluded `NOT NULL` column without default makes `create` impossible; the lock column must not be excluded.
+- 2026-11-15: M6 plan approved with E6–E13. Steps: column grants; field model and row schema in `shared`; compiled write models and issues; the write path with locking, base filters, upserts, error translation and simulation; foreign key option lists; runtime routes; CSV export; form block; table pages with inline editing and detail view; editor; the donut share; tests and browser check. Model strength high for steps 1, 3–6 and the integration tests, medium otherwise.
+  - E6: column grants are not a precondition for writes. Existing column grants limit writable fields (`grant_missing` per field). The write scope suggests column-level `INSERT` and `UPDATE` only on tables with exclusions (every other column that is not generated), table-level otherwise; nothing per component.
+  - E7: the lock column is detected (an integer `version`, otherwise an `updated_at` DATETIME or TIMESTAMP); admins can override or turn it off on the table access. Never an excluded column.
+  - E8: upserts use the primary key only when it is not auto-increment, otherwise a unique key without nullable columns. Auto-increment columns are never written.
+  - E9: base filters apply to forms in every mode: required for the upsert lookup, and new rows must meet them.
+  - E10: defaults from page filters and URL parameters come from the client, hidden or not. They prefill, they never restrict, and they pass the same checks. Only instance variables and the user context are set by the server.
+  - E11: inline editing saves per cell (one `PATCH` with the version token; Escape discards). The manager chooses inline, dialog or both per table. No bulk editing or bulk deletion in the MVP.
+  - E12: CSV export in UTF-8 with BOM; delimiter and decimal separator follow the user's format (`;` and `,` for German); dates ISO, date-times as wall times in `APP_TIMEZONE`; foreign keys as shown in the table. Text cells starting with `=`, `+`, `-`, `@`, tab or CR are defused; numeric columns stay numbers. At most 100,000 rows per export.
+  - E13: rows are deleted one at a time with confirmation, also in the detail view; cascades follow the database's `ON DELETE` rules.
