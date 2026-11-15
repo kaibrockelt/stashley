@@ -297,6 +297,10 @@ export interface AccessWarning {
     | 'excluded_column_readable'
     /** The write user may write more than the ceiling allows (`ops`). */
     | 'write_beyond_ceiling'
+    /** The write user may insert or update columns that are excluded for everyone. */
+    | 'excluded_column_writable'
+    /** A column excluded for everyone is required (NOT NULL without default): no row can be created. */
+    | 'excluded_column_required'
   ops?: TableOp[]
   columns?: string[]
 }
@@ -313,6 +317,8 @@ export interface UserScope {
   unexposedReadable: string[]
   /** Columns excluded for everyone that the user may still select, per object. */
   excludedReadable: { object: string; columns: string[] }[]
+  /** Write user only: columns excluded for everyone that it may still insert or update. */
+  excludedWritable: { object: string; columns: string[] }[]
   /** Write user only: write operations beyond the ceiling, also on objects without access. */
   writableBeyondCeiling: { object: string; ops: TableOp[] }[]
   /** `REVOKE` and `GRANT` statements for the user; empty without an account. */
@@ -342,6 +348,11 @@ export interface TableAccess {
   state: 'active' | 'pending_grants'
   /** Operations the database grants allow; the effective right is the smaller set. */
   grantedOps: TableOp[]
+  /**
+   * Columns the write user may insert and update; null where its privilege covers the whole
+   * object. Writable fields stay within them (E6).
+   */
+  writableColumns: { create: string[] | null; update: string[] | null }
   warnings: AccessWarning[]
   updatedAt: string
 }

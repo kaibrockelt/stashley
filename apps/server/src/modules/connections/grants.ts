@@ -414,19 +414,44 @@ export function objectPrivileges(report: GrantReport, object: string): Set<strin
 }
 
 /**
- * Whether a report lets the user select one column of an object: through a privilege on every
+ * Whether a report grants a privilege on one column of an object: through a privilege on every
  * database, the schema or the object, or a column privilege that names it. Column names
  * compare case-insensitively, like MySQL.
  */
-export function columnReadable(report: GrantReport, object: string, column: string): boolean {
-  const covers = (privileges: readonly string[]) =>
-    privileges.includes('SELECT') || privileges.includes('ALL PRIVILEGES')
-  if (covers(report.schemaPrivileges)) return true
-  const entry = report.objects.find((grant) => grant.object === object)
-  if (entry === undefined) return false
-  if (covers(entry.privileges)) return true
+export function columnPrivileged(
+  report: GrantReport,
+  object: string,
+  column: string,
+  privilege: 'SELECT' | 'INSERT' | 'UPDATE',
+): boolean {
+  const columns = privilegedColumns(report, object, privilege)
+  if (columns === null) return true
   const lower = column.toLowerCase()
-  return (entry.columns?.SELECT ?? []).some((name) => name.toLowerCase() === lower)
+  return columns.some((name) => name.toLowerCase() === lower)
+}
+
+/** Whether a report lets the user select one column of an object. */
+export function columnReadable(report: GrantReport, object: string, column: string): boolean {
+  return columnPrivileged(report, object, column, 'SELECT')
+}
+
+/**
+ * The columns of an object a privilege covers: null when it covers every column (granted on
+ * every database, the schema or the object), otherwise the columns of its column privileges,
+ * possibly none.
+ */
+export function privilegedColumns(
+  report: GrantReport,
+  object: string,
+  privilege: 'SELECT' | 'INSERT' | 'UPDATE',
+): string[] | null {
+  const covers = (privileges: readonly string[]) =>
+    privileges.includes(privilege) || privileges.includes('ALL PRIVILEGES')
+  if (covers(report.schemaPrivileges)) return null
+  const entry = report.objects.find((grant) => grant.object === object)
+  if (entry === undefined) return []
+  if (covers(entry.privileges)) return null
+  return [...(entry.columns?.[privilege] ?? [])]
 }
 
 function quoteRole(role: RoleName): string {

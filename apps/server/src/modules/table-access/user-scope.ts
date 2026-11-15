@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { CatalogObject, GrantReport, TableOp, UserScope } from '@stashley/shared'
-import { columnReadable, objectPrivileges } from '../connections/grants.ts'
+import { columnPrivileged, columnReadable, objectPrivileges } from '../connections/grants.ts'
 
 /**
  * The scope of the read and the write user (§9.4): what each may do beyond the table access,
@@ -12,10 +12,12 @@ import { columnReadable, objectPrivileges } from '../connections/grants.ts'
  * - Read user: `SELECT` on exposed objects with `read`, `SHOW VIEW` on views.
  * - Write user: `SELECT` on exposed objects with any operation, because writes check rows
  *   before and after, also through the joins of a base filter; `INSERT`, `UPDATE` and `DELETE`
- *   on tables as far as their ceiling allows. Column limits for writes follow with the write
- *   path (M6).
+ *   on tables as far as their ceiling allows.
  *
- * Excluded columns are left out of `SELECT` in both cases.
+ * Excluded columns are left out of `SELECT` in both cases, and out of the write user's `INSERT`
+ * and `UPDATE` (E6), which then name every other column that is not generated. Objects without
+ * exclusions keep privileges on the whole object, so new columns need no new statements, and
+ * nothing is limited per component: one write user serves every page.
  */
 
 export interface ExposedObject {
@@ -52,39 +54,49 @@ const writePrivileges: Record<'create' | 'update' | 'delete', string> = {
 }
 const writeOps = ['create', 'update', 'delete'] as const
 
-/** What an object should get: `SELECT` on all columns, some or none; view and write rights. */
+/**
+ * What an object should get: `SELECT` on all columns, some or none; view and write rights, with
+ * `INSERT` and `UPDATE` on all columns or the listed ones.
+ */
 interface Wanted {
   select: 'all' | string[] | null
   showView: boolean
   write: readonly ('create' | 'update' | 'delete')[]
+  writeColumns: 'all' | string[]
 }
+
+const columnOps = new Set(['INSERT', 'UPDATE'])
 
 function wantedFor(
   purpose: UserScopeInput['purpose'],
   entry: ExposedObject | undefined,
   object: CatalogObject,
 ): Wanted {
-  const none: Wanted = { select: null, showView: false, write: [] }
-  if (entry === undefined) return none
+  if (entry === undefined) return nothing
   const write =
     purpose === 'write' && entry.objectType === 'table'
       ? writeOps.filter((op) => entry.ops.includes(op))
       : []
   const reads = entry.ops.includes('read') || write.length > 0
-  if (!reads) return none
+  if (!reads) return nothing
   const excluded = new Set([...entry.excluded].map((column) => column.toLowerCase()))
-  const select =
+  const included = object.columns.filter((column) => !excluded.has(column.name.toLowerCase()))
+  const select = excluded.size === 0 ? ('all' as const) : included.map((column) => column.name)
+  const writeColumns =
     excluded.size === 0
       ? ('all' as const)
-      : object.columns
-          .map((column) => column.name)
-          .filter((name) => !excluded.has(name.toLowerCase()))
+      : included.filter((column) => !column.generated).map((column) => column.name)
   return {
     select: Array.isArray(select) && select.length === 0 ? null : select,
     showView: purpose === 'read' && entry.objectType === 'view',
-    write,
+    // Without a column to write, `INSERT` and `UPDATE` are left out.
+    write:
+      writeColumns.length === 0 ? write.filter((op) => writePrivileges[op] === 'DELETE') : write,
+    writeColumns,
   }
 }
+
+const nothing: Wanted = { select: null, showView: false, write: [], writeColumns: 'all' }
 
 export function userScope(input: UserScopeInput): UserScope {
   const { report, purpose } = input
@@ -92,6 +104,7 @@ export function userScope(input: UserScopeInput): UserScope {
     purpose,
     unexposedReadable: [],
     excludedReadable: [],
+    excludedWritable: [],
     writableBeyondCeiling: [],
     statements: [],
   }
@@ -112,7 +125,6 @@ export function userScope(input: UserScopeInput): UserScope {
       ...report.objects.map((grant) => grant.object),
     ]),
   ].sort()
-  const nothing: Wanted = { select: null, showView: false, write: [] }
   const target = (name: string) => wanted.get(name) ?? nothing
   const unexposedReadable = names.filter(
     (name) => target(name).select === null && objectPrivileges(report, name).has('SELECT'),
@@ -127,6 +139,23 @@ export function userScope(input: UserScopeInput): UserScope {
     }))
     .filter((entry) => entry.columns.length > 0)
     .sort((a, b) => a.object.localeCompare(b.object))
+  const excludedWritable =
+    purpose === 'read'
+      ? []
+      : input.exposed
+          .filter((entry) => wanted.has(entry.objectName) && entry.objectType === 'table')
+          .map((entry) => ({
+            object: entry.objectName,
+            columns: [...entry.excluded]
+              .filter((column) =>
+                (['INSERT', 'UPDATE'] as const).some((privilege) =>
+                  columnPrivileged(report, entry.objectName, column, privilege),
+                ),
+              )
+              .sort(),
+          }))
+          .filter((entry) => entry.columns.length > 0)
+          .sort((a, b) => a.object.localeCompare(b.object))
   const writableBeyondCeiling =
     purpose === 'read'
       ? []
@@ -157,6 +186,7 @@ export function userScope(input: UserScopeInput): UserScope {
   const narrowed = new Set([
     ...unexposedReadable,
     ...excludedReadable.map((entry) => entry.object),
+    ...excludedWritable.map((entry) => entry.object),
     ...writableBeyondCeiling.map((entry) => entry.object),
   ])
   const statements: string[] = []
@@ -185,12 +215,16 @@ export function userScope(input: UserScopeInput): UserScope {
     for (const grant of report.objects) {
       if (!narrowed.has(grant.object)) continue
       const wants = target(grant.object)
+      const wantsPrivilege = (privilege: string) =>
+        wants.write.some((op) => writePrivileges[op] === privilege)
+      // Whether the privilege may stay on the whole object.
       const keep = (privilege: string) =>
         privilege === 'SELECT'
           ? wants.select === 'all'
           : privilege === 'SHOW VIEW'
             ? wants.showView
-            : wants.write.some((op) => writePrivileges[op] === privilege)
+            : wantsPrivilege(privilege) &&
+              (!columnOps.has(privilege) || wants.writeColumns === 'all')
       if (grant.privileges.includes('ALL PRIVILEGES')) {
         statements.push(`REVOKE ALL PRIVILEGES ON ${on(grant.object)} FROM ${to};`)
       } else {
@@ -204,6 +238,9 @@ export function userScope(input: UserScopeInput): UserScope {
       const excluded = new Set(
         [...(exposed.get(grant.object)?.excluded ?? [])].map((column) => column.toLowerCase()),
       )
+      const writable = new Set(
+        wants.writeColumns === 'all' ? [] : wants.writeColumns.map((name) => name.toLowerCase()),
+      )
       for (const [privilege, columns] of Object.entries(grant.columns ?? {})) {
         if (!relevant.includes(privilege)) continue
         const revoke =
@@ -211,9 +248,11 @@ export function userScope(input: UserScopeInput): UserScope {
             ? columns.filter(
                 (column) => wants.select === null || excluded.has(column.toLowerCase()),
               )
-            : keep(privilege)
-              ? []
-              : columns
+            : !wantsPrivilege(privilege)
+              ? columns
+              : wants.writeColumns === 'all'
+                ? []
+                : columns.filter((column) => !writable.has(column.toLowerCase()))
         if (revoke.length > 0) {
           statements.push(
             `REVOKE ${privilege} (${revoke.map(identifier).join(', ')}) ON ${on(grant.object)} FROM ${to};`,
@@ -232,7 +271,14 @@ export function userScope(input: UserScopeInput): UserScope {
         parts.push(`SELECT (${wants.select.map(identifier).join(', ')})`)
       }
       if (wants.showView) parts.push('SHOW VIEW')
-      for (const op of wants.write) parts.push(writePrivileges[op])
+      for (const op of wants.write) {
+        const privilege = writePrivileges[op]
+        parts.push(
+          columnOps.has(privilege) && wants.writeColumns !== 'all'
+            ? `${privilege} (${wants.writeColumns.map(identifier).join(', ')})`
+            : privilege,
+        )
+      }
       statements.push(`GRANT ${parts.join(', ')} ON ${on(object.name)} TO ${to};`)
     }
   }
@@ -242,6 +288,7 @@ export function userScope(input: UserScopeInput): UserScope {
     account,
     unexposedReadable,
     excludedReadable,
+    excludedWritable,
     writableBeyondCeiling,
     statements,
     notes,

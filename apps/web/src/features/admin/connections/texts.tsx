@@ -83,6 +83,8 @@ const accessWarningLabels: Record<AccessWarning['code'], MessageId> = {
   view_key_nullable: 'access.warning.viewKeyNullable',
   excluded_column_readable: 'access.warning.excludedColumnReadable',
   write_beyond_ceiling: 'access.warning.writeBeyondCeiling',
+  excluded_column_writable: 'access.warning.excludedColumnWritable',
+  excluded_column_required: 'access.warning.excludedColumnRequired',
 }
 
 const impactLabels: Record<ImpactItem['kind'], MessageId> = {

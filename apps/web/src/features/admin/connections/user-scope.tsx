@@ -55,7 +55,10 @@ export function UserScopePanel(props: { connectionId: string; purpose: UserScope
   if (data === undefined) return null
   const label = texts[data.purpose]
   const findings =
-    data.unexposedReadable.length + data.excludedReadable.length + data.writableBeyondCeiling.length
+    data.unexposedReadable.length +
+    data.excludedReadable.length +
+    data.excludedWritable.length +
+    data.writableBeyondCeiling.length
   const text = data.statements.join('\n')
   return (
     <div className={styles.grants}>
@@ -70,6 +73,15 @@ export function UserScopePanel(props: { connectionId: string; purpose: UserScope
             <li>
               {t('scope.excluded', {
                 columns: data.excludedReadable
+                  .flatMap((entry) => entry.columns.map((column) => `${entry.object}.${column}`))
+                  .join(', '),
+              })}
+            </li>
+          )}
+          {data.excludedWritable.length > 0 && (
+            <li>
+              {t('scope.write.excluded', {
+                columns: data.excludedWritable
                   .flatMap((entry) => entry.columns.map((column) => `${entry.object}.${column}`))
                   .join(', '),
               })}

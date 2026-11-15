@@ -82,6 +82,7 @@ describe('read scope', () => {
       account: 'stashley_read@%',
       unexposedReadable: ['geheim'],
       excludedReadable: [{ object: 'person', columns: ['telefon'] }],
+      excludedWritable: [],
       writableBeyondCeiling: [],
       statements: [
         "REVOKE SELECT, SHOW VIEW ON `wanderverein`.* FROM 'stashley_read'@'%';",
@@ -211,6 +212,7 @@ describe('write scope', () => {
       account,
       unexposedReadable: ['geheim'],
       excludedReadable: [{ object: 'person', columns: ['telefon'] }],
+      excludedWritable: [{ object: 'person', columns: ['telefon'] }],
       writableBeyondCeiling: [
         { object: 'event', ops: ['create', 'update'] },
         { object: 'geheim', ops: ['create', 'update'] },
@@ -221,7 +223,7 @@ describe('write scope', () => {
         "REVOKE SELECT, INSERT, UPDATE ON `wanderverein`.* FROM 'stashley_write'@'%';",
         "REVOKE DELETE ON `wanderverein`.`person` FROM 'stashley_write'@'%';",
         "GRANT SELECT ON `wanderverein`.`event` TO 'stashley_write'@'%';",
-        "GRANT SELECT (`id`, `vorname`), INSERT, UPDATE ON `wanderverein`.`person` TO 'stashley_write'@'%';",
+        "GRANT SELECT (`id`, `vorname`), INSERT (`id`, `vorname`), UPDATE (`id`, `vorname`) ON `wanderverein`.`person` TO 'stashley_write'@'%';",
         "GRANT SELECT ON `wanderverein`.`v_status` TO 'stashley_write'@'%';",
       ],
       notes: [],
@@ -266,6 +268,45 @@ describe('write scope', () => {
     expect(scope.statements[0]).toBe(
       "REVOKE SELECT, DELETE ON `wanderverein`.`unsichtbar` FROM 'stashley_write'@'%';",
     )
+  })
+
+  it('limits inserts and updates to the columns that are not excluded or generated (E6)', () => {
+    const person = object('person', ['id', 'vorname', 'telefon', 'anzeige'])
+    const columns = person.columns.map((column) =>
+      column.name === 'anzeige' ? { ...column, generated: true } : column,
+    )
+    const objects = [{ ...person, columns }, object('event', ['id', 'name'])]
+    const access: ExposedObject[] = [
+      {
+        objectName: 'person',
+        objectType: 'table',
+        ops: ['read', 'create', 'update', 'delete'],
+        excluded: new Set(['TELEFON']),
+      },
+      { objectName: 'event', objectType: 'table', ops: ['read', 'update'], excluded: new Set() },
+    ]
+    const scope = write(
+      report(
+        [
+          'GRANT SELECT (`id`, `vorname`, `anzeige`), INSERT, DELETE ON `wanderverein`.`person` TO `stashley_write`@`%`',
+          'GRANT UPDATE (`vorname`, `telefon`) ON `wanderverein`.`person` TO `stashley_write`@`%`',
+          'GRANT SELECT, UPDATE ON `wanderverein`.`event` TO `stashley_write`@`%`',
+        ],
+        'write',
+        account,
+      ),
+      objects,
+      access,
+    )
+    expect(scope.excludedReadable).toEqual([])
+    expect(scope.excludedWritable).toEqual([{ object: 'person', columns: ['TELEFON'] }])
+    expect(scope.writableBeyondCeiling).toEqual([])
+    expect(scope.statements).toEqual([
+      "REVOKE INSERT ON `wanderverein`.`person` FROM 'stashley_write'@'%';",
+      "REVOKE UPDATE (`telefon`) ON `wanderverein`.`person` FROM 'stashley_write'@'%';",
+      "GRANT SELECT, UPDATE ON `wanderverein`.`event` TO 'stashley_write'@'%';",
+      "GRANT SELECT (`id`, `vorname`, `anzeige`), INSERT (`id`, `vorname`), UPDATE (`id`, `vorname`), DELETE ON `wanderverein`.`person` TO 'stashley_write'@'%';",
+    ])
   })
 
   it('names global write privileges and revokes all on narrowed objects', () => {

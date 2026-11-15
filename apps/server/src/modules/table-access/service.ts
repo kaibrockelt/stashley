@@ -25,7 +25,12 @@ import { AppError } from '../../platform/http/problem.ts'
 import { fieldError } from '../../platform/http/validation.ts'
 import type { Actor, AuditLog } from '../audit/audit-log.ts'
 import type { CatalogService } from '../catalog/service.ts'
-import { columnReadable, objectPrivileges } from '../connections/grants.ts'
+import {
+  columnPrivileged,
+  columnReadable,
+  objectPrivileges,
+  privilegedColumns,
+} from '../connections/grants.ts'
 import type { ConnectionsService } from '../connections/service.ts'
 import { userScope } from './user-scope.ts'
 import { checkTemplate, defaultTemplate, type TemplateContext } from './templates.ts'
@@ -289,6 +294,10 @@ export class TableAccessService {
       if (privileges.has('UPDATE') && select) granted.add('update')
       if (privileges.has('DELETE') && select) granted.add('delete')
     }
+    const writeColumns = (privilege: 'INSERT' | 'UPDATE') =>
+      row.object_type === 'table' && reports.write !== undefined
+        ? privilegedColumns(reports.write, row.object_name, privilege)
+        : null
     const warnings: AccessWarning[] = []
     if (object === undefined || row.state === 'pending_grants')
       warnings.push({ code: 'not_in_schema' })
@@ -345,6 +354,38 @@ export class TableAccessService {
     if (readableExcluded.length > 0) {
       warnings.push({ code: 'excluded_column_readable', columns: readableExcluded })
     }
+    // The same for writes: only Stashley's own write path keeps these columns unwritten until
+    // column grants leave them out (E6).
+    const writableExcluded =
+      reports.write === undefined || row.object_type !== 'table'
+        ? []
+        : [...excluded]
+            .filter((column) =>
+              (['INSERT', 'UPDATE'] as const).some((privilege) =>
+                columnPrivileged(reports.write as GrantReport, row.object_name, column, privilege),
+              ),
+            )
+            .sort()
+    if (writableExcluded.length > 0) {
+      warnings.push({ code: 'excluded_column_writable', columns: writableExcluded })
+    }
+    // No insert can leave out a required column, so excluding one rules out `create`.
+    const requiredExcluded = ops.includes('create')
+      ? (object?.columns ?? [])
+          .filter(
+            (column) =>
+              excluded.has(column.name) &&
+              !column.nullable &&
+              column.defaultValue === null &&
+              !column.autoIncrement &&
+              !column.generated,
+          )
+          .map((column) => column.name)
+          .sort()
+      : []
+    if (requiredExcluded.length > 0) {
+      warnings.push({ code: 'excluded_column_required', columns: requiredExcluded })
+    }
     let effectiveTemplate = defaultTemplate(object, row.key_column, excluded)
     if (row.display_template !== null) {
       const problem =
@@ -368,6 +409,10 @@ export class TableAccessService {
       exclusions: exclusions.map((entry) => ({ column: entry.column_name, scope: entry.scope })),
       state: row.state,
       grantedOps: tableOps.filter((op) => granted.has(op)),
+      writableColumns: {
+        create: writeColumns('INSERT'),
+        update: writeColumns('UPDATE'),
+      },
       warnings,
       updatedAt: new Date(row.updated_at).toISOString(),
     }

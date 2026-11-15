@@ -128,7 +128,10 @@ describe.skipIf(targets.length === 0).each(targets)('user scopes on $name', ({ u
       notes: [],
     })
     const after = (await list()).find((entry) => entry.objectName === 'hotel') as TableAccess
-    expect(after.warnings).toEqual([])
+    // The write user is narrowed in the next test.
+    expect(after.warnings).toEqual([
+      { code: 'excluded_column_writable', columns: ['kontakt_email'] },
+    ])
     expect(after.exclusions).toEqual([{ column: 'kontakt_email', scope: 'all' }])
     // Saving keeps the exclusion of the column the read user no longer sees.
     const saved = await admin.send('PUT', `/internal/admin/table-access/${after.id}`, {
@@ -158,8 +161,15 @@ describe.skipIf(targets.length === 0).each(targets)('user scopes on $name', ({ u
       object: 'v_zahlungsstatus',
       ops: ['create', 'update'],
     })
+    expect(before.excludedWritable).toEqual([{ object: 'hotel', columns: ['kontakt_email'] }])
     const checkin = (await list()).find((entry) => entry.objectName === 'checkin')
     expect(checkin?.warnings).toContainEqual({ code: 'write_beyond_ceiling', ops: ['update'] })
+    const hotel = (await list()).find((entry) => entry.objectName === 'hotel')
+    expect(hotel?.warnings).toContainEqual({
+      code: 'excluded_column_writable',
+      columns: ['kontakt_email'],
+    })
+    expect(hotel?.writableColumns).toEqual({ create: null, update: null })
 
     for (const statement of before.statements) await root.query(statement)
     await server.services.pools.invalidate(connection.id)
@@ -179,12 +189,18 @@ describe.skipIf(targets.length === 0).each(targets)('user scopes on $name', ({ u
       ['SELECT wert FROM geheim', 1142],
       ['SELECT kontakt_email FROM hotel', 1143],
       ['INSERT INTO v_zahlungsstatus (anmeldung_id) VALUES (1)', 1142],
+      // Excluded columns can no longer be written either (E6).
+      ["UPDATE hotel SET kontakt_email = 'x' WHERE id = 0", 1143],
+      ["INSERT INTO hotel (name, ort, kontakt_email) VALUES ('Neu', 'Ort', 'x')", 1143],
     ] as const) {
       await expect(asWriter(sql), sql).rejects.toMatchObject({ errno })
     }
     // What the ceilings allow still works, including reads through a base filter's join.
     await asWriter("UPDATE person SET vorname = 'Anna' WHERE id = 1")
     await asWriter('DELETE FROM hotelbuchung WHERE id = 0')
+    await asWriter('UPDATE hotel SET name = name, ort = ort WHERE id = 0')
+    await asWriter("INSERT INTO hotel (name, ort) VALUES ('Neu', 'Ort')")
+    await root.query("DELETE FROM hotel WHERE name = 'Neu'")
     await asWriter(
       'SELECT b.id FROM hotelbuchung b LEFT JOIN hotel_kontingent k ON k.id = b.hotel_kontingent_id WHERE k.hotel_id = 1',
     )
@@ -201,5 +217,11 @@ describe.skipIf(targets.length === 0).each(targets)('user scopes on $name', ({ u
     })
     const after = (await list()).find((entry) => entry.objectName === 'checkin') as TableAccess
     expect(after.warnings).toEqual([])
+    const narrowed = (await list()).find((entry) => entry.objectName === 'hotel') as TableAccess
+    expect(narrowed.warnings).toEqual([])
+    expect(narrowed.writableColumns).toEqual({
+      create: ['id', 'name', 'ort'],
+      update: ['id', 'name', 'ort'],
+    })
   })
 })
