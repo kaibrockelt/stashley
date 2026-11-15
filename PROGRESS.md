@@ -2,7 +2,7 @@
 
 **Current milestone:** M5 – Pages and dashboards (in review)
 
-**Next step:** Review M5 in a fresh session with high (or extra high) effort, then the operator accepts M5. After that M6 – forms and table pages.
+**Next step:** Fix the approved M5 review findings B1 and S1–S7 (see log 2026-11-15; the review is in the notes of session m4-review), then the operator accepts M5. After that M6 – forms and table pages.
 
 **Recommended model strength:** review of M5: high; M6: medium (write path and base filters: high).
 
@@ -272,3 +272,12 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Examples: without the public API or MCP, a single-user mode, a team mode where everyone has the same rights.
   - Disabled modules are neither registered nor loaded. The rights model stays as it is; a simple mode only simplifies the editor and writes grants to `authenticated` under the hood.
   - To keep a separate build cheap later: the core never imports from the `api` and `mcp` modules (enforce with `no-restricted-imports` from M7 on).
+- 2026-11-15: M5 reviewed: 1 blocking finding, 7 should-fix, 10 nice-to-have. The operator approved B1 and S1–S7 for fixing; the nice-to-haves stay open.
+  - B1: a deleted role locks a page's draft. `unknown_role` becomes a warning; the editor shows deleted roles in viewers and restrictions so they can be removed.
+  - S1: rejected saves show translated issues with the block title instead of raw codes.
+  - S2: in the builder, a parameter's list form follows the operator; the server rejects list parameters outside `in`/`not_in` for builder sources.
+  - S3: the rights dialog offers only operations within the source's ceiling and the block type's capability (the design catalog carries the ceiling).
+  - S4: a failed `describe` is retried after a while, publishing learns missing result columns, a matching design run stores them, and unknown columns show a warning.
+  - S5: restoring a version asks first and shows the diff against the draft.
+  - S6: the text filter follows its URL value, so back and forward work.
+  - S7: the table search is debounced.
