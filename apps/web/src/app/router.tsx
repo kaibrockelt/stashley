@@ -173,7 +173,10 @@ const appRoutes = [
     path: '/pages/$slug',
     // Filter values and URL parameters are validated by the server against the page (§13.6).
     validateSearch: (search: Record<string, unknown>): PageSearch => search,
-    component: lazyRouteComponent(() => import('../features/workspace/page-route.tsx'), 'PageRoute'),
+    component: lazyRouteComponent(
+      () => import('../features/workspace/page-route.tsx'),
+      'PageRoute',
+    ),
   }),
   createRoute({
     getParentRoute: () => appLayout,
