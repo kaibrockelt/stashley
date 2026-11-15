@@ -143,7 +143,35 @@ function SelectFilter(props: {
     value: option.value,
     label: option.label,
   }))
-  const labelOf = (value: unknown) => labels[JSON.stringify(value)] ?? String(value)
+  // Values taken from the URL (a reload, a shared link) have no label yet: ask for them.
+  const unlabeled = selected.filter(
+    (value): value is string | number | boolean =>
+      ['string', 'number', 'boolean'].includes(typeof value) &&
+      labels[JSON.stringify(value)] === undefined,
+  )
+  const chosen = useQuery({
+    queryKey: [
+      'workspace',
+      'filter-labels',
+      context.page.id,
+      filter.id,
+      context.mode,
+      context.roles,
+      unlabeled,
+    ],
+    queryFn: () =>
+      api<FilterOptions>(
+        'POST',
+        `/internal/pages/${context.page.id}/filters/${filter.id}/options`,
+        { ...modeFields(context), values: unlabeled },
+      ),
+    enabled: unlabeled.length > 0,
+    staleTime: 60_000,
+  })
+  const labelOf = (value: unknown) =>
+    labels[JSON.stringify(value)] ??
+    chosen.data?.options.find((option) => String(option.value) === String(value))?.label ??
+    String(value)
   const choose = (key: string) => {
     const item = items.find((entry) => entry.id === key)
     if (item === undefined) return

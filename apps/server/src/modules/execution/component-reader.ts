@@ -582,20 +582,34 @@ export class ComponentReader {
   /** Options of a select page filter, searchable and paged (§13.6). */
   async options(
     handle: AuthorizedFilter,
-    input: { search?: string | undefined; cursor?: string | undefined },
+    input: {
+      search?: string | undefined
+      cursor?: string | undefined
+      values?: readonly (string | number | boolean)[] | undefined
+    },
   ): Promise<FilterOptions> {
     const filter = handle.filter.filter
     const source = handle.filter.source
     if (filter.kind !== 'select' || source === undefined) throw new AppError('not_found')
     const query = await this.prepareQuery(source, handle.user, {})
     const { result, freshness } = await this.loadQuery(query, false)
+    const all = result.rows.map((row) => ({
+      value: row[filter.valueColumn] ?? null,
+      label: text(row[filter.labelColumn]),
+    }))
+    if (input.values !== undefined) {
+      // Values from the URL arrive as text, numbers or booleans; compare their text.
+      const wanted = new Set(input.values.map((value) => text(value)))
+      return {
+        options: all.filter((option) => wanted.has(text(option.value))),
+        nextCursor: null,
+        ...freshness,
+      }
+    }
     const search = (input.search ?? '').trim().toLowerCase()
-    const options = result.rows
-      .map((row) => ({
-        value: row[filter.valueColumn] ?? null,
-        label: text(row[filter.labelColumn]),
-      }))
-      .filter((option) => search === '' || option.label.toLowerCase().includes(search))
+    const options = all.filter(
+      (option) => search === '' || option.label.toLowerCase().includes(search),
+    )
     const fingerprint = hash([handle.page.pageId, filter.id, search])
     let offset = 0
     if (input.cursor !== undefined) {

@@ -147,6 +147,6 @@ export function registerRuntimeRoutes(
       body.mode ?? 'runtime',
       body.roles ?? [],
     )
-    return reader.options(handle, { search: body.search, cursor: body.cursor })
+    return reader.options(handle, { search: body.search, cursor: body.cursor, values: body.values })
   })
 }

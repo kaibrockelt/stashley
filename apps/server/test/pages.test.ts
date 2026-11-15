@@ -484,6 +484,14 @@ describe.skipIf(targets.length === 0).each(targets)('page components on $name', 
       search: '2025',
     })
     expect(options.json<FilterOptions>().options).toEqual([{ value: '1', label: 'Wanderung 2025' }])
+    // Chosen values from the URL get their labels back, whatever their JSON type.
+    const chosen = await client.send('POST', `/internal/pages/${pageId}/filters/event/options`, {
+      values: [1, 'nicht da'],
+    })
+    expect(chosen.json<FilterOptions>()).toMatchObject({
+      options: [{ value: '1', label: 'Wanderung 2025' }],
+      nextCursor: null,
+    })
   })
 
   it('switches every event-related component when the instance variable changes', async () => {

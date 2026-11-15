@@ -183,6 +183,11 @@ export const filterOptionsQuery = z
     ...modeFields,
     search: z.string().max(200).optional(),
     cursor: z.string().max(4096).optional(),
+    /** Only the options with these values, e.g. to label the chosen ones after a reload. */
+    values: z
+      .array(z.union([z.string().max(1000), z.number(), z.boolean()]))
+      .max(100)
+      .optional(),
   })
   .strict()
 
