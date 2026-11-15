@@ -82,6 +82,7 @@ const accessWarningLabels: Record<AccessWarning['code'], MessageId> = {
   view_dependencies_unknown: 'access.warning.viewDependenciesUnknown',
   view_key_nullable: 'access.warning.viewKeyNullable',
   excluded_column_readable: 'access.warning.excludedColumnReadable',
+  write_beyond_ceiling: 'access.warning.writeBeyondCeiling',
 }
 
 const impactLabels: Record<ImpactItem['kind'], MessageId> = {

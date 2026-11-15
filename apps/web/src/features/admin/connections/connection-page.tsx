@@ -21,7 +21,6 @@ import table from '../../../ui/table.module.css'
 import { AccessDialog } from './access-dialog.tsx'
 import { ConnectionDialog } from './connection-dialog.tsx'
 import styles from './connections.module.css'
-import { ReadScopePanel } from './read-scope.tsx'
 import { RelationDialog } from './relation-dialog.tsx'
 import {
   AccessWarnings,
@@ -35,6 +34,7 @@ import {
   relationKindLabels,
   tlsLabels,
 } from './texts.tsx'
+import { UserScopePanel } from './user-scope.tsx'
 
 function useConnectionData(id: string) {
   const key = ['admin', 'connection', id] as const
@@ -224,11 +224,15 @@ export function ConnectionPage() {
             </div>
           ))}
         </div>
-        {connection.credentials.some((credential) => credential.purpose === 'read') && (
-          <div className={styles.block}>
-            <ReadScopePanel connectionId={connectionId} />
-          </div>
-        )}
+        {(['read', 'write'] as const)
+          .filter((purpose) =>
+            connection.credentials.some((credential) => credential.purpose === purpose),
+          )
+          .map((purpose) => (
+            <div key={purpose} className={styles.block}>
+              <UserScopePanel connectionId={connectionId} purpose={purpose} />
+            </div>
+          ))}
       </Section>
 
       {(refreshResult !== undefined || openDrifts.length > 0) && (
