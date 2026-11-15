@@ -5,6 +5,9 @@ import type {
   PageDocument,
   PageIssue,
   PageSummary,
+  PageVersionDetail,
+  PageVersionSummary,
+  navigationOrder,
   Query,
   Section,
   pageCreate,
@@ -401,6 +404,128 @@ export class PagesService {
     })
     this.deps.events.emit('page.published', { pageId: id })
     return this.get(id)
+  }
+
+  /** The kept published versions, newest first (§13.2). */
+  async versions(id: string): Promise<PageVersionSummary[]> {
+    const row = await this.row(id)
+    const versions = await this.deps.db
+      .selectFrom('page_versions')
+      .leftJoin('users', 'users.id', 'page_versions.published_by')
+      .select([
+        'page_versions.version',
+        'page_versions.published_at',
+        'page_versions.source_revision',
+        'users.email',
+      ])
+      .where('page_versions.page_id', '=', id)
+      .orderBy('page_versions.version', 'desc')
+      .execute()
+    return versions.map((entry) => ({
+      version: entry.version,
+      publishedAt: new Date(entry.published_at).toISOString(),
+      publishedBy: entry.email ?? null,
+      sourceRevision: entry.source_revision,
+      current: entry.version === row.published_version,
+    }))
+  }
+
+  async version(id: string, version: number): Promise<PageVersionDetail> {
+    const summary = (await this.versions(id)).find((entry) => entry.version === version)
+    if (summary === undefined) throw new AppError('not_found')
+    const stored = await this.deps.db
+      .selectFrom('page_versions')
+      .select('document')
+      .where('page_id', '=', id)
+      .where('version', '=', version)
+      .executeTakeFirstOrThrow()
+    return { ...summary, document: parseDocument(stored.document) }
+  }
+
+  /**
+   * Copies a published version into the draft as a new revision (§13.2). It takes effect only
+   * when the page is published again. Pinned query versions are dropped, so the draft uses
+   * the current versions like any other draft.
+   */
+  async restore(actor: Actor, id: string, version: number, revision: number): Promise<PageDetail> {
+    const { document } = await this.version(id, version)
+    for (const ref of queryRefs(document)) delete ref.version
+    const saved = await this.saveDraft(actor, id, revision, document)
+    await this.deps.audit.record(actor, {
+      action: 'page.restored',
+      subject: { kind: 'page', id, label: document.title },
+      pageId: id,
+      details: { version, revision: saved.draftRevision },
+    })
+    return saved
+  }
+
+  /**
+   * Sets the order of sections and pages at once, as the navigation editor shows them.
+   * Every section and page must be listed exactly once.
+   */
+  async reorder(actor: Actor, order: z.infer<typeof navigationOrder>): Promise<void> {
+    const sections = await this.sections()
+    const pages = await this.deps.db
+      .selectFrom('pages')
+      .select(['id', 'section_id', 'position'])
+      .where('archived_at', 'is', null)
+      .execute()
+    const sameSet = (a: string[], b: string[]) =>
+      a.length === b.length && new Set(a).size === a.length && b.every((id) => a.includes(id))
+    if (
+      !sameSet(
+        order.sections,
+        sections.map((section) => section.id),
+      )
+    ) {
+      throw fieldError('sections', 'incomplete')
+    }
+    if (
+      !sameSet(
+        order.pages.map((page) => page.id),
+        pages.map((page) => page.id),
+      )
+    ) {
+      throw fieldError('pages', 'incomplete')
+    }
+    const known = new Set(order.sections)
+    order.pages.forEach((page, index) => {
+      if (page.sectionId !== null && !known.has(page.sectionId)) {
+        throw fieldError(`pages.${index}.sectionId`, 'not_found')
+      }
+    })
+    const now = this.clock()
+    await writeTransaction(this.deps.db, async (trx) => {
+      for (const [position, sectionId] of order.sections.entries()) {
+        await trx
+          .updateTable('sections')
+          .set({ position, updated_at: now })
+          .where('id', '=', sectionId)
+          .execute()
+      }
+      for (const [position, page] of order.pages.entries()) {
+        await trx
+          .updateTable('pages')
+          .set({ position, section_id: page.sectionId })
+          .where('id', '=', page.id)
+          .execute()
+      }
+    })
+    await this.deps.audit.record(actor, {
+      action: 'navigation.reordered',
+      subject: { kind: 'navigation', id: null, label: null },
+      changes: {
+        sections: [sections.map((section) => section.id), order.sections],
+        pages: [
+          pages
+            .toSorted((a, b) => a.position - b.position)
+            .map((page) => ({ id: page.id, sectionId: page.section_id })),
+          order.pages,
+        ],
+      },
+    })
+    for (const page of order.pages) this.deps.events.emit('page.changed', { pageId: page.id })
   }
 
   async remove(actor: Actor, id: string): Promise<void> {

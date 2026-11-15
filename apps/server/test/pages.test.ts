@@ -433,6 +433,14 @@ describe.skipIf(targets.length === 0).each(targets)('page components on $name', 
     expect(after.rows.map((row) => row.anmeldung_id)).toEqual(['5', '7'])
   })
 
+  it('describes the result columns of a query version for its issues', async () => {
+    const queries = server.services.queries
+    const columns = await queries.describe(offen.id, offen.latestVersion)
+    expect(columns?.map((column) => column.name)).toEqual(['anmeldung_id', 'startnummer', 'offen'])
+    expect(columns?.find((column) => column.name === 'offen')?.role).toBe('measure')
+    expect((await queries.stored(offen.id))?.resultColumns).toEqual(columns)
+  })
+
   it('pages through query results in memory and lists filter options', async () => {
     const client = users.kasse as TestClient
     const pageId = pages.kasse?.id ?? ''

@@ -8,6 +8,8 @@ import type {
   PageDocument,
   PageFilter,
   ParameterBinding,
+  ResultColumn,
+  SettingsBlockType,
   SourceKey,
   StaticLimits,
   TableOp,
@@ -24,6 +26,7 @@ import {
   queryCeiling,
   querySource,
   restrictionsAbovePage,
+  settingsProblems,
   tableSource,
   toOps,
 } from '@stashley/shared'
@@ -348,6 +351,11 @@ export async function compilePage(input: PageInput, deps: CompileDeps): Promise<
         compiler.issue(`${path}.source`, 'view_read_only')
       }
     }
+    if (block.type !== 'form') {
+      const columns =
+        compiled?.source.kind === 'query' ? compiled.source.stored.resultColumns : null
+      checkSettings(compiler, path, block.type, block.settings, columns)
+    }
     // A source used twice must have one ceiling; the stricter one wins.
     const ceiling = compiled?.ceiling ?? noOps
     compiler.ceilings.set(sourceKey, (compiler.ceilings.get(sourceKey) ?? ceiling) & ceiling)
@@ -411,4 +419,32 @@ export async function compilePage(input: PageInput, deps: CompileDeps): Promise<
 /** Operations as the API shows them. */
 export function opsOf(mask: OpMask): TableOp[] {
   return toOps(mask)
+}
+
+/**
+ * Display settings against the stored result columns of the query (§10.8). Metrics and
+ * charts without settings are not configured yet, a warning; settings that do not parse or
+ * map to missing or unsuitable columns are errors, and users see a neutral error state.
+ */
+function checkSettings(
+  compiler: PageCompiler,
+  path: string,
+  type: SettingsBlockType,
+  settings: unknown,
+  columns: readonly ResultColumn[] | null,
+): void {
+  if (settings === undefined && (type === 'metric' || type === 'chart')) {
+    compiler.issue(`${path}.settings`, 'settings_missing', undefined, true)
+    return
+  }
+  for (const problem of settingsProblems(type, settings, columns)) {
+    if (problem.code === 'settings_invalid') {
+      compiler.issue(`${path}.settings`, problem.code, { field: problem.path })
+    } else {
+      compiler.issue(`${path}.settings`, problem.code, {
+        column: problem.column,
+        ...('expected' in problem && { expected: problem.expected }),
+      })
+    }
+  }
 }

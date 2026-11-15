@@ -20,6 +20,17 @@ export function registerQueryRoutes(app: FastifyInstance, deps: { queries: Queri
     requireRole(request, ['admin', 'manager'])
   const { queries } = deps
 
+  app.get('/internal/design/connections', async (request) => {
+    designer(request)
+    return { data: await queries.designConnections() }
+  })
+
+  app.get('/internal/design/catalog/:id', async (request) => {
+    designer(request)
+    const { id } = parse(idParams, request.params)
+    return queries.designCatalog(id)
+  })
+
   app.get('/internal/design/queries', async (request) => {
     designer(request)
     const { connectionId } = parse(listQuery, request.query)

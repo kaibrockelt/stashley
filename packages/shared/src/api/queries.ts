@@ -183,3 +183,33 @@ export interface ParameterDefinition {
   list: boolean
   required: boolean
 }
+
+/** What managers may build queries on (§ SQL-Editor, Abfrage-Builder). */
+export interface DesignConnection {
+  id: string
+  name: string
+  engine: 'mariadb' | 'mysql' | null
+}
+
+export interface DesignCatalogObject {
+  tableAccessId: string
+  name: string
+  type: 'table' | 'view'
+  keyColumn: string | null
+  /** Columns without those excluded for everyone. */
+  columns: { name: string; kind: ValueKind; nullable: boolean; key: boolean }[]
+}
+
+export interface DesignCatalog {
+  connectionId: string
+  /** Exposed objects whose ceiling allows reading. */
+  objects: DesignCatalogObject[]
+  /** Relations between those objects, over columns that are not excluded. */
+  relations: {
+    sourceObject: string
+    sourceColumn: string
+    targetObject: string
+    targetColumn: string
+    kind: 'many_to_one' | 'one_to_one'
+  }[]
+}

@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import { pageCreate, pageDocument, pageUpdate, sectionInput, sectionUpdate } from '@stashley/shared'
+import {
+  navigationOrder,
+  pageCreate,
+  pageDocument,
+  pageUpdate,
+  sectionInput,
+  sectionUpdate,
+} from '@stashley/shared'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { AppError, problem } from '../../platform/http/problem.ts'
@@ -10,6 +17,7 @@ import { actorOf, requireRole } from '../auth/context.ts'
 import { DraftConflict, type PagesService } from './service.ts'
 
 const idParams = z.object({ id: z.uuid() })
+const versionParams = z.object({ id: z.uuid(), version: z.coerce.number().int().positive() })
 const permissionQuery = z
   .object({ object: z.string().max(64), role: z.string().max(64), page: z.uuid() })
   .partial()
@@ -117,6 +125,37 @@ export function registerPageRoutes(
     const { id } = parse(idParams, request.params)
     try {
       return await pages.publish(actorOf(request), id, revisionOf(request, false))
+    } catch (error) {
+      if (error instanceof DraftConflict) return conflict(reply, error)
+      throw error
+    }
+  })
+
+  app.put('/internal/design/navigation', async (request, reply) => {
+    designer(request)
+    await pages.reorder(actorOf(request), parse(navigationOrder, request.body))
+    return reply.code(204).send()
+  })
+
+  app.get('/internal/design/pages/:id/versions', async (request) => {
+    designer(request)
+    const { id } = parse(idParams, request.params)
+    return { data: await pages.versions(id) }
+  })
+
+  app.get('/internal/design/pages/:id/versions/:version', async (request) => {
+    designer(request)
+    const { id, version } = parse(versionParams, request.params)
+    return pages.version(id, version)
+  })
+
+  /** Restores a version into the draft; `If-Match` names the draft revision it replaces. */
+  app.post('/internal/design/pages/:id/versions/:version/restore', async (request, reply) => {
+    designer(request)
+    const { id, version } = parse(versionParams, request.params)
+    const revision = revisionOf(request, true) as number
+    try {
+      return await pages.restore(actorOf(request), id, version, revision)
     } catch (error) {
       if (error instanceof DraftConflict) return conflict(reply, error)
       throw error

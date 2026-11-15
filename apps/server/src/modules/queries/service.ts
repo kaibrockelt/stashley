@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import type {
+  DesignCatalog,
+  DesignConnection,
   FieldError,
   ImpactItem,
   ObjectAccess,
@@ -66,6 +68,8 @@ export interface StoredVersion {
   parameters: QueryParameter[]
   analysis: QueryAnalysis
   executable: Executable
+  /** Columns of the result, known after the version was described or run; for issues. */
+  resultColumns: ResultColumn[] | null
 }
 
 type CreateInput = z.infer<typeof queryCreate>
@@ -391,7 +395,129 @@ export class QueriesService {
       parameters: JSON.parse(row.parameters) as QueryParameter[],
       analysis: JSON.parse(row.analysis) as QueryAnalysis,
       executable: JSON.parse(row.executable) as Executable,
+      resultColumns: this.resultColumns(id, row),
     }
+  }
+
+  private readonly described = new Set<string>()
+
+  /** Stored result columns; a version without them is described once in the background. */
+  private resultColumns(id: string, row: QueryVersionsTable): ResultColumn[] | null {
+    if (row.result_columns !== null) return JSON.parse(row.result_columns) as ResultColumn[]
+    void this.describe(id, row.version).catch(() => undefined)
+    return null
+  }
+
+  /**
+   * Learns the result columns of a version (§10.8) by running it for one row with every
+   * parameter unset, and stores them. A failing run leaves them unknown; the version is not
+   * tried again until the process restarts. Returns the columns, or null.
+   */
+  async describe(id: string, version: number): Promise<ResultColumn[] | null> {
+    const query = await this.deps.db
+      .selectFrom('queries')
+      .select('connection_id')
+      .where('id', '=', id)
+      .executeTakeFirst()
+    const row = await this.deps.db
+      .selectFrom('query_versions')
+      .selectAll()
+      .where('query_id', '=', id)
+      .where('version', '=', version)
+      .executeTakeFirst()
+    if (query === undefined || row === undefined) return null
+    if (row.result_columns !== null) return JSON.parse(row.result_columns) as ResultColumn[]
+    const key = `${id}:${version}`
+    if (this.described.has(key)) return null
+    this.described.add(key)
+    const executable = JSON.parse(row.executable) as Executable
+    const lists = new Set(
+      (JSON.parse(row.parameters) as QueryParameter[])
+        .filter((parameter) => parameter.list)
+        .map((parameter) => parameter.name),
+    )
+    const values = new Map(executable.params.map((name) => [name, lists.has(name) ? [] : null]))
+    try {
+      const raw = await this.deps.executor.execute(
+        query.connection_id,
+        buildStatement(executable, values, 1),
+      )
+      const { columns } = normalizeResult(raw.rows, raw.fields, 1, raw.timeZone)
+      await this.deps.db
+        .updateTable('query_versions')
+        .set({ result_columns: JSON.stringify(columns) })
+        .where('query_id', '=', id)
+        .where('version', '=', version)
+        .where('result_columns', 'is', null)
+        .execute()
+      return columns
+    } catch {
+      return null
+    }
+  }
+
+  /** Connections for the query editor; managers see names only. */
+  async designConnections(): Promise<DesignConnection[]> {
+    return (await this.deps.connections.list()).map((connection) => ({
+      id: connection.id,
+      name: connection.name,
+      engine: connection.engine,
+    }))
+  }
+
+  /**
+   * Exposed objects and their columns for the builder and the SQL editor's completion. Only
+   * objects whose ceiling allows reading appear, without columns excluded for everyone.
+   */
+  async designCatalog(connectionId: string): Promise<DesignCatalog> {
+    await this.deps.connections.get(connectionId)
+    const snapshot = await this.deps.catalog.current(connectionId)
+    const accesses = (await this.deps.tableAccess.list(connectionId)).filter((access) =>
+      access.ops.includes('read'),
+    )
+    const catalog = new Map((snapshot?.objects ?? []).map((object) => [object.name, object]))
+    const objects: DesignCatalog['objects'] = []
+    const visible = new Map<string, Set<string>>()
+    for (const access of accesses) {
+      const object = catalog.get(access.objectName)
+      if (object === undefined) continue
+      const excluded = new Set(
+        access.exclusions.filter((entry) => entry.scope === 'all').map((entry) => entry.column),
+      )
+      const key = new Set(access.keyColumn === null ? object.primaryKey : [access.keyColumn])
+      const columns = object.columns
+        .filter((column) => !excluded.has(column.name))
+        .map((column) => ({
+          name: column.name,
+          kind: column.kind,
+          nullable: column.nullable,
+          key: key.has(column.name),
+        }))
+      visible.set(object.name, new Set(columns.map((column) => column.name)))
+      objects.push({
+        tableAccessId: access.id,
+        name: object.name,
+        type: object.type,
+        keyColumn:
+          access.keyColumn ??
+          (object.primaryKey.length === 1 ? (object.primaryKey[0] ?? null) : null),
+        columns,
+      })
+    }
+    const relations = (await this.deps.tableAccess.relations(connectionId))
+      .filter(
+        (relation) =>
+          visible.get(relation.sourceObject)?.has(relation.sourceColumn) === true &&
+          visible.get(relation.targetObject)?.has(relation.targetColumn) === true,
+      )
+      .map(({ sourceObject, sourceColumn, targetObject, targetColumn, kind }) => ({
+        sourceObject,
+        sourceColumn,
+        targetObject,
+        targetColumn,
+        kind,
+      }))
+    return { connectionId, objects, relations }
   }
 
   private async ensureNameFree(name: string, id?: string): Promise<void> {

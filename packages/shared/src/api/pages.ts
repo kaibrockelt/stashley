@@ -37,6 +37,27 @@ export const pageUpdate = z
   .partial()
   .strict()
 
+/** The order of sections and pages in the navigation (§ Navigation und Seiten). */
+export const navigationOrder = z
+  .object({
+    sections: z.array(z.uuid()).max(500),
+    pages: z.array(z.object({ id: z.uuid(), sectionId: z.uuid().nullable() }).strict()).max(2000),
+  })
+  .strict()
+
+export interface PageVersionSummary {
+  version: number
+  publishedAt: string
+  publishedBy: string | null
+  /** The draft revision that was published. */
+  sourceRevision: number
+  current: boolean
+}
+
+export interface PageVersionDetail extends PageVersionSummary {
+  document: PageDocument
+}
+
 /** A configuration problem of a page (§8.6); errors block saving and publishing. */
 export interface PageIssue {
   path: string
