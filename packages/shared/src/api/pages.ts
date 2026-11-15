@@ -3,6 +3,7 @@
 import { z } from 'zod'
 import type { TableOp } from './connections.ts'
 import type { QueryResult, ResultColumn } from './queries.ts'
+import type { AfterSave, EditOp, FieldWidget } from '../model/form.ts'
 import type { PageDocument, PageFilter, RowLayout } from '../model/page.ts'
 import { pageKinds } from '../model/page.ts'
 import type { ValueKind } from '../values/column-kinds.ts'
@@ -103,6 +104,40 @@ export interface Navigation {
 export const pageModes = ['runtime', 'edit', 'preview'] as const
 export type PageMode = (typeof pageModes)[number]
 
+/**
+ * A field of a form or of table editing as the client receives it. Hidden defaults the server
+ * sets (constants, instance variables, the user) are left out entirely (§8.4).
+ */
+export interface RenderField {
+  id: string
+  column: string
+  label: string | null
+  help: string | null
+  input: 'input' | 'generated'
+  widget: FieldWidget | null
+  kind: ValueKind
+  /** Must be filled when creating. */
+  required: boolean
+  nullable: boolean
+  maxLength: number | null
+  precision: number | null
+  scale: number | null
+  enumValues?: string[]
+  /** A hidden field the client fills from a page filter or URL parameter (E10). */
+  hidden: boolean
+  /** The prefill of a new record. */
+  default?:
+    | { kind: 'value'; value: unknown }
+    | { kind: 'filter'; filterId: string }
+    | { kind: 'url'; name: string }
+  generator?: { kind: 'auto_increment' } | { kind: 'date'; expression: string; editable: boolean }
+  /** Whether a payload may carry the field when creating and when updating. */
+  create: boolean
+  update: boolean
+  /** Foreign keys: options come from `…/fields/:fieldId/options`. */
+  reference?: { target: string; extras: { id: string; label: string }[] }
+}
+
 /** A component as the client receives it; server-only configuration is left out (§8.4). */
 export interface RenderComponent {
   id: string
@@ -121,6 +156,18 @@ export interface RenderComponent {
     pageSize: number
     searchable: boolean
     sort: { columnId: string; direction: 'asc' | 'desc' } | null
+    /** Editing within the caller's rights; absent when the table only reads. */
+    editing?: { ops: EditOp[]; inline: boolean; dialog: boolean; fields: RenderField[] }
+    csvExport: boolean
+    keyKind: ValueKind
+  }
+  form?: {
+    fields: RenderField[]
+    afterSave: AfterSave
+    submitLabel?: string
+    /** Edit mode: the page filter or URL parameter that names the record. */
+    record?: { kind: 'filter'; filterId: string } | { kind: 'url'; name: string }
+    keyColumn: string
   }
   /** Edit mode: whether the component can read, and its issues. */
   readable?: boolean
@@ -143,6 +190,8 @@ export interface RenderPage {
   parameters: { name: string; type: string; list: boolean }[]
   rows: { id: string; layout: RowLayout; components: RenderComponent[] }[]
   table: RenderComponent | null
+  /** Table pages: related tables of the detail view, as far as the viewer may read them. */
+  detail: RenderComponent[]
   /** Preview only: false when the chosen roles cannot see the page; it would be a 404 for them. */
   viewable?: boolean
 }

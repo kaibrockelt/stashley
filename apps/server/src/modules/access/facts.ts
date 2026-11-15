@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { CatalogObject, Engine, OpMask } from '@stashley/shared'
+import type { CatalogObject, Engine, LockStrategy, OpMask } from '@stashley/shared'
 import { toMask } from '@stashley/shared'
 import type { Kysely } from 'kysely'
 import type { Database } from '../../metastore/schema.ts'
@@ -9,6 +9,9 @@ import type { CatalogService } from '../catalog/service.ts'
 import type { ConnectionsService } from '../connections/service.ts'
 import type { ModelAccess, ModelRelation } from '../execution/sql/table-model.ts'
 import type { TableAccessService } from '../table-access/service.ts'
+
+const lowered = (columns: string[] | null) =>
+  columns === null ? null : new Set(columns.map((column) => column.toLowerCase()))
 
 /** Access facts of one exposed object (§8.1): ceiling, exclusions, grants, templates. */
 export interface ObjectFacts extends ModelAccess {
@@ -20,6 +23,12 @@ export interface ObjectFacts extends ModelAccess {
   /** Columns excluded for MCP only, on top of `excluded`. */
   mcpExcluded: ReadonlySet<string>
   mcpEnabled: boolean
+  /**
+   * Columns the write user may insert and update, lower case; null where its privilege
+   * covers the whole object (E6).
+   */
+  writable: { create: ReadonlySet<string> | null; update: ReadonlySet<string> | null }
+  lock: LockStrategy
 }
 
 export interface ConnectionFacts {
@@ -92,6 +101,11 @@ export class AccessFacts {
         active: access.state === 'active',
         keyColumn: access.keyColumn,
         effectiveTemplate: access.effectiveTemplate,
+        writable: {
+          create: lowered(access.writableColumns.create),
+          update: lowered(access.writableColumns.update),
+        },
+        lock: access.lockStrategy,
       })
     }
     return {

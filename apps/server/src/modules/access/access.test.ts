@@ -533,6 +533,101 @@ describe('page and component rights', () => {
     expect(await code(query(w.users.kasse, kasse.id, '../x'))).toBe('not_found')
   })
 
+  it('deliver form fields and table editing without server-only defaults (§8.4)', async () => {
+    const w = await world()
+    const base = kassePage(w)
+    const document = {
+      ...base,
+      rows: base.rows.map((row) => ({
+        ...row,
+        blocks: row.blocks.map((block) =>
+          block.type === 'form'
+            ? {
+                ...block,
+                fields: [
+                  {
+                    kind: 'input' as const,
+                    id: 'anmeldung',
+                    column: 'anmeldung_id',
+                    reference: { target: 'anmeldung' },
+                  },
+                  {
+                    kind: 'input' as const,
+                    id: 'betrag',
+                    column: 'betrag',
+                    default: { kind: 'constant' as const, value: '4242' },
+                    hidden: true,
+                  },
+                  {
+                    kind: 'generated' as const,
+                    id: 'eingang',
+                    column: 'eingang_am',
+                    generator: { kind: 'date' as const, expression: 'today', editable: true },
+                  },
+                ],
+              }
+            : block,
+        ),
+      })),
+    }
+    await createPage(w, 'kasse', document)
+    const cashier = (await w.users.kasse.request('GET', '/internal/pages/kasse')).json<RenderPage>()
+    const form = cashier.rows[1]?.components[0]?.form
+    expect(form?.fields.map((field) => [field.id, field.widget, field.create])).toEqual([
+      ['anmeldung', 'reference', true],
+      ['eingang', 'date', true],
+    ])
+    expect(form?.fields[0]?.reference).toEqual({ target: 'anmeldung', extras: [] })
+    expect(JSON.stringify(cashier)).not.toContain('4242')
+
+    // The hotel's guest page lets its own role edit the check-in time inline, nobody else.
+    const guests = guestPage(w, 1, w.roles.lindenhof.id, 'Lindenhof')
+    const table = guests.table as NonNullable<typeof guests.table>
+    const editable = {
+      ...guests,
+      table: {
+        ...table,
+        table: {
+          ...(table.table as NonNullable<typeof table.table>),
+          editing: {
+            ops: ['update' as const],
+            fields: [{ kind: 'input' as const, id: 'eingecheckt', column: 'eingecheckt_am' }],
+            inline: true,
+            dialog: false,
+          },
+        },
+      },
+      access: {
+        view: [w.roles.lindenhof.id, w.roles.orga.id],
+        grants: [
+          {
+            principal: w.roles.lindenhof.id,
+            source: `table:${access(w, 'hotelbuchung').id}` as const,
+            ops: ['read' as const, 'update' as const],
+          },
+          {
+            principal: w.roles.orga.id,
+            source: `table:${access(w, 'hotelbuchung').id}` as const,
+            ops: ['read' as const],
+          },
+        ],
+      },
+    }
+    await createPage(w, 'lindenhof', editable)
+    const reception = (
+      await w.users.lindenhof.request('GET', '/internal/pages/lindenhof')
+    ).json<RenderPage>()
+    expect(reception.table?.ops).toEqual(['read', 'update'])
+    expect(reception.table?.table?.editing).toMatchObject({
+      ops: ['update'],
+      inline: true,
+      fields: [{ id: 'eingecheckt', kind: 'datetime', update: true, create: false }],
+    })
+    const orga = (await w.users.orga.request('GET', '/internal/pages/lindenhof')).json<RenderPage>()
+    expect(orga.table?.ops).toEqual(['read'])
+    expect(orga.table?.table?.editing).toBeUndefined()
+  })
+
   it('preview and edit the draft with the rights of chosen roles', async () => {
     const w = await world()
     const page = await createPage(

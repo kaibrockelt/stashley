@@ -172,8 +172,10 @@ export function componentKindOf(block: Block): ComponentKind {
     case 'form':
       return { type: 'form', mode: block.mode }
     case 'table':
-      // Editing operations of table sources arrive with M6.
-      return { type: 'table' }
+      // Tables over stored queries and views only read (§ Tabellenseiten).
+      return block.source.kind === 'table' && block.table?.editing
+        ? { type: 'table', editing: toMask(block.table.editing.ops) }
+        : { type: 'table' }
     default:
       return { type: block.type }
   }

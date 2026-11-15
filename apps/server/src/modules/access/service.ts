@@ -10,6 +10,7 @@ import type {
   PageMode,
   PermissionEntry,
   RenderComponent,
+  RenderField,
   RenderPage,
   RowLayout,
   SchemaDiff,
@@ -24,6 +25,7 @@ import {
   noOps,
   opBits,
   principalsOf,
+  serverDefault,
   staticMask,
   toOps,
 } from '@stashley/shared'
@@ -34,6 +36,7 @@ import type { AuthContext } from '../auth/context.ts'
 import type { PagesService } from '../pages/service.ts'
 import type { QueriesService } from '../queries/service.ts'
 import type { RolesService } from '../roles/service.ts'
+import type { VariablesService } from '../variables/service.ts'
 import {
   compilePage,
   type CompiledComponent,
@@ -41,6 +44,7 @@ import {
   type PageInput,
 } from './compile.ts'
 import type { AccessFacts } from './facts.ts'
+import type { WriteField, WriteModel } from './write-model.ts'
 import {
   grantComponent,
   grantFilter,
@@ -63,6 +67,7 @@ export interface AccessDeps {
   pages: PagesService
   queries: QueriesService
   roles: RolesService
+  variables: VariablesService
   events: EventBus
 }
 
@@ -210,11 +215,16 @@ export class AccessService {
   ): Promise<RenderPage> {
     const { page, principals, visible } = await this.page(viewer, { slug }, mode, previewRoles)
     const document = page.document
+    const variables = await this.deps.variables.current()
+    const context: RenderContext = {
+      variable: (name) => variables.get(name)?.value,
+      user: viewer.user,
+    }
     const render = (component: CompiledComponent): RenderComponent | undefined => {
       const ops = this.ops(page, component, mode, principals)
       const delivered = mode === 'edit' || (visible && isDelivered(component.kind, ops))
       if (!delivered) return undefined
-      return this.renderComponent(page, component, ops, mode)
+      return this.renderComponent(page, component, ops, mode, context)
     }
     const rows: RenderPage['rows'] = []
     for (const row of document.rows) {
@@ -257,6 +267,11 @@ export class AccessService {
       parameters: document.parameters.map((parameter) => ({ ...parameter })),
       rows,
       table: table === undefined ? null : (render(table) ?? null),
+      detail: (document.detail?.tables ?? []).flatMap((entry) => {
+        const compiled = page.components.get(entry.id)
+        const rendered = compiled === undefined ? undefined : render(compiled)
+        return rendered === undefined ? [] : [rendered]
+      }),
       ...(mode === 'preview' && { viewable: visible }),
     }
   }
@@ -266,6 +281,7 @@ export class AccessService {
     component: CompiledComponent,
     ops: OpMask,
     mode: PageMode,
+    context: RenderContext,
   ): RenderComponent {
     const block = component.block
     const source = component.source
@@ -279,8 +295,21 @@ export class AccessService {
     }
     if (block.type === 'text') out.markdown = block.markdown
     else if (block.settings !== undefined) out.settings = block.settings
-    if (block.type === 'form') out.formMode = block.mode
-    if (source?.kind === 'table' && source.model !== null) {
+    const write = source?.kind === 'table' ? source.write : null
+    if (block.type === 'form') {
+      out.formMode = block.mode
+      if (write !== null) {
+        out.form = {
+          fields: renderFields(write, context),
+          afterSave: block.afterSave,
+          ...(block.submitLabel !== undefined && { submitLabel: block.submitLabel }),
+          ...(block.mode === 'edit' && block.record !== null && { record: block.record.from }),
+          keyColumn: write.keyColumn,
+        }
+      }
+    } else if (source?.kind === 'table' && source.model !== null) {
+      const editing = block.type === 'table' ? block.table?.editing : undefined
+      const editOps = (editing?.ops ?? []).filter((op) => hasOp(ops, op))
       out.table = {
         columns: source.model.columns.map((column) => ({
           id: column.id,
@@ -290,6 +319,18 @@ export class AccessService {
         pageSize: source.model.pageSize,
         searchable: source.model.searchColumns.length > 0,
         sort: source.model.sort,
+        csvExport: block.type === 'table' && (block.table?.csvExport ?? false),
+        keyKind: source.model.key.kind,
+        ...(editing !== undefined &&
+          editing !== null &&
+          editOps.length > 0 && {
+            editing: {
+              ops: editOps,
+              inline: editing.inline && editOps.includes('update'),
+              dialog: editing.dialog,
+              fields: write === null ? [] : renderFields(write, context),
+            },
+          }),
       }
     }
     if (mode === 'edit') {
@@ -496,4 +537,69 @@ export class AccessService {
     }
     return entries
   }
+}
+
+/** What render needs to show visible defaults: instance variables and the viewer. */
+interface RenderContext {
+  variable: (name: string) => unknown
+  user: { id: string; email: string }
+}
+
+function renderField(write: WriteModel, field: WriteField, context: RenderContext): RenderField {
+  const spec = field.spec
+  const value = field.default
+  let prefill: RenderField['default']
+  if (value !== undefined) {
+    if (value.kind === 'filter' || value.kind === 'url') prefill = value
+    else if (value.kind === 'constant') prefill = { kind: 'value', value: value.value }
+    else if (value.kind === 'variable')
+      prefill = { kind: 'value', value: context.variable(value.name) ?? null }
+    else
+      prefill = {
+        kind: 'value',
+        value: value.field === 'id' ? context.user.id : context.user.email,
+      }
+  }
+  const generator = field.generator
+  return {
+    id: field.id,
+    column: field.column,
+    label: field.label ?? null,
+    help: field.help ?? null,
+    input: field.kind,
+    widget: field.widget,
+    kind: spec.kind,
+    required: write.payload.create.some((entry) => entry.column === field.column && entry.required),
+    nullable: spec.nullable,
+    maxLength: spec.maxLength,
+    precision: spec.precision,
+    scale: spec.scale,
+    ...(spec.enumValues !== undefined && { enumValues: spec.enumValues }),
+    hidden: field.hidden,
+    ...(prefill !== undefined && { default: prefill }),
+    ...(generator !== undefined && {
+      generator:
+        generator.kind === 'date'
+          ? {
+              kind: 'date' as const,
+              expression: generator.expression,
+              editable: generator.editable,
+            }
+          : { kind: 'auto_increment' as const },
+    }),
+    create: write.payload.create.some((entry) => entry.column === field.column),
+    update: write.payload.update.some((entry) => entry.column === field.column),
+    ...(field.reference !== undefined && {
+      reference: { target: field.reference.target, extras: field.reference.extras },
+    }),
+  }
+}
+
+/** Fields the client may see: hidden defaults the server sets are left out (§8.4). */
+function renderFields(write: WriteModel, context: RenderContext): RenderField[] {
+  return write.fields
+    .filter(
+      (field) => !(field.serverOnly && field.default !== undefined && serverDefault(field.default)),
+    )
+    .map((field) => renderField(write, field, context))
 }

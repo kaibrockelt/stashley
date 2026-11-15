@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import { z } from 'zod'
+import type { ValueKind } from '../values/column-kinds.ts'
 import { parseDateExpression } from '../values/date-expression.ts'
 import {
   columnRef,
@@ -60,6 +61,43 @@ export const fieldWidgets = [
   'reference',
 ] as const
 export type FieldWidget = (typeof fieldWidgets)[number]
+
+/**
+ * The widgets that fit a column (§ Formulare), the default first. Foreign keys default to a
+ * searchable selection; field types change only within compatible types.
+ */
+export function widgetsFor(kind: ValueKind, columnType: string, reference: boolean): FieldWidget[] {
+  const own: FieldWidget[] = (() => {
+    switch (kind) {
+      case 'boolean':
+        return ['switch']
+      case 'integer':
+      case 'bigint':
+      case 'decimal':
+      case 'float':
+        return ['number']
+      case 'date':
+        return ['date']
+      case 'datetime':
+      case 'timestamp':
+        return ['datetime']
+      case 'time':
+        return ['time']
+      case 'year':
+        return ['year']
+      case 'string':
+        return /text/i.test(columnType) ? ['textarea', 'text'] : ['text', 'textarea']
+      case 'enum':
+        return ['select']
+      case 'set':
+        return ['multiselect']
+      case 'json':
+      case 'unsupported':
+        return []
+    }
+  })()
+  return reference && own.length > 0 ? ['reference', ...own] : own
+}
 
 /**
  * Options of a foreign key field: the records of the referenced object with their display

@@ -35,6 +35,7 @@ import type { CacheDependencies } from '../cache/query-cache.ts'
 import { buildTableModel, ModelError, type TableModel } from '../execution/sql/table-model.ts'
 import type { QueriesService, StoredVersion } from '../queries/service.ts'
 import { AccessFacts, type ConnectionFacts, type ObjectFacts } from './facts.ts'
+import { buildWriteModel, type WriteInput, type WriteModel } from './write-model.ts'
 
 /**
  * Compiled pages (§13.3): a published or draft document resolved against the current
@@ -62,8 +63,10 @@ export interface CompiledTableSource {
   kind: 'table'
   connection: ConnectionFacts
   object: ObjectFacts
-  /** Null for forms, whose fields come with M6. */
+  /** What it reads; for forms the record with the form's fields and base filter. */
   model: TableModel | null
+  /** Forms and editable tables: what writes may do (§11). */
+  write: WriteModel | null
   dependencies: CacheDependencies
   cacheTtlSeconds: number
 }
@@ -241,6 +244,7 @@ class PageCompiler {
         connection,
         object,
         model,
+        write: null,
         dependencies: {
           connectionId: connection.connectionId,
           tables: deps.tables,
@@ -254,6 +258,51 @@ class PageCompiler {
       ceiling,
       dbGrants,
     }
+  }
+
+  /**
+   * The write model of a form or an editable table. Its record model replaces a form's empty
+   * one; missing column grants withhold operations, errors leave the component without writes.
+   */
+  async write(
+    compiled: { source: CompiledTableSource; ceiling: OpMask; dbGrants: OpMask },
+    input: WriteInput,
+  ): Promise<{ ok: boolean }> {
+    const source = compiled.source
+    const built = buildWriteModel(source.connection, source.object, input, (...args) =>
+      this.issue(...args),
+    )
+    compiled.dbGrants &= ~built.withheld
+    for (const { index, reference } of built.queries) {
+      const query = reference.query
+      if (query === undefined) continue
+      const at = `${input.fieldsPath}.${index}.reference.query`
+      const resolved = await this.query(at, query.ref, query.bindings, input.document)
+      if (resolved === undefined || resolved.ceiling === noOps) {
+        built.model = undefined
+        continue
+      }
+      const columns = resolved.source.stored.resultColumns
+      for (const name of ['valueColumn', 'labelColumn'] as const) {
+        if (columns !== null && !columns.some((column) => column.name === query[name])) {
+          this.issue(`${at}.${name}`, 'unknown_column')
+          built.model = undefined
+        }
+      }
+      query.source = resolved.source
+    }
+    if (built.model === undefined) return { ok: false }
+    source.write = built.model
+    if (source.model === null) {
+      source.model = built.model.row
+      const deps = AccessFacts.dependencies(source.connection, built.model.row.objects)
+      source.dependencies = {
+        ...source.dependencies,
+        tables: deps.tables,
+        allTables: deps.allTables,
+      }
+    }
+    return { ok: true }
   }
 
   principal(path: string, principal: string): void {
@@ -311,6 +360,7 @@ export async function compilePage(input: PageInput, deps: CompileDeps): Promise<
     let compiled:
       | { source: CompiledQuerySource | CompiledTableSource; ceiling: OpMask; dbGrants: OpMask }
       | undefined
+    let limitedCapability = capability
     let sourceKey: SourceKey | undefined
     if (block.type === 'text') {
       components.set(block.id, {
@@ -333,13 +383,83 @@ export async function compilePage(input: PageInput, deps: CompileDeps): Promise<
       sourceKey = tableSource(block.source.tableAccessId)
       const config = block.type === 'table' ? block.table : null
       compiled = await compiler.table(path, block.source, config, document)
-      if (
-        block.type === 'form' &&
-        compiled?.source.kind === 'table' &&
-        compiled.source.object.objectType === 'view'
-      ) {
-        compiler.issue(`${path}.source`, 'view_read_only')
+      const table =
+        compiled?.source.kind === 'table'
+          ? (compiled as typeof compiled & { source: CompiledTableSource })
+          : undefined
+      if (block.type === 'form' && table !== undefined) {
+        if (table.source.object.objectType === 'view') {
+          compiler.issue(`${path}.source`, 'view_read_only')
+        } else {
+          const result = await compiler.write(table, {
+            path,
+            fieldsPath: `${path}.fields`,
+            fields: block.fields,
+            mode: block.mode,
+            ops: {
+              create: block.mode !== 'edit',
+              update: block.mode !== 'create',
+            },
+            upsertKey: block.upsertKey,
+            baseFilter: block.baseFilter,
+            document,
+          })
+          // A broken form is not delivered; its grants stay valid against the ceiling.
+          if (!result.ok) limitedCapability = noOps
+        }
+        if (block.mode === 'edit') {
+          const from = block.record?.from
+          if (from === undefined) compiler.issue(`${path}.record`, 'record_missing')
+          else if (
+            from.kind === 'filter'
+              ? !document.filters.some((filter) => filter.id === from.filterId)
+              : !document.parameters.some((parameter) => parameter.name === from.name)
+          ) {
+            compiler.issue(`${path}.record.from`, 'unknown_input')
+          }
+        } else if (block.record !== null) {
+          compiler.issue(`${path}.record`, 'not_allowed')
+        }
+        if (block.mode !== 'upsert' && block.upsertKey !== null) {
+          compiler.issue(`${path}.upsertKey`, 'not_allowed')
+        }
       }
+      const tableConfig = block.type === 'table' ? block.table : null
+      const editing = tableConfig?.editing
+      if (editing !== undefined && editing !== null && table !== undefined) {
+        const at = `${path}.table.editing`
+        if (table.source.object.objectType === 'view') {
+          compiler.issue(at, 'view_read_only')
+          limitedCapability = read
+        } else {
+          if (editing.inline && !editing.ops.includes('update')) {
+            compiler.issue(`${at}.inline`, 'inline_without_update')
+          }
+          const writes = editing.ops.includes('create') || editing.ops.includes('update')
+          if (writes) {
+            const result = await compiler.write(table, {
+              path,
+              fieldsPath: `${at}.fields`,
+              fields: editing.fields,
+              mode: 'table',
+              ops: {
+                create: editing.ops.includes('create'),
+                update: editing.ops.includes('update'),
+              },
+              upsertKey: null,
+              baseFilter: tableConfig?.baseFilter ?? [],
+              document,
+            })
+            // A broken write model leaves the table readable.
+            if (!result.ok) limitedCapability = read | (capability & opBits.delete)
+          } else if (editing.fields.length > 0) {
+            compiler.issue(`${at}.fields`, 'not_allowed')
+          }
+        }
+      }
+    }
+    if (block.type === 'table' && block.source.kind === 'query' && block.table?.editing) {
+      compiler.issue(`${path}.table.editing`, 'not_allowed')
     }
     if (block.type !== 'form') {
       const columns =
@@ -360,7 +480,7 @@ export async function compilePage(input: PageInput, deps: CompileDeps): Promise<
       kind,
       sourceKey,
       restrictions: block.restrictions,
-      limits: { capability, ceiling, dbGrants: compiled?.dbGrants ?? noOps },
+      limits: { capability: limitedCapability, ceiling, dbGrants: compiled?.dbGrants ?? noOps },
       source: compiled?.source,
     })
     const problems = restrictionsAbovePage(document.access, block.restrictions, sourceKey)

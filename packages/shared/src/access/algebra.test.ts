@@ -3,11 +3,13 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import { tableOps, type TableOp } from '../api/connections.ts'
+import type { Block } from '../model/page.ts'
 import {
   allOps,
   authenticatedPrincipal,
   canView,
   capabilityOf,
+  componentKindOf,
   componentOps,
   effectiveOps,
   grantsAboveCeiling,
@@ -185,6 +187,44 @@ describe('access algebra', () => {
     }
     expect(canView(everyone, principalsOf([]))).toBe(true)
     expect(pageOps(everyone, authenticatedPrincipal, offen)).toBe(opBits.read)
+  })
+
+  it('reads the editing operations of table sources only (§ Tabellenseiten)', () => {
+    const table = (source: 'query' | 'table', ops: ('create' | 'update' | 'delete')[] | null) =>
+      ({
+        id: 't',
+        type: 'table',
+        title: 'T',
+        restrictions: [],
+        source:
+          source === 'query'
+            ? { kind: 'query', queryId: '0196f3a4-3333-7000-8000-000000000001' }
+            : {
+                kind: 'table',
+                tableAccessId: '0196f3a4-3333-7000-8000-000000000001',
+                cacheTtlSeconds: 0,
+              },
+        bindings: [],
+        table:
+          source === 'query'
+            ? null
+            : {
+                columns: [],
+                sort: null,
+                searchColumns: [],
+                baseFilter: [],
+                bindings: [],
+                pageSize: 50,
+                editing: ops === null ? null : { ops, fields: [], inline: false, dialog: true },
+                csvExport: true,
+              },
+      }) as Block
+    expect(componentKindOf(table('table', ['update', 'delete']))).toEqual({
+      type: 'table',
+      editing: toMask(['update', 'delete']),
+    })
+    expect(componentKindOf(table('table', null))).toEqual({ type: 'table' })
+    expect(componentKindOf(table('query', null))).toEqual({ type: 'table' })
   })
 
   it('derives capabilities and the delivery rule per component type', () => {
