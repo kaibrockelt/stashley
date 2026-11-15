@@ -149,7 +149,14 @@ export function PageView(props: { toolbar?: (page: RenderPage) => ReactNode }) {
             </Button>
           )}
         </header>
-        {mode === 'preview' && designer && <PreviewBar roles={roles} />}
+        {mode === 'preview' && designer && (
+          <PreviewBar
+            roles={roles}
+            empty={
+              page.data.table === null && page.data.rows.every((row) => row.components.length === 0)
+            }
+          />
+        )}
         <PageFilters onChange={setFilter} />
         <PageGrid page={page.data} />
       </div>

@@ -841,5 +841,6 @@
   "builder.error.not_a_time": "Dieses Zeitraster passt nicht zur Spalte.",
   "builder.error.not_numeric": "Summe und Durchschnitt brauchen eine Zahlenspalte.",
   "builder.error.not_allowed": "Dieser Vergleich hat keinen Wert.",
-  "builder.error.invalid": "Der Wert passt nicht zum Vergleich."
+  "builder.error.invalid": "Der Wert passt nicht zum Vergleich.",
+  "preview.nothing": "Mit diesen Rechten ist auf der Seite nichts sichtbar."
 }

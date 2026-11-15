@@ -841,5 +841,6 @@
   "builder.error.not_a_time": "This time bucket does not fit the column.",
   "builder.error.not_numeric": "Sum and average need a number column.",
   "builder.error.not_allowed": "This comparison takes no value.",
-  "builder.error.invalid": "The value does not fit the comparison."
+  "builder.error.invalid": "The value does not fit the comparison.",
+  "preview.nothing": "With these rights nothing on this page is visible."
 }

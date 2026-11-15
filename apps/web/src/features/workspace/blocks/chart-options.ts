@@ -312,18 +312,22 @@ export function buildOption(
       {
         type: 'funnel',
         sort: 'none',
-        left: '10%',
-        width: '80%',
+        // The funnel takes half the width; the labels get the rest, so they fit narrow
+        // blocks. Shares and losses are in the tooltip and the table view.
+        left: '2%',
+        width: '50%',
         gap: 2,
         minSize: '8%',
         label: {
           color: palette.text,
           position: 'right',
+          overflow: 'truncate',
+          width: 160,
           formatter: (params) => {
             const stage = data.stages[params.dataIndex]
             return stage === undefined
               ? ''
-              : `${labels.dimension(stage.label, 'x')} · ${labels.measure(stage.value, measure)} (${labels.percent(stage.share)})`
+              : `${labels.dimension(stage.label, 'x')}: ${labels.measure(stage.value, measure)}`
           },
         },
         data: data.stages.map((stage, index) => ({
