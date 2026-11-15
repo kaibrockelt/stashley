@@ -152,6 +152,7 @@ export function PageView(props: { toolbar?: (page: RenderPage) => ReactNode }) {
         {mode === 'preview' && designer && (
           <PreviewBar
             roles={roles}
+            viewable={page.data.viewable !== false}
             empty={
               page.data.table === null && page.data.rows.every((row) => row.components.length === 0)
             }

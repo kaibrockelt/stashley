@@ -662,6 +662,8 @@
   "versions.column.actions": "Actions",
   "versions.compareWithDraft": "Compare with draft",
   "versions.restore": "Restore into draft",
+  "versions.confirm.title": "Restore version {version} into the draft?",
+  "versions.confirm.text": "The saved draft is replaced and cannot be recovered. Restoring makes these changes to the draft:",
   "versions.from": "Compare",
   "versions.to": "With",
   "preview.open": "Preview as role",
@@ -852,5 +854,6 @@
   "builder.error.list_expected": "“Is one of” needs a parameter that takes a list.",
   "builder.error.list_not_allowed": "This comparison takes a single value, but the parameter is a list.",
   "preview.nothing": "With these rights nothing on this page is visible.",
+  "preview.notViewable": "These rights do not see the page: at run time it would not exist for these roles.",
   "page.nothingForYou": "Your roles cannot read any block on this page. Admins and managers see every page, but blocks only with the rights of a role. Preview as role shows the page as its users see it."
 }

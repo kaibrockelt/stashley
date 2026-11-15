@@ -662,6 +662,8 @@
   "versions.column.actions": "Aktionen",
   "versions.compareWithDraft": "Mit Entwurf vergleichen",
   "versions.restore": "In den Entwurf übernehmen",
+  "versions.confirm.title": "Version {version} in den Entwurf übernehmen?",
+  "versions.confirm.text": "Der gespeicherte Entwurf wird ersetzt und lässt sich nicht zurückholen. Das Übernehmen ändert den Entwurf so:",
   "versions.from": "Vergleiche",
   "versions.to": "Mit",
   "preview.open": "Vorschau als Fachrolle",
@@ -852,5 +854,6 @@
   "builder.error.list_expected": "„ist einer von“ braucht einen Parameter, der eine Liste nimmt.",
   "builder.error.list_not_allowed": "Dieser Vergleich nimmt einen einzelnen Wert, der Parameter ist aber eine Liste.",
   "preview.nothing": "Mit diesen Rechten ist auf der Seite nichts sichtbar.",
+  "preview.notViewable": "Diese Rechte sehen die Seite nicht: Zur Laufzeit gäbe es sie für diese Fachrollen gar nicht.",
   "page.nothingForYou": "Deine Fachrollen dürfen keinen Block dieser Seite lesen. Admins und Manager sehen jede Seite, Blöcke aber nur mit den Rechten einer Fachrolle. Die Vorschau als Fachrolle zeigt die Seite so, wie ihre Benutzer sie sehen."
 }

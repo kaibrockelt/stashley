@@ -542,8 +542,15 @@ describe('page and component rights', () => {
     )
     const preview = (roles: string[]) =>
       w.manager.request('GET', `/internal/pages/lindenhof?mode=preview&roles=${roles.join(',')}`)
-    expect((await preview([w.roles.lindenhof.id])).json<RenderPage>().table?.id).toBe('gaeste')
-    expect((await preview([w.roles.adler.id])).json<RenderPage>().table).toBeNull()
+    expect((await preview([w.roles.lindenhof.id])).json<RenderPage>()).toMatchObject({
+      table: { id: 'gaeste' },
+      viewable: true,
+    })
+    // Adler does not see the page: the preview says so instead of only showing nothing.
+    expect((await preview([w.roles.adler.id])).json<RenderPage>()).toMatchObject({
+      table: null,
+      viewable: false,
+    })
     const edit = (
       await w.manager.request('GET', '/internal/pages/lindenhof?mode=edit')
     ).json<RenderPage>()

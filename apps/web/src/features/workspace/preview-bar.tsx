@@ -49,7 +49,7 @@ export function PreviewRolesDialog(props: { selected: readonly string[]; onClose
 }
 
 /** Shown above a page in preview: whose rights apply, and the way back to editing. */
-export function PreviewBar(props: { roles: readonly string[]; empty: boolean }) {
+export function PreviewBar(props: { roles: readonly string[]; viewable: boolean; empty: boolean }) {
   const t = useT()
   const roles = useRoles()
   const navigate = useNavigate()
@@ -63,7 +63,11 @@ export function PreviewBar(props: { roles: readonly string[]; empty: boolean }) 
           ? t('preview.onlyEveryone')
           : t('preview.as', { roles: names.join(', ') })}
       </span>
-      {props.empty && <span>{t('preview.nothing')}</span>}
+      {!props.viewable ? (
+        <span>{t('preview.notViewable')}</span>
+      ) : (
+        props.empty && <span>{t('preview.nothing')}</span>
+      )}
       <Button variant="ghost" onPress={() => setChoosing(true)}>
         {t('preview.change')}
       </Button>

@@ -143,6 +143,8 @@ export interface RenderPage {
   parameters: { name: string; type: string; list: boolean }[]
   rows: { id: string; layout: RowLayout; components: RenderComponent[] }[]
   table: RenderComponent | null
+  /** Preview only: false when the chosen roles cannot see the page; it would be a 404 for them. */
+  viewable?: boolean
 }
 
 const modeFields = {

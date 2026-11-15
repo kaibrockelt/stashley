@@ -257,6 +257,7 @@ export class AccessService {
       parameters: document.parameters.map((parameter) => ({ ...parameter })),
       rows,
       table: table === undefined ? null : (render(table) ?? null),
+      ...(mode === 'preview' && { viewable: visible }),
     }
   }
 
