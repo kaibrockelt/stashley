@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { PageMode, RenderPage } from '@stashley/shared'
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
-import { useMemo, type ReactNode } from 'react'
+import { lazy, Suspense, useMemo, type ReactNode } from 'react'
 import { ApiError } from '../../api/client.ts'
 import { useUser } from '../../api/session.ts'
 import { useT } from '../../i18n/use-t.ts'
+import { Button } from '../../ui/controls.tsx'
 import { StateView } from '../../ui/state.tsx'
 import stateStyles from '../../ui/state.module.css'
 import { useRenderPage } from './api.ts'
@@ -16,6 +17,11 @@ import { PageContextProvider, type PageContextValue } from './page-context.tsx'
 import styles from './workspace.module.css'
 
 export type PageSearch = Record<string, unknown>
+
+// The editor with dnd-kit is a lazy chunk; users never load it (§22).
+const PageEditor = lazy(async () => ({
+  default: (await import('../editor/editor.tsx')).PageEditor,
+}))
 
 /** Filter values live in the URL as `f.<filterId>`, URL parameters under their names (§13.6). */
 export function splitSearch(page: RenderPage, search: PageSearch) {
@@ -117,6 +123,15 @@ export function PageView(props: { toolbar?: (page: RenderPage) => ReactNode }) {
       },
       replace: true,
     })
+  if (mode === 'edit' && designer) {
+    return (
+      <PageContextProvider value={context}>
+        <Suspense fallback={<StateView title={t('block.loading')} mascot={false} />}>
+          <PageEditor page={page.data} toolbar={props.toolbar?.(page.data)} />
+        </Suspense>
+      </PageContextProvider>
+    )
+  }
   return (
     <PageContextProvider value={context}>
       <div className={styles.page}>
@@ -127,7 +142,12 @@ export function PageView(props: { toolbar?: (page: RenderPage) => ReactNode }) {
               <p className={styles.description}>{page.data.description}</p>
             )}
           </div>
-          {props.toolbar?.(page.data)}
+          {designer && mode === 'runtime' && (
+            <Button onPress={() => void navigate({ to: '.', search: { mode: 'edit' } })}>
+              {t('editor.edit')}
+            </Button>
+          )}
+          {mode === 'preview' && props.toolbar?.(page.data)}
         </header>
         <PageFilters onChange={setFilter} />
         <PageGrid page={page.data} />
