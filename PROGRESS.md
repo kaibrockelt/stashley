@@ -268,3 +268,7 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Found and fixed: funnel labels were cut off in narrow blocks; a preview whose roles see nothing now says so; admins and managers without a matching role saw a published page as an empty page without explanation and now get a hint that points to preview as role.
   - Acceptance criterion "a manager builds every demo page through the UI and checks it with preview as role": met for overview, route status and awards in the sense of M5 (awards fully by clicking, the other two through the editor's API and checked in the UI). Forms (M6) and table pages (M6) follow; the full criterion is tested end to end in M9.
   - Open points for the review: the metric comparison from a second column of the same query (decision to confirm); a preview for a role without the view right returns the page with no components instead of 404; views are offered as form sources (the issue `view_read_only` catches it).
+- 2026-11-15: Noted for after the MVP: reduced profiles from one build, chosen when the instance starts.
+  - Examples: without the public API or MCP, a single-user mode, a team mode where everyone has the same rights.
+  - Disabled modules are neither registered nor loaded. The rights model stays as it is; a simple mode only simplifies the editor and writes grants to `authenticated` under the hood.
+  - To keep a separate build cheap later: the core never imports from the `api` and `mcp` modules (enforce with `no-restricted-imports` from M7 on).
