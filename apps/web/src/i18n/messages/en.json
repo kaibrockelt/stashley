@@ -842,5 +842,6 @@
   "builder.error.not_numeric": "Sum and average need a number column.",
   "builder.error.not_allowed": "This comparison takes no value.",
   "builder.error.invalid": "The value does not fit the comparison.",
-  "preview.nothing": "With these rights nothing on this page is visible."
+  "preview.nothing": "With these rights nothing on this page is visible.",
+  "page.nothingForYou": "Your roles cannot read any block on this page. Admins and managers see every page, but blocks only with the rights of a role. Preview as role shows the page as its users see it."
 }

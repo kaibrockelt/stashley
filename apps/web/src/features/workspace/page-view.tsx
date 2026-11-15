@@ -157,6 +157,14 @@ export function PageView(props: { toolbar?: (page: RenderPage) => ReactNode }) {
             }
           />
         )}
+        {mode === 'runtime' &&
+          designer &&
+          page.data.table === null &&
+          page.data.rows.every((row) => row.components.length === 0) && (
+            <p className={styles.banner} role="status">
+              {t('page.nothingForYou')}
+            </p>
+          )}
         <PageFilters onChange={setFilter} />
         <PageGrid page={page.data} />
       </div>
