@@ -57,6 +57,7 @@ export function VersionsDialog(props: {
   const list = versions.data ?? []
   const [from, setFrom] = useState<string>()
   const [to, setTo] = useState<string>(draft)
+  const [confirming, setConfirming] = useState<number>()
   const fromKey = from ?? (list[0] === undefined ? draft : String(list[0].version))
   const before = useVersion(props.pageId, fromKey)
   const after = useVersion(props.pageId, to)
@@ -131,7 +132,7 @@ export function VersionsDialog(props: {
                     <Button
                       variant="ghost"
                       isDisabled={props.dirty || restore.isPending}
-                      onPress={() => restore.mutate(entry.version)}
+                      onPress={() => setConfirming(entry.version)}
                     >
                       {t('versions.restore')}
                     </Button>
@@ -162,6 +163,57 @@ export function VersionsDialog(props: {
       )}
       <Actions>
         <Button onPress={props.onClose}>{t('action.done')}</Button>
+      </Actions>
+      {confirming !== undefined && (
+        <RestoreConfirmation
+          pageId={props.pageId}
+          version={confirming}
+          draft={props.draft}
+          busy={restore.isPending}
+          onConfirm={() => {
+            restore.mutate(confirming)
+            setConfirming(undefined)
+          }}
+          onClose={() => setConfirming(undefined)}
+        />
+      )}
+    </Dialog>
+  )
+}
+
+/** Restoring replaces the saved draft, which has no history: show what is lost first. */
+function RestoreConfirmation(props: {
+  pageId: string
+  version: number
+  draft: PageDocument
+  busy: boolean
+  onConfirm: () => void
+  onClose: () => void
+}) {
+  const t = useT()
+  const version = useVersion(props.pageId, String(props.version))
+  return (
+    <Dialog
+      title={t('versions.confirm.title', { version: props.version })}
+      isOpen
+      isWide
+      onOpenChange={(open) => !open && props.onClose()}
+    >
+      <p>{t('versions.confirm.text')}</p>
+      {version.data === undefined ? (
+        <p className={styles.muted}>{t('block.loading')}</p>
+      ) : (
+        <ChangeList before={props.draft} after={version.data.document} />
+      )}
+      <Actions>
+        <Button onPress={props.onClose}>{t('action.cancel')}</Button>
+        <Button
+          variant="danger"
+          isDisabled={props.busy || version.data === undefined}
+          onPress={props.onConfirm}
+        >
+          {t('versions.restore')}
+        </Button>
       </Actions>
     </Dialog>
   )
