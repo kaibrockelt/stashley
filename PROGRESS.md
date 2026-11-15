@@ -1,10 +1,10 @@
 # Progress
 
-**Current milestone:** M5 – Pages and dashboards (in progress)
+**Current milestone:** M5 – Pages and dashboards (in review)
 
-**Next step:** Close M5: build the scenario's overview, route status and awards pages through the UI and write the closing report. On the test stand only `anmeldung` and `person` are shared and there is no demo data, so this needs the remaining demo tables shared there first (an admin step) or a run against the integration demo database.
+**Next step:** Review M5 in a fresh session with high (or extra high) effort, then the operator accepts M5. After that M6 – forms and table pages.
 
-**Recommended model strength:** medium for closing M5; the review of M5 in a fresh session: high.
+**Recommended model strength:** review of M5: high; M6: medium (write path and base filters: high).
 
 The SQL validation of M4 is tested externally; that does not block M5.
 
@@ -17,7 +17,7 @@ The SQL validation of M4 is tested externally; that does not block M5.
 | M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | Done |
 | M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | Done |
 | M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Done |
-| M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | In progress |
+| M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | In review |
 | M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | Open |
 | M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High | Open |
 | M8 | MCP server: authorization server, metadata, tools, MCP exposure, privacy notice, call log | High | Open |
@@ -258,3 +258,13 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Verified: 56 web unit tests, typecheck, lint, i18n (843 keys), SPDX; initial load 193 KB gzip. On the test stand (MariaDB 12.3), a spec with a join, a weekly bucket, a count, a sum, a list filter, a parameter and a `LIKE` value with a quote compiled to the expected SQL, ran, and returned the expected column roles; unfitting functions came back as `not_numeric` and `not_a_time`.
   - Checked in the browser on the test stand: choosing the base table, adding the join to `person`, switching a column to `person.land` and another to a count, the derived grouping, removing columns, the live SQL, adding a sort entry, a test run with the suggested visualization, saving, reopening in builder mode, and converting to SQL after the confirmation. The test query was removed again.
   - Found and fixed in that check: sortable rows (builder columns, editor rows, page list) lost keyboard focus after a drop, and builder column rows were keyed by their name, so typing a new name rebuilt the field. Rows now keep their own IDs, and focus returns to the handle of the moved item.
+- 2026-11-15: M5 implemented; in review.
+  - Scenario pages on the test stand (MariaDB 12.3): the remaining demo tables and views were shared with the ceilings of the specification (views read-only; keys `anmeldung_id` for `v_zahlungsstatus` and `v_streckenlage`, `person_id` for `v_teilnahmen`, none for `v_medaille`); the instance variable `current_event_id` and the roles Orga, Kasse and Check-in were created.
+  - Eight queries, three of them from the builder (registrations per week with a weekly bucket, participants by country with a join, stamps per station and quarter hour), five in SQL (overview metrics, the funnel, participants per last station, overdue participants with phone numbers, medal candidates).
+  - Awards (`ehrung`) was built entirely through the UI: page, viewers, table block on the medal candidates with read for Orga, form block on `ehrung` in create mode with create for Orga, save, publish.
+  - Overview and route status were assembled as drafts through the editor's API (`PUT …/draft`), then opened in the editor, checked without issues and published in the UI. They use metrics (one query for six values, currency format), a line chart on a weekly bucket, a funnel with role overrides (`stufe` ordered, `schritt` identifier), bars, a table with a duration format, and a heatmap.
+  - Preview as role: Kasse sees every block of the overview and nothing on route status and awards; Orga sees all three pages.
+  - The stand has no demo data, so blocks show zero values or "No data". Charts with data were checked earlier with a query of fixed values.
+  - Found and fixed: funnel labels were cut off in narrow blocks; a preview whose roles see nothing now says so; admins and managers without a matching role saw a published page as an empty page without explanation and now get a hint that points to preview as role.
+  - Acceptance criterion "a manager builds every demo page through the UI and checks it with preview as role": met for overview, route status and awards in the sense of M5 (awards fully by clicking, the other two through the editor's API and checked in the UI). Forms (M6) and table pages (M6) follow; the full criterion is tested end to end in M9.
+  - Open points for the review: the metric comparison from a second column of the same query (decision to confirm); a preview for a role without the view right returns the page with no components instead of 404; views are offered as form sources (the issue `view_read_only` catches it).
