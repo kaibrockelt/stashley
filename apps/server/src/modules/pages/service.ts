@@ -481,38 +481,45 @@ export class PagesService {
    * Every section and page must be listed exactly once.
    */
   async reorder(actor: Actor, order: z.infer<typeof navigationOrder>): Promise<void> {
-    const sections = await this.sections()
-    const pages = await this.deps.db
-      .selectFrom('pages')
-      .select(['id', 'section_id', 'position'])
-      .where('archived_at', 'is', null)
-      .execute()
     const sameSet = (a: string[], b: string[]) =>
       a.length === b.length && new Set(a).size === a.length && b.every((id) => a.includes(id))
-    if (
-      !sameSet(
-        order.sections,
-        sections.map((section) => section.id),
-      )
-    ) {
-      throw fieldError('sections', 'incomplete')
-    }
-    if (
-      !sameSet(
-        order.pages.map((page) => page.id),
-        pages.map((page) => page.id),
-      )
-    ) {
-      throw fieldError('pages', 'incomplete')
-    }
-    const known = new Set(order.sections)
-    order.pages.forEach((page, index) => {
-      if (page.sectionId !== null && !known.has(page.sectionId)) {
-        throw fieldError(`pages.${index}.sectionId`, 'not_found')
-      }
-    })
     const now = this.clock()
-    await writeTransaction(this.deps.db, async (trx) => {
+    // Checked and written in one transaction, so a section or page created meanwhile is
+    // never left out of the order.
+    const { sections, pages } = await writeTransaction(this.deps.db, async (trx) => {
+      const sections = await trx
+        .selectFrom('sections')
+        .select(['id', 'position'])
+        .orderBy('position')
+        .orderBy('name')
+        .execute()
+      const pages = await trx
+        .selectFrom('pages')
+        .select(['id', 'section_id', 'position'])
+        .where('archived_at', 'is', null)
+        .execute()
+      if (
+        !sameSet(
+          order.sections,
+          sections.map((section) => section.id),
+        )
+      ) {
+        throw fieldError('sections', 'incomplete')
+      }
+      if (
+        !sameSet(
+          order.pages.map((page) => page.id),
+          pages.map((page) => page.id),
+        )
+      ) {
+        throw fieldError('pages', 'incomplete')
+      }
+      const known = new Set(order.sections)
+      order.pages.forEach((page, index) => {
+        if (page.sectionId !== null && !known.has(page.sectionId)) {
+          throw fieldError(`pages.${index}.sectionId`, 'not_found')
+        }
+      })
       for (const [position, sectionId] of order.sections.entries()) {
         await trx
           .updateTable('sections')
@@ -527,6 +534,7 @@ export class PagesService {
           .where('id', '=', page.id)
           .execute()
       }
+      return { sections, pages }
     })
     await this.deps.audit.record(actor, {
       action: 'navigation.reordered',
@@ -541,7 +549,13 @@ export class PagesService {
         ],
       },
     })
-    for (const page of order.pages) this.deps.events.emit('page.changed', { pageId: page.id })
+    // Only pages whose section or position changed.
+    const before = new Map(pages.map((page) => [page.id, page]))
+    order.pages.forEach((page, position) => {
+      const previous = before.get(page.id)
+      if (previous?.position !== position || previous.section_id !== page.sectionId)
+        this.deps.events.emit('page.changed', { pageId: page.id })
+    })
   }
 
   async remove(actor: Actor, id: string): Promise<void> {
