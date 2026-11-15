@@ -1,12 +1,12 @@
 # Progress
 
-**Current milestone:** M5 – Pages and dashboards (in review)
+**Current milestone:** M6 – Forms and table pages (open)
 
-**Next step:** The operator accepts M5 (review findings B1 and S1–S7 are fixed, see log 2026-11-15). After that M6 – forms and table pages.
+**Next step:** Plan M6 – forms and table pages – in a fresh session; start with the review of the write user's column limits (see log 2026-11-15).
 
-**Recommended model strength:** review of M5: high; M6: medium (write path and base filters: high).
+**Recommended model strength:** M6: medium (write path and base filters: high).
 
-The SQL validation of M4 is tested externally; that does not block M5.
+The SQL validation of M4 is tested externally; that does not block M6.
 
 ## Milestones
 
@@ -17,7 +17,7 @@ The SQL validation of M4 is tested externally; that does not block M5.
 | M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | Done |
 | M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | Done |
 | M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Done |
-| M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | In review |
+| M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | Done |
 | M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | Open |
 | M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High | Open |
 | M8 | MCP server: authorization server, metadata, tools, MCP exposure, privacy notice, call log | High | Open |
@@ -291,3 +291,4 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Found and fixed: discarding kept the rejected save's problems on screen; forms said "table or view".
   - Not reachable in the browser: N5, because queries do not refetch on window focus (`refetchOnWindowFocus: false`); the editor follows a newer draft only when the page detail is fetched again. S2 and S4 are covered by unit and integration tests only.
   - Seen on the stand, not changed: the draft of the awards page has three page filters with English labels ("Date", "Search", "Selection"), probably left from testing.
+- 2026-11-15: The operator accepted M5. Open from its review: N9 (labels of chosen select filter values after a reload) and N10 (rich-text markup in chart labels, cosmetic).
