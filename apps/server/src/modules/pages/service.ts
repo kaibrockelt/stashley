@@ -380,7 +380,14 @@ export class PagesService {
     }
     const version = (row.published_version ?? 0) + 1
     const now = this.clock()
-    await writeTransaction(this.deps.db, async (trx) => {
+    const raced = await writeTransaction(this.deps.db, async (trx) => {
+      // Another publish since this one read the page would take the same version number.
+      const latest = await trx
+        .selectFrom('pages')
+        .select('published_version')
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow()
+      if (latest.published_version !== row.published_version) return true
       await trx
         .insertInto('page_versions')
         .values({
@@ -402,7 +409,9 @@ export class PagesService {
         .where('page_id', '=', id)
         .where('version', '<=', version - keptVersions)
         .execute()
+      return false
     })
+    if (raced) throw new DraftConflict(await this.get(id))
     await this.deps.audit.record(actor, {
       action: 'page.published',
       subject: { kind: 'page', id, label: draft.title },

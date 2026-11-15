@@ -113,6 +113,26 @@ async function storeColumns(w: World) {
 }
 
 describe('page versions', () => {
+  it('answer concurrent publishes with a conflict, never a server error', async () => {
+    const w = await world()
+    await storeColumns(w)
+    const page = await createPage(w, 'parallel')
+    const saved = await save(w.manager, page.id, page.draftRevision, chartPage(w, bar))
+    expect(saved.statusCode, saved.body).toBe(200)
+    await w.manager.session()
+    const publish = () =>
+      w.manager.request('POST', `/internal/design/pages/${page.id}/publish`, undefined)
+    const statuses = (await Promise.all([publish(), publish(), publish()])).map(
+      (response) => response.statusCode,
+    )
+    expect(statuses).toContain(200)
+    expect(statuses.every((status) => status === 200 || status === 409)).toBe(true)
+    const versions = (
+      await w.manager.request('GET', `/internal/design/pages/${page.id}/versions`)
+    ).json<{ data: PageVersionSummary[] }>().data
+    expect(versions).toHaveLength(statuses.filter((status) => status === 200).length)
+  })
+
   it('lists versions, restores one into the draft and keeps the last 20', async () => {
     const w = await world()
     let page = await createPage(w, 'uebersicht')
