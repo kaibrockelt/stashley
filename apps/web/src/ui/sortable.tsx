@@ -23,6 +23,8 @@ import type { ReactNode } from 'react'
 import { useT } from '../i18n/use-t.ts'
 import styles from './sortable.module.css'
 
+const escapeSelector = (value: string) => window.CSS.escape(value)
+
 /**
  * A sortable list with pointer and keyboard dragging (§22: dnd-kit with its keyboard sensor).
  * Space or Enter on the handle picks an item up, the arrow keys move it, Space drops it.
@@ -59,6 +61,13 @@ export function SortableList<T extends { id: string }>(props: {
   }
   const end = (event: DragEndEvent) => {
     const { active, over } = event
+    // After the list re-renders, focus stays on the handle of the moved item, so keyboard
+    // users can keep moving it; dnd-kit's own restore can land on its old neighbour.
+    window.setTimeout(() => {
+      document
+        .querySelector<HTMLElement>(`[data-sort-handle="${escapeSelector(String(active.id))}"]`)
+        ?.focus()
+    }, 50)
     if (over === null || active.id === over.id) return
     const from = props.items.findIndex((entry) => entry.id === active.id)
     const to = props.items.findIndex((entry) => entry.id === over.id)
@@ -123,6 +132,7 @@ function SortableItem(props: {
       ref={setActivatorNodeRef}
       className={styles.handle}
       aria-label={t('sort.handle', { item: props.label })}
+      data-sort-handle={props.id}
       {...attributes}
       {...listeners}
     >

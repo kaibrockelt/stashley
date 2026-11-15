@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { BuilderOperator, DesignCatalog, FieldError } from '@stashley/shared'
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import type { MessageId } from '../../../../i18n/locale.ts'
 import { useT } from '../../../../i18n/use-t.ts'
 import { Button, Notice, SelectField, SwitchField, TextField } from '../../../../ui/controls.tsx'
@@ -251,9 +251,22 @@ function ColumnsSection(props: {
     return alias === 'base' || alias === object ? object : `${object} (${alias})`
   }
   const grouping = groupingOf(spec)
+  // Rows keep an identity of their own while they move, are renamed or neighbours come and go,
+  // so keyboard focus stays where it was. Changes from outside (e.g. removing a join) that
+  // alter the number of columns start a fresh set.
+  const [ids, setIds] = useState<string[]>(() => spec.columns.map((_, index) => `k${index}`))
+  const nextId = useRef(spec.columns.length)
+  const rowIds =
+    ids.length === spec.columns.length
+      ? ids
+      : spec.columns.map((_, index) => `n${spec.columns.length}:${index}`)
+  const fresh = () => {
+    nextId.current += 1
+    return `k${nextId.current}`
+  }
   const items = spec.columns.map((column, index) => ({
     ...column,
-    id: `${index}:${column.name}`,
+    id: rowIds[index] ?? `i${index}`,
     index,
   }))
   return (
@@ -269,6 +282,7 @@ function ColumnsSection(props: {
         items={items}
         label={(item) => item.name}
         onReorder={(next) => {
+          setIds(next.map((item) => item.id))
           props.onChange({
             ...spec,
             columns: next.flatMap((item) => spec.columns[item.index] ?? []),
@@ -342,7 +356,10 @@ function ColumnsSection(props: {
               <Button
                 variant="ghost"
                 isDisabled={spec.columns.length <= 1}
-                onPress={() => props.onChange(removeColumn(spec, item.index))}
+                onPress={() => {
+                  setIds(rowIds.filter((_, index) => index !== item.index))
+                  props.onChange(removeColumn(spec, item.index))
+                }}
                 aria-label={t('builder.removeColumn', { name: item.name })}
               >
                 {t('action.delete')}
@@ -357,12 +374,18 @@ function ColumnsSection(props: {
           <Button
             onPress={() => {
               const first = objectOf(spec, catalog, 'base')?.columns[0]?.name ?? null
+              setIds([...rowIds, fresh()])
               props.onChange(addColumn(spec, 'base', first))
             }}
           >
             {t('builder.addColumn')}
           </Button>
-          <Button onPress={() => props.onChange(addColumn(spec, 'base', null))}>
+          <Button
+            onPress={() => {
+              setIds([...rowIds, fresh()])
+              props.onChange(addColumn(spec, 'base', null))
+            }}
+          >
             {t('builder.addCount')}
           </Button>
         </div>
