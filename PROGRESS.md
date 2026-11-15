@@ -1,8 +1,8 @@
 # Progress
 
-**Current milestone:** M5 – Pages and dashboards (open)
+**Current milestone:** M5 – Pages and dashboards (in progress)
 
-**Next step:** Present the M5 plan and wait for the operator's approval. The SQL validation of M4 is tested externally; that does not block M5.
+**Next step:** M5 steps 1–8 (everything up to the query builder UI). Stop before step 9, the query builder UI, so the operator can raise the effort. The SQL validation of M4 is tested externally; that does not block M5.
 
 **Recommended model strength for M5:** medium; query builder UI: high.
 
@@ -15,7 +15,7 @@
 | M2 | Sign-in and accounts: local accounts, sessions, CSRF, 2FA, OIDC with approval, system roles, profile, recovery CLI, audit log | High | Done |
 | M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | Done |
 | M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Done |
-| M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | Open |
+| M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | In progress |
 | M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | Open |
 | M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High | Open |
 | M8 | MCP server: authorization server, metadata, tools, MCP exposure, privacy notice, call log | High | Open |
@@ -222,3 +222,10 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Checked in the browser on the test stand (MariaDB 12.3): the write scope lists writes beyond the ceiling per object and suggests the statements (`REVOKE` on the schema and on unexposed tables, `GRANT` per ceiling). The statements were not applied there.
   - Carried forward to M6, at the operator's request: limit the write user's `INSERT` and `UPDATE` to the writable columns. Before implementing it, review whether it makes sense and what it affects (column sets that differ per component, generated and default values, `updated_at` set by the server, upserts, the simulation of D10), instead of applying it blindly.
 - 2026-11-15: M4 accepted by the operator. M5 starts with medium effort; the query builder UI needs high.
+- 2026-11-15: M5 plan approved with E1–E5. Work stops before the query builder UI (step 9), so the operator can raise the effort for it.
+  - Plan: dependencies and chart palettes; result shapes, block settings and the document diff in `shared`; versions, restore, compare, reordering and a design catalog on the server; workspace shell, navigation and grid; blocks and charts; the editor with drafts, conflicts and publishing; version history and preview as role; the SQL editor; then the query builder UI.
+  - E1: Markdown is rendered with `micromark` (MIT) without its HTML extension, so HTML in text blocks is escaped. An addition to the D8 list.
+  - E2: On a draft conflict (`409`) the editor shows the structured diff between the own and the current draft. The manager either takes the current draft or saves the own one deliberately as a new revision.
+  - E3: Builder queries store the spec and the SQL. Converting to SQL drops the spec from the next version on; the way back is an older version.
+  - E4: The awards criterion is met in M5 with the table of medal candidates. The form "record award" can be placed as a block with table and mode; its fields follow in M6.
+  - E5: Column role overrides (for example a number used as a dimension) live per block in its settings, not on the query.
