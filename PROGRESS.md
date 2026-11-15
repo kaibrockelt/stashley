@@ -2,9 +2,9 @@
 
 **Current milestone:** M5 – Pages and dashboards (in progress)
 
-**Next step:** M5 step 9, the query builder UI. It needs high effort; the operator raises it before the work starts. Then build the overview, route status and awards pages of the scenario through the UI, and the M5 closing report.
+**Next step:** Close M5: build the scenario's overview, route status and awards pages through the UI and write the closing report. On the test stand only `anmeldung` and `person` are shared and there is no demo data, so this needs the remaining demo tables shared there first (an admin step) or a run against the integration demo database.
 
-**Recommended model strength for the next step:** high (query builder UI).
+**Recommended model strength:** medium for closing M5; the review of M5 in a fresh session: high.
 
 The SQL validation of M4 is tested externally; that does not block M5.
 
@@ -250,3 +250,10 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Found and fixed in the browser check: ECharts' HTML tooltips were blocked by the CSP and custom tooltip formatters put data values into HTML; tooltips now render on the canvas. The version compare no longer lists pinned query versions; the block dialog no longer requests a placeholder query.
   - Not checked in the browser: the draft conflict dialog, page filters, metric, record and table blocks with real data (the test stand's database has no demo data before M9), restore, a preview with roles (the stand has no roles), and the layout at 375 px.
   - Decision to confirm (from steps 1–5): the metric comparison comes from a second column of the same query.
+- 2026-11-15: M5 step 9, the query builder UI, implemented (effort raised by the operator).
+  - The query editor offers the builder next to the SQL editor. Base table; joins along shared relations in both directions (one each, several each) with "keep all rows" or "only matches"; columns with value, aggregates or time buckets that fit the column kind, reorderable by drag and drop, with output names that follow the column until renamed; filters with fixed values, parameters or instance variables and operators per column kind; sort order and limit. The grouping follows from the aggregated columns and is spelled out.
+  - The server compiles the spec while the manager edits; the generated SQL, compiler notes (TIMESTAMP buckets in UTC without time zone tables) and field errors show at their rows. Parameter definitions follow the filters and take their type and list form from the column.
+  - Converting to SQL asks first and is one way. Test runs name the visualizations the result fits.
+  - Spec edits are pure functions with 13 unit tests that mirror the compiler's rules.
+  - Verified: 56 web unit tests, typecheck, lint, i18n (843 keys), SPDX; initial load 193 KB gzip. On the test stand (MariaDB 12.3), a spec with a join, a weekly bucket, a count, a sum, a list filter, a parameter and a `LIKE` value with a quote compiled to the expected SQL, ran, and returned the expected column roles; unfitting functions came back as `not_numeric` and `not_a_time`.
+  - Not checked in the browser by me: the builder's clicks themselves, because the operator was using the browser pane at the same time.
