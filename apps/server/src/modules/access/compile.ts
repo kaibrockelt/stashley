@@ -269,8 +269,9 @@ class PageCompiler {
 
   principal(path: string, principal: string): void {
     if (principal !== authenticatedPrincipal && !this.deps.roleIds.has(principal)) {
-      // D15: grants to deleted roles stay in the document but take no effect.
-      this.issue(path, 'unknown_role', { role: principal })
+      // D15: grants to deleted roles stay in the document but take no effect. A warning, so
+      // the draft can still be saved and the role removed in the editor.
+      this.issue(path, 'unknown_role', { role: principal }, true)
     }
   }
 }

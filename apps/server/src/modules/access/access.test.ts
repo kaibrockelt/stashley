@@ -306,14 +306,7 @@ describe('manager limits (§8.6)', () => {
           ],
         },
       }),
-    ).toEqual([
-      { field: 'access.grants.5', code: 'unknown_source', params: { ops: 'read' } },
-      {
-        field: 'access.view.2',
-        code: 'unknown_role',
-        params: { role: '01890000-0000-7000-8000-00000000beef' },
-      },
-    ])
+    ).toEqual([{ field: 'access.grants.5', code: 'unknown_source', params: { ops: 'read' } }])
     // A component reading an object without table access, or an excluded column.
     const hidden = structuredClone(base)
     hidden.rows = [
@@ -601,6 +594,20 @@ describe('page and component rights', () => {
     expect(after.data.find((entry) => entry.pageId === kasse.id)?.published).toContainEqual(
       expect.objectContaining({ code: 'unknown_role' }),
     )
+    // The deleted role is only a warning: the draft can still be saved and published.
+    const detail = (
+      await w.manager.request('GET', `/internal/design/pages/${kasse.id}`)
+    ).json<PageDetail>()
+    const saved = await saveDraft(w.manager, kasse.id, detail.draftRevision, {
+      ...detail.draft,
+      title: 'Kasse neu',
+    })
+    expect(saved.statusCode).toBe(200)
+    expect(saved.json<PageDetail>().issues).toContainEqual(
+      expect.objectContaining({ code: 'unknown_role', severity: 'warning' }),
+    )
+    const republished = await w.manager.send('POST', `/internal/design/pages/${kasse.id}/publish`)
+    expect(republished.statusCode).toBe(200)
 
     // Losing a role takes effect on the next request.
     const lindenhof = await createPage(

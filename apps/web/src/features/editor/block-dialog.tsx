@@ -699,7 +699,8 @@ function RightsFields(props: {
   const name = (principal: string) =>
     principal === 'authenticated'
       ? t('editor.everyone')
-      : (roles.data?.find((role) => role.id === principal)?.name ?? principal)
+      : (roles.data?.find((role) => role.id === principal)?.name ??
+        (roles.data === undefined ? principal : t('editor.deletedRole')))
   const viewers = props.document.access.view
   if (viewers.length === 0) return <Notice tone="info">{t('editor.noViewers')}</Notice>
   if (source === undefined) return <p className={styles.muted}>{t('editor.textRights')}</p>

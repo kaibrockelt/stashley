@@ -29,7 +29,7 @@ export function sourceKeyOf(block: Block): string | undefined {
     : `table:${block.source.tableAccessId}`
 }
 
-/** Sources still used by a component or a select filter. */
+/** Sources still used by a component; select filters need no grants. */
 function usedSources(document: PageDocument): Set<string> {
   const keys = new Set<string>()
   const blocks =
@@ -224,6 +224,44 @@ export function setViewers(document: PageDocument, view: string[]): PageDocument
       view: view,
       grants: document.access.grants.filter((grant) => visible.has(grant.principal)),
     },
+  }
+}
+
+/** Principals the document names that are neither `authenticated` nor a known role (D15). */
+export function unknownPrincipals(document: PageDocument, roleIds: readonly string[]): string[] {
+  const known = new Set<string>(['authenticated', ...roleIds])
+  const named = [
+    ...document.access.view,
+    ...document.access.grants.map((grant) => grant.principal),
+    ...blocksOf(document).flatMap((block) =>
+      block.restrictions.map((restriction) => restriction.principal),
+    ),
+  ]
+  return [...new Set(named.filter((principal) => !known.has(principal)))]
+}
+
+function blocksOf(document: PageDocument): Block[] {
+  return document.table === null ? document.rows.flatMap((row) => row.blocks) : [document.table]
+}
+
+/** Removes deleted roles from the viewers, the grants and every block's restrictions. */
+export function withoutPrincipals(
+  document: PageDocument,
+  principals: readonly string[],
+): PageDocument {
+  const removed = new Set(principals)
+  const clean = <T extends Block>(block: T): T => ({
+    ...block,
+    restrictions: block.restrictions.filter((restriction) => !removed.has(restriction.principal)),
+  })
+  return {
+    ...document,
+    access: {
+      view: document.access.view.filter((principal) => !removed.has(principal)),
+      grants: document.access.grants.filter((grant) => !removed.has(grant.principal)),
+    },
+    rows: document.rows.map((row) => ({ ...row, blocks: row.blocks.map(clean) })),
+    table: document.table === null ? null : clean(document.table),
   }
 }
 

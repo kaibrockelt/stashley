@@ -16,6 +16,8 @@ import {
   setGrant,
   setRowLayout,
   setViewers,
+  unknownPrincipals,
+  withoutPrincipals,
 } from './document-ops.ts'
 
 const queryId = '0196f3a4-1111-7000-8000-000000000001'
@@ -123,5 +125,42 @@ describe('editor document operations', () => {
     ])
     doc = setViewers(doc, ['authenticated'])
     expect(doc.access).toEqual({ view: ['authenticated'], grants: [] })
+  })
+})
+
+describe('deleted roles (D15)', () => {
+  const kept = '0196f3a4-2222-7000-8000-000000000001'
+  const gone = '0196f3a4-2222-7000-8000-000000000002'
+  const source = `query:${queryId}`
+  const page = (): PageDocument => {
+    const base = addRow(emptyPage('dashboard', 'Kasse'), {
+      ...chart('b1'),
+      restrictions: [
+        { principal: gone as never, ops: [] },
+        { principal: kept as never, ops: [] },
+      ],
+    })
+    return {
+      ...base,
+      access: {
+        view: ['authenticated', kept, gone] as never,
+        grants: [
+          { principal: kept as never, source: source as never, ops: ['read'] },
+          { principal: gone as never, source: source as never, ops: ['read'] },
+        ],
+      },
+    }
+  }
+
+  it('finds principals that are no known role', () => {
+    expect(unknownPrincipals(page(), [kept])).toEqual([gone])
+    expect(unknownPrincipals(page(), [kept, gone])).toEqual([])
+  })
+
+  it('removes them from viewers, grants and restrictions', () => {
+    const clean = withoutPrincipals(page(), [gone])
+    expect(clean.access.view).toEqual(['authenticated', kept])
+    expect(clean.access.grants.map((grant) => grant.principal)).toEqual([kept])
+    expect(clean.rows[0]?.blocks[0]?.restrictions).toEqual([{ principal: kept, ops: [] }])
   })
 })

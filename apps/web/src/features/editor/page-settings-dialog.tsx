@@ -11,6 +11,7 @@ import {
   CheckboxField,
   Dialog,
   Form,
+  Notice,
   SelectField,
   SwitchField,
   TextAreaField,
@@ -18,7 +19,13 @@ import {
 } from '../../ui/controls.tsx'
 import { useQueries, useQueryDetail, useRoles } from '../design/design-api.ts'
 import { unsetId } from './block-dialog.tsx'
-import { newId, setViewers, withDescription } from './document-ops.ts'
+import {
+  newId,
+  setViewers,
+  unknownPrincipals,
+  withDescription,
+  withoutPrincipals,
+} from './document-ops.ts'
 import styles from './editor.module.css'
 
 const typeLabels: Record<ParamType, MessageId> = {
@@ -89,6 +96,14 @@ export function PageSettingsDialog(props: {
   const roles = useRoles()
   const [document, setDocument] = useState(props.document)
   const view = document.access.view
+  // Only once the roles are known, so a slow load never looks like deleted roles.
+  const deleted =
+    roles.data === undefined
+      ? []
+      : unknownPrincipals(
+          document,
+          roles.data.map((role) => role.id),
+        )
   const toggleViewer = (principal: string, selected: boolean) =>
     setDocument(
       setViewers(
@@ -161,6 +176,14 @@ export function PageSettingsDialog(props: {
                   onChange={(selected) => toggleViewer(role.id, selected)}
                 />
               ))}
+              {deleted.length > 0 && (
+                <Notice tone="info">
+                  <p>{t('editor.deletedRoles', { count: deleted.length })}</p>
+                  <Button onPress={() => setDocument(withoutPrincipals(document, deleted))}>
+                    {t('editor.removeDeletedRoles')}
+                  </Button>
+                </Notice>
+              )}
             </fieldset>
             <SwitchField
               label={t('editor.mcp')}
