@@ -5,10 +5,10 @@ import type {
   CatalogObject,
   CatalogSnapshot,
   GrantReport,
-  ReadScope,
   Relation,
   TableAccess,
   TableOp,
+  UserScope,
   relationInput,
   tableAccessCreate,
   tableAccessUpdate,
@@ -27,7 +27,7 @@ import type { Actor, AuditLog } from '../audit/audit-log.ts'
 import type { CatalogService } from '../catalog/service.ts'
 import { columnReadable, objectPrivileges } from '../connections/grants.ts'
 import type { ConnectionsService } from '../connections/service.ts'
-import { readScope } from './read-scope.ts'
+import { userScope } from './user-scope.ts'
 import { checkTemplate, defaultTemplate, type TemplateContext } from './templates.ts'
 
 type CreateInput = z.infer<typeof tableAccessCreate>
@@ -231,21 +231,22 @@ export class TableAccessService {
     })
   }
 
-  /** What the read user may read beyond the exposed objects and columns (§9.4). */
-  async readScope(connectionId: string): Promise<ReadScope> {
+  /** What the read or write user may do beyond the table access (§9.4). */
+  async scope(connectionId: string, purpose: 'read' | 'write'): Promise<UserScope> {
     const connection = await this.deps.connections.get(connectionId)
     const { reports } = await this.deps.connections.grantReports(connectionId)
     const snapshot = await this.deps.catalog.current(connectionId)
     const rows = await this.rows(connectionId)
     const exclusions = await this.exclusions(rows.map((row) => row.id))
-    return readScope({
+    return userScope({
+      purpose,
       database: connection.databaseName,
-      report: reports.read,
+      report: reports[purpose],
       catalog: snapshot?.objects ?? [],
       exposed: rows.map((row) => ({
         objectName: row.object_name,
         objectType: row.object_type,
-        readable: (row.ops & opBits.read) !== 0,
+        ops: maskToOps(row.ops),
         excluded: excludedForAll(exclusions, row.id),
       })),
     })
@@ -296,6 +297,16 @@ export class TableAccessService {
     // Without a write user, `no_write_user` already covers the write operations.
     const ungranted = ops.filter((op) => !granted.has(op) && (op === 'read' || hasWriter))
     if (ungranted.length > 0) warnings.push({ code: 'ops_without_grant', ops: ungranted })
+    // The database would let the write user write more than the ceiling allows; views never.
+    if (reports.write !== undefined) {
+      const privileges = objectPrivileges(reports.write, row.object_name)
+      const beyond = (['create', 'update', 'delete'] as const).filter(
+        (op) =>
+          privileges.has({ create: 'INSERT', update: 'UPDATE', delete: 'DELETE' }[op]) &&
+          !ops.includes(op),
+      )
+      if (beyond.length > 0) warnings.push({ code: 'write_beyond_ceiling', ops: [...beyond] })
+    }
     if (row.object_type === 'view' && row.key_column === null) {
       warnings.push({ code: 'view_without_key' })
     }

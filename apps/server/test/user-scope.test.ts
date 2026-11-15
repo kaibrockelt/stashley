@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { Connection, QueryResult, ReadScope, TableAccess } from '@stashley/shared'
+import type { Connection, QueryResult, TableAccess, UserScope } from '@stashley/shared'
 import type mysql from 'mysql2/promise'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Server } from '../src/app.ts'
@@ -15,21 +15,22 @@ import {
 } from './support.ts'
 
 /**
- * The read user's scope against real servers (§9.4): the statements Stashley suggests are
- * valid on every engine, and afterwards the database itself refuses unexposed objects and
- * excluded columns, while exposed data reads as before.
+ * The scope of the read and the write user against real servers (§9.4): the statements
+ * Stashley suggests are valid on every engine. Afterwards the database itself refuses
+ * unexposed objects, excluded columns and writes above a ceiling, while exposed data reads
+ * and writes as before.
  */
-describe.skipIf(targets.length === 0).each(targets)('read scope on $name', ({ url }) => {
+describe.skipIf(targets.length === 0).each(targets)('user scopes on $name', ({ url }) => {
   let root: mysql.Connection
   let server: Server
   let admin: TestClient
   let connection: Connection
   let access: Map<string, TableAccess>
 
-  const scope = async () =>
+  const scope = async (purpose: 'read' | 'write' = 'read') =>
     (
-      await admin.request('GET', `/internal/admin/connections/${connection.id}/read-scope`)
-    ).json<ReadScope>()
+      await admin.request('GET', `/internal/admin/connections/${connection.id}/${purpose}-scope`)
+    ).json<UserScope>()
   const list = async () =>
     (
       await admin.request('GET', `/internal/admin/table-access?connectionId=${connection.id}`)
@@ -139,5 +140,66 @@ describe.skipIf(targets.length === 0).each(targets)('read scope on $name', ({ ur
       exclusions: after.exclusions,
     })
     expect(saved.statusCode, saved.body).toBe(200)
+  })
+
+  // Runs after the read user was narrowed and the schema read again.
+  it('limits the write user to the ceilings', async () => {
+    const before = await scope('write')
+    expect(before).toMatchObject({
+      account: 'stashley_write@%',
+      excludedReadable: [
+        { object: 'hotel', columns: ['kontakt_email'] },
+        { object: 'v_teilnahmen', columns: ['teilnahmen'] },
+      ],
+      notes: [],
+    })
+    expect(before.writableBeyondCeiling).toContainEqual({ object: 'checkin', ops: ['update'] })
+    expect(before.writableBeyondCeiling).toContainEqual({
+      object: 'v_zahlungsstatus',
+      ops: ['create', 'update'],
+    })
+    const checkin = (await list()).find((entry) => entry.objectName === 'checkin')
+    expect(checkin?.warnings).toContainEqual({ code: 'write_beyond_ceiling', ops: ['update'] })
+
+    for (const statement of before.statements) await root.query(statement)
+    await server.services.pools.invalidate(connection.id)
+    const resolved = await server.services.connections.resolve(connection.id)
+    const writer = resolved.users.write
+    if (writer === undefined) throw new Error('no write user')
+    const asWriter = (sql: string) =>
+      server.services.pools.run(connection.id, resolved.spec, writer, (session) =>
+        session.query(sql),
+      )
+
+    // The database refuses writes above a ceiling, unexposed objects and excluded columns.
+    for (const [sql, errno] of [
+      ['UPDATE checkin SET anmeldung_id = anmeldung_id WHERE id = 0', 1142],
+      ['DELETE FROM person WHERE id = 0', 1142],
+      ["INSERT INTO geheim VALUES (2, 'x')", 1142],
+      ['SELECT wert FROM geheim', 1142],
+      ['SELECT kontakt_email FROM hotel', 1143],
+      ['INSERT INTO v_zahlungsstatus (anmeldung_id) VALUES (1)', 1142],
+    ] as const) {
+      await expect(asWriter(sql), sql).rejects.toMatchObject({ errno })
+    }
+    // What the ceilings allow still works, including reads through a base filter's join.
+    await asWriter("UPDATE person SET vorname = 'Anna' WHERE id = 1")
+    await asWriter('DELETE FROM hotelbuchung WHERE id = 0')
+    await asWriter(
+      'SELECT b.id FROM hotelbuchung b LEFT JOIN hotel_kontingent k ON k.id = b.hotel_kontingent_id WHERE k.hotel_id = 1',
+    )
+
+    expect(
+      (await admin.send('POST', `/internal/admin/connections/${connection.id}/grants`)).statusCode,
+    ).toBe(200)
+    expect(await scope('write')).toMatchObject({
+      unexposedReadable: [],
+      excludedReadable: [],
+      writableBeyondCeiling: [],
+      statements: [],
+      notes: [],
+    })
+    const after = (await list()).find((entry) => entry.objectName === 'checkin') as TableAccess
+    expect(after.warnings).toEqual([])
   })
 })

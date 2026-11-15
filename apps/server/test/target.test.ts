@@ -425,7 +425,17 @@ describe.skipIf(targets.length === 0).each(targets)('target database $name', ({ 
         access.ops.filter((op) => !access.grantedOps.includes(op)),
         access.objectName,
       ).toEqual([])
-      const codes = access.warnings.map((warning) => warning.code)
+      // The demo write user may insert and update in the whole schema, more than some
+      // ceilings allow; views are never writable.
+      const beyond = access.warnings.find((warning) => warning.code === 'write_beyond_ceiling')
+      const expected =
+        access.objectType === 'view'
+          ? ['create', 'update']
+          : (['create', 'update'] as const).filter((op) => !access.ops.includes(op))
+      expect(beyond?.ops ?? [], access.objectName).toEqual(expected)
+      const codes = access.warnings
+        .map((warning) => warning.code)
+        .filter((code) => code !== 'write_beyond_ceiling')
       expect(codes, access.objectName).toEqual(
         access.objectName === 'v_medaille' ? ['view_without_key'] : [],
       )

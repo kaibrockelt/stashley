@@ -86,7 +86,13 @@ export function registerDataRoutes(app: FastifyInstance, deps: DataRouteDeps): v
   app.get('/internal/admin/connections/:id/read-scope', async (request) => {
     admin(request)
     const { id } = parse(idParams, request.params)
-    return tableAccess.readScope(id)
+    return tableAccess.scope(id, 'read')
+  })
+
+  app.get('/internal/admin/connections/:id/write-scope', async (request) => {
+    admin(request)
+    const { id } = parse(idParams, request.params)
+    return tableAccess.scope(id, 'write')
   })
 
   app.get('/internal/admin/connections/:id/schema', async (request) => {

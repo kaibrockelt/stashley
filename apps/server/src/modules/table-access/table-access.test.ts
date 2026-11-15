@@ -81,13 +81,25 @@ async function setup() {
       exclusions: [],
       ...fields,
     })
+  const all = async () =>
+    (await admin.request('GET', `/internal/admin/table-access?connectionId=${connectionId}`))
+      .json<{ data: TableAccess[] }>()
+      .data.map((access) => [access.objectName, access] as const)
+  // The fixture's write user may write the whole schema, which `write_beyond_ceiling` reports
+  // on every object; tests of other warnings leave it out.
   const list = async () =>
     new Map(
-      (await admin.request('GET', `/internal/admin/table-access?connectionId=${connectionId}`))
-        .json<{ data: TableAccess[] }>()
-        .data.map((access) => [access.objectName, access]),
+      (await all()).map(([name, access]) => [
+        name,
+        { ...access, warnings: withoutWriteWarning(access.warnings) },
+      ]),
     )
-  return { server, admin, expose, list }
+  const raw = async () => new Map(await all())
+  return { server, admin, expose, list, raw }
+}
+
+function withoutWriteWarning(warnings: TableAccess['warnings']): TableAccess['warnings'] {
+  return warnings.filter((warning) => warning.code !== 'write_beyond_ceiling')
 }
 
 describe('display templates', () => {
@@ -213,10 +225,30 @@ describe('table access', () => {
   it('warns about views without known base tables or with a nullable key', async () => {
     const s = await setup()
     const created = await s.expose('v_status', { keyColumn: 'offen' })
-    expect(created.json<TableAccess>().warnings.map((warning) => warning.code)).toEqual([
-      'view_dependencies_unknown',
-      'view_key_nullable',
-    ])
+    expect(
+      withoutWriteWarning(created.json<TableAccess>().warnings).map((warning) => warning.code),
+    ).toEqual(['view_dependencies_unknown', 'view_key_nullable'])
+  })
+
+  it('warns when the write user may write more than the ceiling allows', async () => {
+    const s = await setup()
+    await s.expose('person', { ops: ['read', 'create', 'update'] })
+    await s.expose('hotel', { ops: ['read', 'create', 'update', 'delete'] })
+    await s.expose('v_status', { keyColumn: 'anmeldung_id' })
+    const all = await s.raw()
+    const warnings = (name: string) => Promise.resolve(all.get(name)?.warnings ?? [])
+    expect(await warnings('person')).toContainEqual({
+      code: 'write_beyond_ceiling',
+      ops: ['delete'],
+    })
+    expect((await warnings('hotel')).map((warning) => warning.code)).not.toContain(
+      'write_beyond_ceiling',
+    )
+    // Views are never writable.
+    expect(await warnings('v_status')).toContainEqual({
+      code: 'write_beyond_ceiling',
+      ops: ['create', 'update', 'delete'],
+    })
   })
 
   it('keeps relations consistent with column kinds and view keys', async () => {

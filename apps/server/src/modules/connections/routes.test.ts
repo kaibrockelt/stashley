@@ -36,6 +36,7 @@ const routes: Route[] = [
   { method: 'DELETE', url: `/internal/admin/connections/${id}` },
   { method: 'POST', url: `/internal/admin/connections/${id}/grants` },
   { method: 'GET', url: `/internal/admin/connections/${id}/read-scope` },
+  { method: 'GET', url: `/internal/admin/connections/${id}/write-scope` },
   { method: 'GET', url: `/internal/admin/connections/${id}/schema` },
   { method: 'POST', url: `/internal/admin/connections/${id}/schema/refresh` },
   { method: 'GET', url: `/internal/admin/connections/${id}/schema/drifts` },

@@ -295,30 +295,35 @@ export interface AccessWarning {
     | 'view_key_nullable'
     /** The read user may select columns that are excluded for everyone. */
     | 'excluded_column_readable'
+    /** The write user may write more than the ceiling allows (`ops`). */
+    | 'write_beyond_ceiling'
   ops?: TableOp[]
   columns?: string[]
 }
 
 /**
- * What the read user may read beyond the exposed objects and columns, and the statements that
- * limit it to them (§9.4). Database grants then enforce exposures and exclusions as well.
+ * What a database user may do beyond the table access, and the statements that limit it to it
+ * (§9.4). Database grants then enforce exposures, exclusions and ceilings as well.
  */
-export interface ReadScope {
-  /** The read user's account, e.g. `stashley_read@%`; null until its grants are checked again. */
+export interface UserScope {
+  purpose: 'read' | 'write'
+  /** The account, e.g. `stashley_read@%`; null until its grants are checked again. */
   account: string | null
-  /** Objects the read user may select although they are not exposed with `read`. */
+  /** Objects the user may select although they are not exposed for it. */
   unexposedReadable: string[]
-  /** Columns excluded for everyone that the read user may still select, per object. */
+  /** Columns excluded for everyone that the user may still select, per object. */
   excludedReadable: { object: string; columns: string[] }[]
-  /** `REVOKE` and `GRANT` statements for the read user; empty without an account. */
+  /** Write user only: write operations beyond the ceiling, also on objects without access. */
+  writableBeyondCeiling: { object: string; ops: TableOp[] }[]
+  /** `REVOKE` and `GRANT` statements for the user; empty without an account. */
   statements: string[]
   /**
-   * `no_grant_report`: the read user's grants were never checked.
+   * `no_grant_report`: the user's grants were never checked.
    * `account_unknown`: the report predates the account; check the grants again.
-   * `global_select`: SELECT on every database cannot be narrowed by these statements.
+   * `global_select`, `global_write`: privileges on every database cannot be narrowed here.
    * `roles`: privileges that come from roles stay until the roles change.
    */
-  notes: ('no_grant_report' | 'account_unknown' | 'global_select' | 'roles')[]
+  notes: ('no_grant_report' | 'account_unknown' | 'global_select' | 'global_write' | 'roles')[]
 }
 
 export interface TableAccess {
