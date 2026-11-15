@@ -2,7 +2,7 @@
 
 **Current milestone:** M5 – Pages and dashboards (in progress)
 
-**Next step:** M5 steps 1–8 (everything up to the query builder UI). Stop before step 9, the query builder UI, so the operator can raise the effort. The SQL validation of M4 is tested externally; that does not block M5.
+**Next step:** M5 step 6, the page editor (edit mode, drag and drop, block settings, draft conflicts, publishing), then steps 7 (versions, compare, preview as role) and 8 (SQL editor). Stop before step 9, the query builder UI, so the operator can raise the effort. The SQL validation of M4 is tested externally; that does not block M5.
 
 **Recommended model strength for M5:** medium; query builder UI: high.
 
@@ -230,3 +230,10 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - E4: The awards criterion is met in M5 with the table of medal candidates. The form "record award" can be placed as a block with table and mode; its fields follow in M6.
   - E5: Column role overrides (for example a number used as a dimension) live per block in its settings, not on the query.
 - 2026-11-15: The operator delivered a provisional app icon (`stashley-icon.svg` and `.png`, outside the repo). It replaces the placeholder in `apps/web/src/brand/` and the favicon when it fits, at the latest in M9 or after the MVP. Check the SVG's size (143 KB) against the bundle budget before inlining it.
+- 2026-11-15: M5 steps 1–5 implemented.
+  - Libraries (ECharts, CodeMirror, dnd-kit, micromark) and chart palettes with a contrast test.
+  - `shared`: shape analysis, block settings with mapping checks, chart data (limits, Other, NULL rules), page diff; 100 % lines.
+  - Server: page versions, restore into the draft, navigation order, design connections and catalog; query versions learn their result columns once, so broken block mappings become page issues (`settings_missing` warning, `settings_invalid`, `mapping_broken`, `mapping_unsuitable` errors).
+  - Web: navigation, start page, grid, page filters in the URL, metric, record, table, text and chart blocks; the page route is a lazy chunk, initial load 192 KB gzip.
+  - Verified: 557 server, shared and 29 web unit tests, typecheck, lint, i18n. Not yet run: the integration suite (new test for describing result columns) and a browser check.
+  - Decision to confirm: the metric comparison comes from a second column of the same query, not from a separate comparison query, so a block keeps one data source.

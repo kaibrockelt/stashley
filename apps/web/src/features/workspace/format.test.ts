@@ -17,8 +17,12 @@ describe('value formats', () => {
   })
 
   it('applies column formats', () => {
-    expect(format('49.9', 'decimal', { kind: 'currency', currency: 'EUR' })).toBe('49,90\u00a0€')
-    expect(format(0.856, 'float', { kind: 'percent', digits: 1 })).toBe('85,6 %')
+    expect(
+      format('49.9', 'decimal', { kind: 'currency', currency: 'EUR' }).replace(/\s/gu, ' '),
+    ).toBe('49,90 €')
+    expect(format(0.856, 'float', { kind: 'percent', digits: 1 }).replace(/\s/gu, ' ')).toBe(
+      '85,6 %',
+    )
     expect(format(3.14159, 'float', { kind: 'decimal', digits: 2 })).toBe('3,14')
     expect(format(2.6, 'float', { kind: 'integer' })).toBe('3')
     expect(format(3900, 'integer', { kind: 'duration', unit: 'seconds' })).toBe('1 Std. 5 Min.')

@@ -20,7 +20,7 @@ const settings = (partial: Partial<ChartSettings>): ChartSettings => ({
   measures: ['v'],
   ...partial,
 })
-const rows = [
+const rows: Record<string, unknown>[] = [
   { k: 'DE', v: 3, w: 1 },
   { k: 'AT', v: 5, w: null },
 ]
