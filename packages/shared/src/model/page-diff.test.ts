@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest'
 import { emptyPage, type Block, type PageDocument } from './page.ts'
-import { diffPages } from './page-diff.ts'
+import { diffPages, withoutPins } from './page-diff.ts'
 
 const text = (id: string, markdown = 'x'): Block => ({
   id,
@@ -144,5 +144,42 @@ describe('diffPages', () => {
     expect(diffPages(a, b)).toEqual([
       { scope: 'page', path: 'access.view', kind: 'changed', before: ['authenticated'], after: [] },
     ])
+  })
+
+  it('ignores pinned query versions when asked', () => {
+    const queryId = '0196f3a4-1111-7000-8000-000000000001'
+    const chart = (version?: number): Block => ({
+      id: 'c',
+      type: 'chart',
+      title: 'c',
+      restrictions: [],
+      source: { kind: 'query', queryId, ...(version !== undefined && { version }) },
+      bindings: [],
+    })
+    const filter = (version?: number): PageDocument['filters'][number] => ({
+      kind: 'select',
+      id: 'f',
+      label: 'f',
+      source: { kind: 'query', queryId, ...(version !== undefined && { version }) },
+      valueColumn: 'id',
+      labelColumn: 'name',
+      multiple: false,
+      required: false,
+    })
+    const published = {
+      ...page([{ id: 'r1', layout: '12', blocks: [chart(3)] }]),
+      filters: [filter(3)],
+    }
+    const draft = { ...page([{ id: 'r1', layout: '12', blocks: [chart()] }]), filters: [filter()] }
+    expect(diffPages(published, draft)).toHaveLength(2)
+    expect(diffPages(withoutPins(published), withoutPins(draft))).toEqual([])
+    expect(
+      withoutPins({
+        ...emptyPage('table', 'x'),
+        table: { ...chart(2), type: 'table', table: null } as never,
+      }).table,
+    ).toMatchObject({
+      source: { kind: 'query', queryId },
+    })
   })
 })

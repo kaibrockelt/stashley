@@ -112,6 +112,20 @@ function components(page: PageDocument): Map<string, Located> {
   return map
 }
 
+/**
+ * The document without pinned query versions: publishing pins them (§13.2), so a published
+ * version and the draft it came from would otherwise always differ.
+ */
+export function withoutPins(document: PageDocument): PageDocument {
+  const copy = JSON.parse(JSON.stringify(document)) as PageDocument
+  for (const filter of copy.filters) if (filter.kind === 'select') delete filter.source.version
+  const blocks = copy.table === null ? copy.rows.flatMap((row) => row.blocks) : [copy.table]
+  for (const block of blocks) {
+    if (block.type !== 'text' && block.source.kind === 'query') delete block.source.version
+  }
+  return copy
+}
+
 export function diffPages(a: PageDocument, b: PageDocument): PageChange[] {
   const out: PageChange[] = []
   const pageFields = (page: PageDocument): Plain => {

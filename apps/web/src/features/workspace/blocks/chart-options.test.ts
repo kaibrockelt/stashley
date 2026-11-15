@@ -95,4 +95,23 @@ describe('buildOption', () => {
     ])
     expect(funnel.series[0]).toMatchObject({ type: 'funnel', sort: 'none' })
   })
+
+  it('renders every tooltip on the canvas, never as HTML', () => {
+    const charts: Partial<ChartSettings>[] = [
+      {},
+      { chart: 'donut' },
+      { chart: 'heatmap', series: 's' },
+      { chart: 'scatter', x: 'x', measures: ['y'] },
+      { chart: 'funnel' },
+    ]
+    for (const chart of charts) {
+      const built = option(chart, [{ k: '<b>x</b>', s: 'a', v: 1, x: 1, y: 2 }])
+      expect(built.tooltip).toMatchObject({ renderMode: 'richText' })
+    }
+    const scatter = option({ chart: 'scatter', x: 'x', measures: ['y'], group: 'k' }, [
+      { k: '<b>x</b>', x: 1, y: 2 },
+    ])
+    const format = (scatter.tooltip as { formatter: (params: unknown) => string }).formatter
+    expect(format({ data: [1, 2, null], seriesName: '<b>x</b>' })).toBe('<b>x</b>\nX: 1\nY: 2')
+  })
 })

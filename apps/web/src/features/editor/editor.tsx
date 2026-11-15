@@ -460,6 +460,7 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
           {document.rows.length < 100 && (
             <Button
               variant="primary"
+              className={styles.addButton}
               onPress={() => setEditing({ block: newBlock(document), isNew: true, rowId: null })}
             >
               {t('editor.addRow')}

@@ -166,7 +166,7 @@ export function suggestSettings(
 }
 
 function useResultColumns(queryId: string) {
-  const detail = useQueryDetail(queryId === none ? undefined : queryId)
+  const detail = useQueryDetail(queryId === none || queryId === unsetId ? undefined : queryId)
   const [learned, setLearned] = useState<{ id: string; columns: ResultColumn[] }>()
   const run = useMutation({
     mutationFn: async () => {

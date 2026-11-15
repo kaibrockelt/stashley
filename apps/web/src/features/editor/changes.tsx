@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { PageChange, PageDocument } from '@stashley/shared'
-import { componentsOf, diffPages } from '@stashley/shared'
+import { componentsOf, diffPages, withoutPins } from '@stashley/shared'
 import { useT } from '../../i18n/use-t.ts'
 import styles from './editor.module.css'
 
@@ -17,7 +17,8 @@ function short(value: unknown): string {
  */
 export function ChangeList(props: { before: PageDocument; after: PageDocument }) {
   const t = useT()
-  const changes = diffPages(props.before, props.after)
+  // Pinned query versions are a publishing detail, not a change of the page.
+  const changes = diffPages(withoutPins(props.before), withoutPins(props.after))
   const titles = new Map<string, string>()
   for (const document of [props.before, props.after]) {
     for (const { component } of componentsOf(document))

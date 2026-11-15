@@ -51,7 +51,10 @@ export function buildOption(
   labels: ChartLabels,
 ): EChartsOption {
   const option = base(palette)
+  // Tooltips render on the canvas: ECharts' HTML tooltips use style attributes, which the
+  // CSP blocks, and would insert data values as HTML.
   const tooltip = {
+    renderMode: 'richText' as const,
     backgroundColor: palette.surface,
     borderColor: palette.grid,
     textStyle: { color: palette.text },
@@ -258,7 +261,7 @@ export function buildOption(
           ]
           if (sizeColumn !== undefined && settings.chart === 'bubble')
             parts.push(`${labels.column(sizeColumn)}: ${labels.measure(size, sizeColumn)}`)
-          return `${item?.seriesName ? `${item.seriesName}<br>` : ''}${parts.join('<br>')}`
+          return `${item?.seriesName ? `${item.seriesName}\n` : ''}${parts.join('\n')}`
         },
       },
       legend: { ...legend, show: groups.length > 1 },
@@ -302,7 +305,7 @@ export function buildOption(
         const item = Array.isArray(params) ? params[0] : params
         const stage = data.stages[item?.dataIndex ?? 0]
         if (stage === undefined) return ''
-        return `${labels.dimension(stage.label, 'x')}: ${labels.measure(stage.value, measure)}<br>${labels.funnelStage(labels.percent(stage.share), stage.loss === null ? null : labels.percent(stage.loss))}`
+        return `${labels.dimension(stage.label, 'x')}: ${labels.measure(stage.value, measure)}\n${labels.funnelStage(labels.percent(stage.share), stage.loss === null ? null : labels.percent(stage.loss))}`
       },
     },
     series: [
