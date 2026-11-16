@@ -15,6 +15,7 @@ import type {
   ValueKind,
 } from '@stashley/shared'
 import {
+  detailRecordParameter as recordParameter,
   checkParamList,
   checkParamValue,
   parseSettings,
@@ -59,6 +60,8 @@ export interface ComponentInput {
   cursor?: string | undefined
   pageSize?: number | undefined
   refresh?: boolean
+  /** Related tables of a detail view: the shown record's key. */
+  record?: string | number | undefined
 }
 
 /** Stored queries run up to this many rows (§10.7). */
@@ -175,6 +178,14 @@ export class ComponentReader {
       if (!checked.ok) errors.push({ field: `params.${name}`, code: checked.code })
     }
     if (errors.length > 0) throw invalid(errors)
+  }
+
+  /** A detail table reads nothing without its record; the key is a selection, never a limit. */
+  private record(input: ComponentInput): string | number {
+    if (input.record === undefined || input.record === '') {
+      throw invalid([{ field: 'record', code: 'required' }])
+    }
+    return input.record
   }
 
   private bound(
@@ -366,7 +377,11 @@ export class ComponentReader {
     const base = await this.baseValues(source, handle.user, options)
     const values: ResolvedValues = {
       baseFilter: base.values,
-      bindings: model.bindings.map((binding) => this.bound(binding.from, input)),
+      bindings: model.bindings.map((binding) =>
+        binding.from.kind === 'url' && binding.from.name === recordParameter
+          ? this.record(input)
+          : this.bound(binding.from, input),
+      ),
     }
     return { model, options, values, variables: base.variables }
   }

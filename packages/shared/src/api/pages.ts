@@ -224,6 +224,8 @@ export const componentQuery = z
     columnFilters: z.array(columnFilterInput).max(20).optional(),
     cursor: z.string().max(4096).optional(),
     pageSize: z.number().int().min(1).max(500).optional(),
+    /** Related tables of a detail view: the key of the shown record. */
+    record: z.union([z.string().max(200), z.number()]).optional(),
   })
   .strict()
 

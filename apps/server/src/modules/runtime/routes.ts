@@ -60,6 +60,7 @@ function inputOf(body: z.infer<typeof componentQuery>, refresh = false): Compone
     cursor: body.cursor,
     pageSize: body.pageSize,
     refresh,
+    record: body.record,
   }
 }
 

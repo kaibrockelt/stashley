@@ -136,6 +136,9 @@ export const detailTable = z
   .refine(tableSourceCheck, tableSourceMessage())
 export type DetailTable = z.infer<typeof detailTable>
 
+/** The URL value of a table page's detail view, the shown record's key; reserved (§13.1). */
+export const detailRecordParameter = '__record'
+
 export const formModes = ['create', 'edit', 'upsert'] as const
 export type FormMode = (typeof formModes)[number]
 

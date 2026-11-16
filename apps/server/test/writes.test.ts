@@ -630,6 +630,91 @@ describe.skipIf(targets.length === 0).each(targets)('writes on $name', ({ url })
     expect(audit.at(0)).toMatchObject({ action: 'table.exported' })
   })
 
+  it('reads the related tables of a detail view for the shown record only', async () => {
+    const column = (id: string, name: string) => ({
+      kind: 'column' as const,
+      id,
+      column: { path: [], column: name },
+    })
+    const config = (columns: ReturnType<typeof column>[]) => ({
+      columns,
+      sort: null,
+      searchColumns: [],
+      baseFilter: [],
+      bindings: [],
+      pageSize: 50,
+    })
+    const document = (link: string): PageDocumentInput => ({
+      schemaVersion: 1,
+      kind: 'table',
+      title: 'Anmeldungen',
+      filters: [],
+      parameters: [],
+      rows: [],
+      table: {
+        id: 'anmeldungen',
+        type: 'table',
+        title: 'Anmeldungen',
+        restrictions: [],
+        source: source('anmeldung'),
+        bindings: [],
+        table: config([column('nr', 'startnummer')]),
+      },
+      detail: {
+        tables: [
+          {
+            id: 'zahlungen',
+            type: 'table',
+            title: 'Zahlungen',
+            restrictions: [],
+            source: source('zahlung'),
+            bindings: [],
+            table: config([column('betrag', 'betrag')]),
+            link: { column: link },
+          },
+        ],
+      },
+      access: {
+        view: [role('Orga')],
+        grants: [
+          { principal: role('Orga'), source: key('anmeldung'), ops: ['read'] },
+          { principal: role('Orga'), source: key('zahlung'), ops: ['read'] },
+        ],
+      },
+      mcp: { available: false },
+    })
+    // The link must be a relation from the related table to the shown one.
+    const created = (
+      await admin.send('POST', '/internal/design/pages', {
+        sectionId: null,
+        kind: 'table',
+        slug: 'falsch',
+        title: 'Falsch',
+      })
+    ).json<PageDetail>()
+    await admin.session()
+    const wrong = await admin.request(
+      'PUT',
+      `/internal/design/pages/${created.id}/draft`,
+      document('betrag'),
+      {
+        'if-match': `"${created.draftRevision}"`,
+      },
+    )
+    expect(problem(wrong).errors).toContainEqual({
+      field: 'detail.tables.0.link.column',
+      code: 'unknown_relation',
+    })
+
+    const shown = await page('anmeldungen', document('anmeldung_id'))
+    const orga = users.orga as TestClient
+    const detail = (body: unknown) =>
+      orga.send('POST', `/internal/pages/${shown.id}/components/zahlungen/query`, body)
+    expect(problem(await detail({})).errors).toEqual([{ field: 'record', code: 'required' }])
+    const payments = (await detail({ record: '3' })).json<TableResult>()
+    expect(payments.rows.map((row) => row.values.betrag)).toEqual(['188.00'])
+  })
+
   // Runs last: it narrows the write user to column grants (E6).
   it('keeps writing after the write user is narrowed to column grants', async () => {
     const hotels = await page('hotels', {

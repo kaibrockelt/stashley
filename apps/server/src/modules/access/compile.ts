@@ -3,6 +3,7 @@
 import type {
   Block,
   ComponentKind,
+  DetailTable,
   ComponentRestriction,
   OpMask,
   PageDocument,
@@ -16,6 +17,7 @@ import type {
 } from '@stashley/shared'
 import {
   authenticatedPrincipal,
+  detailRecordParameter as recordParameter,
   capabilityOf,
   componentKindOf,
   componentsOf,
@@ -232,7 +234,10 @@ class PageCompiler {
             from.kind === 'filter'
               ? page.filters.some((filter) => filter.id === from.filterId)
               : page.parameters.some((parameter) => parameter.name === from.name)
-          if (!known) this.issue(`${path}.table.bindings.${index}.from`, 'unknown_input')
+          // The record binding of detail tables comes from the page's own URL (§13.1).
+          if (!known && !(from.kind === 'url' && from.name === recordParameter)) {
+            this.issue(`${path}.table.bindings.${index}.from`, 'unknown_input')
+          }
         })
       }
     }
@@ -347,7 +352,9 @@ export async function compilePage(input: PageInput, deps: CompileDeps): Promise<
   const names = new Set<string>()
   document.parameters.forEach((parameter, index) => {
     if (names.has(parameter.name)) compiler.issue(`parameters.${index}.name`, 'duplicate')
-    if (isUserContextParam(parameter.name)) compiler.issue(`parameters.${index}.name`, 'reserved')
+    if (isUserContextParam(parameter.name) || parameter.name === recordParameter) {
+      compiler.issue(`parameters.${index}.name`, 'reserved')
+    }
     names.add(parameter.name)
   })
 
@@ -381,7 +388,36 @@ export async function compilePage(input: PageInput, deps: CompileDeps): Promise<
       compiled = await compiler.query(path, block.source, bindings, document)
     } else {
       sourceKey = tableSource(block.source.tableAccessId)
-      const config = block.type === 'table' ? block.table : null
+      let config = block.type === 'table' ? block.table : null
+      // A related table of the detail view reads the rows that refer to the shown record.
+      const link = 'link' in block ? (block as DetailTable).link : undefined
+      if (link !== undefined && config !== null) {
+        const main = document.table
+        const mainAccess =
+          main?.source.kind === 'table'
+            ? await deps.facts.table(main.source.tableAccessId)
+            : undefined
+        const own = await deps.facts.table(block.source.tableAccessId)
+        const relation = own?.connection.relations.find(
+          (entry) =>
+            entry.sourceObject === own.object.objectName &&
+            entry.sourceColumn === link.column &&
+            entry.targetObject === mainAccess?.object.objectName &&
+            entry.targetColumn === mainAccess.object.keyColumn,
+        )
+        if (relation === undefined) compiler.issue(`${path}.link.column`, 'unknown_relation')
+        config = {
+          ...config,
+          bindings: [
+            ...config.bindings,
+            {
+              from: { kind: 'url', name: recordParameter },
+              column: { path: [], column: link.column },
+              operator: 'eq',
+            },
+          ],
+        }
+      }
       compiled = await compiler.table(path, block.source, config, document)
       const table =
         compiled?.source.kind === 'table'
