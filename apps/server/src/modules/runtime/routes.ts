@@ -27,8 +27,22 @@ const componentParams = z.object({ pageId: z.uuid(), componentId }).strict()
 const rowParams = componentParams.extend({ key: z.string().min(1).max(200) }).strict()
 const filterParams = z.object({ pageId: z.uuid(), filterId: componentId }).strict()
 const fieldParams = componentParams.extend({ fieldId: componentId }).strict()
+/**
+ * A limit per signed-in user, not per address: stations of an event often share one NAT, and
+ * behind a proxy without `TRUST_PROXY` every request has the proxy's address (§14.6).
+ */
+function perUser(max: number) {
+  return {
+    rateLimit: {
+      max,
+      timeWindow: '1 minute',
+      keyGenerator: (request: FastifyRequest) =>
+        request.auth === null ? `ip:${request.ip}` : `user:${request.auth.user.id}`,
+    },
+  }
+}
 /** Writes per user and minute; a station stamps a few per minute at most (§14.6). */
-const writeLimit = { rateLimit: { max: 300, timeWindow: '1 minute' } }
+const writeLimit = perUser(300)
 const slugParams = z.object({ slug: z.string().min(1).max(63) }).strict()
 const pageQuery = z
   .object({ mode: z.enum(pageModes).optional(), roles: z.string().max(2000).optional() })
@@ -126,7 +140,7 @@ export function registerRuntimeRoutes(
    */
   app.post(
     '/internal/pages/:pageId/components/:componentId/export',
-    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    { config: perUser(10) },
     async (request, reply) => {
       const body = parse(componentQuery, request.body ?? {})
       const handle = await authorize(request, body)
@@ -139,31 +153,47 @@ export function registerRuntimeRoutes(
       const actor = actorOf(request)
       const audit = deps.audit
       const page = handle.page
+      const log = request.log
       async function* csv(): AsyncGenerator<string> {
-        // A byte order mark, so spreadsheets read UTF-8.
-        yield `\uFEFF${exportRow(
-          columns.map((column) => exportCell(column.label, 'string', format)),
-          format,
-        )}`
         let count = 0
-        for await (const row of rows) {
-          count++
-          yield exportRow(
-            row.map((value, index) => exportCell(value, columns[index]?.kind ?? 'string', format)),
+        let complete = false
+        try {
+          // A byte order mark, so spreadsheets read UTF-8.
+          yield `\uFEFF${exportRow(
+            columns.map((column) => exportCell(column.label, 'string', format)),
             format,
-          )
+          )}`
+          for await (const row of rows) {
+            count++
+            yield exportRow(
+              row.map((value, index) =>
+                exportCell(value, columns[index]?.kind ?? 'string', format),
+              ),
+              format,
+            )
+          }
+          complete = true
+        } finally {
+          // Also when the download is cancelled or fails: whatever was sent is audited.
+          await audit
+            .record(actor, {
+              action: 'table.exported',
+              subject: {
+                kind: 'component',
+                id: handle.component.id,
+                label: handle.component.block.title,
+              },
+              pageId: page.pageId,
+              componentId: handle.component.id,
+              details: { rows: count, page: page.document.title, complete },
+            })
+            .catch((error: unknown) => {
+              log.error(
+                { err: error, pageId: page.pageId, componentId: handle.component.id },
+                'audit of an export failed',
+              )
+            })
         }
-        await audit.record(actor, {
-          action: 'table.exported',
-          subject: {
-            kind: 'component',
-            id: handle.component.id,
-            label: handle.component.block.title,
-          },
-          pageId: page.pageId,
-          componentId: handle.component.id,
-          details: { rows: count, page: page.document.title },
-        })
       }
       const name = `${page.slug}-${handle.component.id}.csv`
       void reply

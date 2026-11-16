@@ -616,10 +616,13 @@ export class ComponentReader {
         this.encodeRows(model.columns, rows, timeZone, model.key.kind).rows
       async function* rows(): AsyncGenerator<unknown[]> {
         let statement = first
+        // Rows added after the count do not lift the limit.
+        let left = exportRowLimit
         for (;;) {
           const raw = await executor.execute(connectionId, statement)
           const page = raw.rows.slice(0, exportPageSize)
           for (const row of encode(page, raw.timeZone)) {
+            if (left-- <= 0) return
             yield model.columns.map((column) => row.values[column.id] ?? null)
           }
           const last = page.at(-1)
@@ -709,7 +712,12 @@ export class ComponentReader {
       filters: Readonly<Record<string, unknown>>
       params: Readonly<Record<string, unknown>>
     },
-  ): Promise<{ options: { value: unknown; label: string }[]; freshness: Freshness }> {
+    fresh = false,
+  ): Promise<{
+    options: { value: unknown; label: string }[]
+    freshness: Freshness
+    truncated: boolean
+  }> {
     const query = reference.query
     if (query?.source === undefined) throw new AppError('not_found')
     const values: Record<string, unknown> = {}
@@ -718,13 +726,14 @@ export class ComponentReader {
       if (value !== undefined && value !== null && value !== '') values[binding.parameter] = value
     }
     const prepared = await this.prepareQuery(query.source, handle.user, values)
-    const { result, freshness } = await this.loadQuery(prepared, false)
+    const { result, freshness } = await this.loadQuery(prepared, fresh)
     return {
       options: result.rows.map((row) => ({
         value: row[query.valueColumn] ?? null,
         label: text(row[query.labelColumn]),
       })),
       freshness,
+      truncated: result.truncated,
     }
   }
 
@@ -920,8 +929,13 @@ export class ComponentReader {
   ): Promise<boolean> {
     const reference = field.reference
     if (reference === undefined) return true
+    // Page filter and URL values come from the client; they are checked like on reads.
+    this.inputs(handle.page.document, { filters: input.filters, params: input.params })
     if (reference.query !== undefined) {
-      const { options } = await this.referenceRows(handle, reference, input)
+      // Saving checks a fresh result, not the cached list: an option that just went away
+      // (e.g. a registration checked in meanwhile) must not be saved (§12). A value beyond
+      // the row limit cannot be confirmed and is refused.
+      const { options } = await this.referenceRows(handle, reference, input, true)
       return options.some((option) => text(option.value) === text(value))
     }
     const source = handle.component.source
