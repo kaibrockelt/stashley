@@ -23,7 +23,6 @@ import {
   hasOp,
   isDelivered,
   noOps,
-  opBits,
   principalsOf,
   serverDefault,
   staticMask,
@@ -193,8 +192,9 @@ export class AccessService {
   ) {
     if (component.sourceKey === undefined) return noOps
     if (mode === 'edit') {
-      // Designers see every component of the draft whose source is within the ceiling.
-      return staticMask(component.limits) & opBits.read
+      // Designers see every component of the draft whose source is within the ceiling, and
+      // writes are simulated against the ceiling (§11.2, D10).
+      return staticMask(component.limits)
     }
     return effectiveOps(
       {
@@ -378,8 +378,7 @@ export class AccessService {
     const component = page.components.get(componentId)
     if (component === undefined || component.source === undefined) throw new AppError('not_found')
     const ops = this.ops(page, component, mode, principals)
-    const delivered =
-      mode === 'edit' ? hasOp(ops, 'read') : visible && isDelivered(component.kind, ops)
+    const delivered = mode === 'edit' ? ops !== noOps : visible && isDelivered(component.kind, ops)
     if (!delivered) throw new AppError('not_found')
     const wanted: readonly TableOp[] = typeof op === 'string' ? [op] : op
     if (!wanted.some((entry) => hasOp(ops, entry))) throw new AppError('forbidden')

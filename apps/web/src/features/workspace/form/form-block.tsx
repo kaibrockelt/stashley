@@ -34,6 +34,12 @@ export function inputsOf(
   )
 }
 
+/** The label of a field, marked with * where it must be filled for this operation. */
+export function fieldLabel(field: RenderField, operation: 'create' | 'update'): string {
+  const required = operation === 'create' ? field.required : field.update && !field.nullable
+  return `${field.label ?? field.column}${required ? ' *' : ''}`
+}
+
 /** Fields a user sees: hidden prefills and automatic keys are not shown. */
 export function visibleFields(fields: readonly RenderField[]): RenderField[] {
   return fields.filter((field) => !field.hidden && field.generator?.kind !== 'auto_increment')
@@ -259,7 +265,7 @@ export function FormBlock(props: { component: RenderComponent }) {
           </div>
         )}
         {shown.map((field, index) => {
-          const label = field.label ?? field.column
+          const label = fieldLabel(field, operation)
           const writable = operation === 'create' ? field.create : field.update
           if (field.generator?.kind === 'date' && !field.generator.editable) {
             return (

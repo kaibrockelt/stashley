@@ -181,7 +181,9 @@ function ReferenceInput(props: FieldProps) {
             className={controls.listbox}
             renderEmptyState={() => (
               <div className={styles.empty}>
-                {options.isFetching ? t('form.reference.searching') : t('form.reference.none')}
+                {options.isFetching || (typed ?? '').trim() !== search
+                  ? t('form.reference.searching')
+                  : t('form.reference.none')}
               </div>
             )}
           >

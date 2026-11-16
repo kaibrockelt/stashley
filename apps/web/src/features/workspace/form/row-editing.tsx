@@ -8,7 +8,7 @@ import { useT } from '../../../i18n/use-t.ts'
 import { Actions, Button, Dialog, Form, Notice } from '../../../ui/controls.tsx'
 import { modeFields, usePageContext, type PageContextValue } from '../page-context.tsx'
 import { FieldInput } from './field-input.tsx'
-import { inputsOf, useFormat, visibleFields } from './form-block.tsx'
+import { fieldLabel, inputsOf, useFormat, visibleFields } from './form-block.tsx'
 import styles from './form.module.css'
 import { useWriteErrors } from './write-errors.ts'
 import { buildPayload, initialValues, type InputValue } from './values.ts'
@@ -255,6 +255,7 @@ export function RowDialog(props: {
         setMessage(t('form.conflict'))
         setLoaded(null)
         void load.refetch()
+        void refresh()
         return
       }
       if (error instanceof ApiError) setErrors(error.errors.filter((entry) => entry.field !== '_'))
@@ -285,7 +286,7 @@ export function RowDialog(props: {
               <FieldInput
                 key={field.id}
                 field={field}
-                label={field.label ?? field.column}
+                label={fieldLabel(field, operation)}
                 value={inputs[field.column] ?? null}
                 onChange={(value) =>
                   setInputs((current) => ({ ...current, [field.column]: value }))
