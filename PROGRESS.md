@@ -1,8 +1,8 @@
 # Progress
 
-**Current milestone:** M7 – Public REST API and CSV import (in progress)
+**Current milestone:** M7 – Public REST API and CSV import (in review)
 
-**Next step:** Implement M7 steps 1–10; stop before step 11 (new tables through the schema user) so the operator can raise the effort to extra high.
+**Next step:** Review M7 in a fresh session with extra high effort (the API as a second path to data, tokens, DDL for new tables); then the operator's acceptance.
 
 **Recommended model strength:** M7: high (new tables and the review: extra high).
 
@@ -19,7 +19,7 @@ The SQL validation of M4 is tested externally; that does not block M6.
 | M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Done |
 | M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | Done |
 | M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | Done |
-| M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High (new tables, review: extra high) | In progress |
+| M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High (new tables, review: extra high) | In review |
 | M8 | MCP server: authorization server, metadata, tools, MCP exposure, privacy notice, call log | High | Open |
 | M9 | Demo scenario and acceptance: seed script, configuration export and import, end-to-end suite, accessibility, performance, documentation, release pipeline | Medium (final review: high) | Open |
 
@@ -39,8 +39,8 @@ Status values: open, in progress, in review, done.
 - [ ] The route status page shows the 3 overdue participants with their phone numbers.
 - [ ] The awards page lists exactly the 12 medal candidates. After `current_event_id` is switched to the 2025 event, every event-related page shows 2025 data.
 - [ ] Every write appears in the audit log with its old and new values.
-- [ ] The admin enables `list`, `get` and `create` for payments and creates a token with `create` only. A write through the API appears in the audit log, and `list` with that token returns `403`.
-- [ ] The admin creates a new table from a CSV file encoded in Windows-1252, with semicolons and German dates, adding an `id` column. After the ceiling is adjusted, a second import upserts existing rows by `email`, and its dry run reports the faulty rows beforehand.
+- [x] The admin enables `list`, `get` and `create` for payments and creates a token with `create` only. A write through the API appears in the audit log, and `list` with that token returns `403`. (M7, through the UI on the test stand; the end-to-end suite follows in M9.)
+- [x] The admin creates a new table from a CSV file encoded in Windows-1252, with semicolons and German dates, adding an `id` column. After the ceiling is adjusted, a second import upserts existing rows by `email`, and its dry run reports the faulty rows beforehand. (M7, through the UI on the test stand and in the integration tests; the end-to-end suite follows in M9.)
 - [ ] The cashier connects an MCP client through OAuth and asks which registrations are still unpaid. The privacy notice appears before the connection and must be confirmed. The assistant receives only components of the cashier page whose tables are exposed to MCP. An admin account cannot set up MCP access.
 - [ ] The configuration is exported and imported into a second instance. After the connection is mapped, the demo works there unchanged.
 - [x] `scripts/build.sh --platform linux/amd64,linux/arm64` builds both architectures.
@@ -372,3 +372,23 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - E28: types and names are suggested from the whole file and can all be changed; the data is written by the schema user, and a failed data step leaves the empty table for a retry. A table designer without CSV uses the same form and DDL generator (create only, with column defaults).
   - E29: development dependency `@seriousme/openapi-schema-validator` (MIT) to check the generated OpenAPI document in tests; an addition to the D8 list.
 - 2026-11-16: Noted for after the MVP: query endpoints on the public API, served from the query cache. Open questions: the endpoint pins a query version, and a new version needs the admin's approval again; how the objects and columns a query joins are disclosed (listed and confirmed by the admin, or each one must be an API resource itself); instance variables such as `current_event_id` change the results; paging through result snapshots within the 10,000-row limit; a separate grant in the token matrix. Until then, views cover joined data.
+- 2026-11-16: M7 implemented; in review.
+  - Public REST API (`modules/public-api`): `/api/v1/:resource` with list, get, count, schema, create, update, replace, upsert (`PUT /?on=`) and delete. Admins enable operations per table access within its ceiling once the alias differs from the table name (E14). Tokens `stl_api_…` with a CRC32 checksum, stored as a hash and shown once, with expiry, IP allowlist, a per-token rate limit and grants on enabled endpoints only (E20). Reads go live through the read user (E19); writes go through the M6 write path with the token as the actor and without a base filter. ETag and `If-Match` (412), idempotent upserts, `401` with a challenge, `404` for unknown aliases and disabled endpoints, `403` without a grant (D5). OpenAPI 3.1 per token at `/api/docs` (`401` without one, E21) and in full for admins, validated against the official schema in tests (E29). `STASHLEY_PUBLIC_API=off` leaves the routes out.
+  - Lowering a ceiling, closing an endpoint, renaming or removing a table access that takes endpoints or token grants away asks first and lists the consequences (E15). Endpoints join the schema impact list.
+  - The access module builds a resource model per table access (every column not excluded, writable columns within column grants, upsert keys) and hands out a new handle, `AuthorizedResource`. The row writer takes a write subject instead of a component, so forms and the API share one write path. The core may not import from the optional modules (lint rule).
+  - CSV import (`modules/imports`): streamed upload with SHA-256, detected encoding, delimiter and header, formats suggested from data and the user's format (E25), preview, mapping by name, foreign keys by a unique column or the display value (E26), a dry run that only reads (E23), the import in one transaction in batches with all or nothing or skipping failed rows, one audit event (E24), background jobs within `STASHLEY_IMPORT_*` limits (E27), cleanup after 24 h.
+  - New tables (E28): definitions suggested from every value of the file, editable; checks shared by client and server; `CREATE TABLE` from fixed pieces through the schema user, audited with the statement; data through the schema user; table access with ceiling read, `pending_grants` with the `GRANT` statement until the read user sees the table, and a check-again route. The table designer creates empty tables from the same definition.
+  - Web: an API page (endpoints, tokens with a grant matrix, the secret shown once, OpenAPI download) and an import wizard in the design area with a table definition editor; the designer opens from the connection page.
+  - Decisions made on the way:
+    - Tables whose ceiling is create only serve API `create` and imports; their read operations stay closed.
+    - API writes answer with the row only when the token may also `get` or `list`; otherwise with the key, like forms without read.
+    - JSON columns are read-only through the API and the import.
+    - An empty cell in a `NOT NULL` column with a default takes the default on insert.
+    - True and false words are always German and English; the suggested date format is the one most values fit.
+    - For new tables only the read user's `GRANT SELECT` is suggested; write grants come from the write scope once the ceiling is raised, and no schema-wide grants are suggested.
+  - Verified: `pnpm check` green (typecheck, lint, SPDX, i18n with 1241 keys; 624 server, 116 shared and 67 web unit tests; coverage thresholds); 272 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7 (68 per engine), among them a create-only token, `If-Match`, replace with defaults, idempotent upserts, translated errors, Windows-1252 imports, foreign keys by unique column and display value, a rollback when the database refuses a row, new tables with `CREATE TABLE` on every engine, and a table that waits for the read user's grants until the statement ran; initial load 193.6 KB gzip.
+  - Checked in the browser on the rebuilt test stand (MariaDB 12.3) with temporary rows, removed afterwards: payments as `payments` with list, get and create; a create-only token (secret shown once) creates a payment (`201`, key only), `list` answers `403`, the table name `404`, `/api/docs` `401` without and only `POST /payments` with the token; the audit log shows `row.created` with the token as the actor. A Windows-1252 file with semicolons and German dates became `m7_mitglieder` with an added `id`, `email` required and unique; after raising the ceiling, a second file upserted by `email`, and its dry run reported the faulty row beforehand.
+  - Found and fixed in the browser check: endpoint states as full sentences in badges; visible labels on matrix and editor check boxes; the empty-values field had the label of the empty import list; the designer flagged the empty name at once.
+  - Not checked in the browser: the `pending_grants` path with its statement and check again (the stand's read user may read the whole schema; covered by the integration test), the designer creating a table, cancelling a running import.
+  - Left on the stand: the revoked test token (tokens cannot be deleted) and the audit entries.
+
