@@ -12,9 +12,26 @@ const columnFields = [
   'onUpdate',
 ] as const satisfies readonly (keyof CatalogColumn)[]
 
-function keysOf(object: CatalogObject): string {
-  return JSON.stringify([object.primaryKey, object.uniqueKeys, object.foreignKeys])
+/**
+ * Keys as compared. Referential actions count only where both snapshots have them, so a
+ * snapshot from before they were read does not report every foreign key as changed.
+ */
+function keysOf(object: CatalogObject, rules: boolean): string {
+  const foreignKeys = object.foreignKeys.map((key) =>
+    rules
+      ? key
+      : {
+          name: key.name,
+          columns: key.columns,
+          targetObject: key.targetObject,
+          targetColumns: key.targetColumns,
+        },
+  )
+  return JSON.stringify([object.primaryKey, object.uniqueKeys, foreignKeys])
 }
+
+const hasRules = (object: CatalogObject) =>
+  object.foreignKeys.every((key) => key.onDelete !== undefined)
 
 /** Compares two catalog snapshots; row estimates and column order are ignored. */
 export function diffSnapshots(before: CatalogObject[], after: CatalogObject[]): SchemaDiff {
@@ -35,7 +52,9 @@ export function diffSnapshots(before: CatalogObject[], after: CatalogObject[]): 
       addedColumns: [...newColumns.keys()].filter((column) => !oldColumns.has(column)),
       removedColumns: [...oldColumns.keys()].filter((column) => !newColumns.has(column)),
       changedColumns: [],
-      keysChanged: keysOf(previous) !== keysOf(current),
+      keysChanged:
+        keysOf(previous, hasRules(previous) && hasRules(current)) !==
+        keysOf(current, hasRules(previous) && hasRules(current)),
     }
     if (previous.type !== current.type) change.typeChanged = [previous.type, current.type]
     for (const [columnName, column] of oldColumns) {

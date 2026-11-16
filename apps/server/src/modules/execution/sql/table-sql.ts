@@ -342,8 +342,12 @@ function neededJoins(model: TableModel, aliases: ReadonlySet<string>) {
   return model.joins.filter((join) => needed.has(join.alias))
 }
 
-function from(model: TableModel, joins: TableModel['joins']): RawBuilder<unknown> {
-  return sql`${sql.table(model.object)} AS ${sql.id('t0')}${sql.join(
+function from(
+  model: TableModel,
+  joins: TableModel['joins'],
+  base?: RawBuilder<unknown>,
+): RawBuilder<unknown> {
+  return sql`${base ?? sql.table(model.object)} AS ${sql.id('t0')}${sql.join(
     joins.map(
       (join) =>
         sql` LEFT JOIN ${sql.table(join.object)} AS ${sql.id(join.alias)} ON ${sql.ref(
@@ -447,6 +451,77 @@ export function countStatement(
 }
 
 /** One row by key, still within the base filter: a foreign key value finds nothing. */
+/** The columns of the row itself (`t0`) the model reads, joins over or filters on. */
+function ownColumns(model: TableModel): string[] {
+  const names = new Map<string, string>()
+  const add = (expr: ColumnExpr) => {
+    if (expr.alias === 't0') names.set(expr.column.toLowerCase(), expr.column)
+  }
+  add(model.key)
+  for (const column of model.columns) {
+    if (column.expr.type === 'column') add(column.expr)
+    else for (const part of column.expr.parts) if (typeof part !== 'string') add(part)
+  }
+  for (const condition of model.baseFilter) add(condition.expr)
+  for (const join of model.joins) {
+    if (join.parent === 't0') names.set(join.parentColumn.toLowerCase(), join.parentColumn)
+  }
+  return [...names.values()]
+}
+
+/**
+ * The row as a write would leave it, read through the model with its base filter, without
+ * writing (simulated writes, §11.2, D10). `t0` becomes a derived table: the stored row with
+ * the changed columns replaced, or only the values of a new row (others NULL). Values are
+ * bound as the write would bind them.
+ */
+export function simulatedRowStatement(
+  model: TableModel,
+  values: ResolvedValues,
+  row:
+    | { keyColumn: string; key: unknown; changes: readonly [string, unknown][] }
+    | { values: readonly [string, unknown][] },
+): SelectStatement {
+  const given = new Map(
+    ('changes' in row ? row.changes : row.values).map(
+      ([column, value]) => [column.toLowerCase(), { column, value }] as const,
+    ),
+  )
+  const names = new Map(ownColumns(model).map((column) => [column.toLowerCase(), column]))
+  for (const [lowered, entry] of given) names.set(lowered, entry.column)
+  const parts = [...names.entries()].map(([lowered, column]) => {
+    const entry = given.get(lowered)
+    if (entry !== undefined) return sql`${entry.value} AS ${sql.id(column)}`
+    return 'changes' in row ? sql.ref(column) : sql`NULL AS ${sql.id(column)}`
+  })
+  const derived =
+    'changes' in row
+      ? sql`(SELECT ${sql.join(parts)} FROM ${sql.table(model.object)} WHERE ${sql.ref(
+          row.keyColumn,
+        )} = ${row.key})`
+      : sql`(SELECT ${sql.join(parts)})`
+  const filter = conditions(
+    model,
+    values,
+    { filters: [] },
+    { connectionTimeZone: 'UTC', displayTimeZone: 'UTC' },
+  )
+  const selected = model.columns.map(
+    (column, index) => sql`${outputSql(column.expr)} AS ${sql.id(`c${index}`)}`,
+  )
+  selected.push(sql`${columnSql(model.key)} AS ${sql.id('k')}`)
+  const compiled = sql`SELECT ${sql.join(selected)} FROM ${from(model, model.joins, derived)}${where(
+    filter.sql,
+  )} LIMIT 1`.compile(compiler)
+  return {
+    sql: compiled.sql,
+    values: [...compiled.parameters],
+    outputs: model.columns,
+    sortIsKey: true,
+    reversed: false,
+  }
+}
+
 export function rowStatement(
   model: TableModel,
   values: ResolvedValues,

@@ -190,11 +190,17 @@ export interface CatalogColumn {
   enumValues?: string[]
 }
 
+/** What a foreign key does to referring rows when the referenced row changes or goes. */
+export type ReferentialAction = 'cascade' | 'set_null' | 'set_default' | 'restrict' | 'no_action'
+
 export interface CatalogForeignKey {
   name: string
   columns: string[]
   targetObject: string
   targetColumns: string[]
+  /** `ON DELETE` and `ON UPDATE`; absent in snapshots before they were read. */
+  onDelete?: ReferentialAction
+  onUpdate?: ReferentialAction
 }
 
 export interface CatalogObject {

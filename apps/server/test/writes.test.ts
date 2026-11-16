@@ -586,7 +586,8 @@ describe.skipIf(targets.length === 0).each(targets)('writes on $name', ({ url })
                 value: { kind: 'constant', value: 1 },
               },
             ],
-            fields: ['person_id', 'betrag_soll'].map((column) => ({
+            // `event_id` is a field the payload may leave out: the base filter fills it.
+            fields: ['person_id', 'event_id', 'betrag_soll'].map((column) => ({
               kind: 'input',
               id: column,
               column,
@@ -598,6 +599,7 @@ describe.skipIf(targets.length === 0).each(targets)('writes on $name', ({ url })
         [role('Orga')],
       ),
     )
+    pages.anmeldung2025 = created
     const orga = users.orga as TestClient
     const saved = await orga.send('POST', rows(created.id, 'anmeldung'), {
       values: { person_id: '3', betrag_soll: '25.00' },
@@ -682,6 +684,105 @@ describe.skipIf(targets.length === 0).each(targets)('writes on $name', ({ url })
     })
     expect(problem(duplicate).code, duplicate.body).toBe('unique_violation')
     expect(await count()).toBe(before)
+  })
+
+  it('simulates the base filter and blocked deletes in edit mode (§11.2)', async () => {
+    const edit = { mode: 'edit' as const }
+    // A change that would move the row out of its base filter is refused like the real one.
+    const base = rows(pages.umbuchen?.id as string, 'gaeste')
+    const loaded = (await admin.request('GET', `${base}/1/edit?mode=edit`)).json<RowWriteResult>()
+    const moved = await admin.send('PATCH', `${base}/1`, {
+      ...edit,
+      values: { hotel_kontingent_id: '2' },
+      version: loaded.version,
+    })
+    expect(problem(moved).code, moved.body).toBe('base_filter_violation')
+    // An allowed change answers with the values it would write.
+    const changed = await admin.send('PATCH', `${base}/1`, {
+      ...edit,
+      values: { eingecheckt_am: '2026-05-08T19:00:00Z' },
+      version: loaded.version,
+    })
+    expect(changed.json<RowWriteResult>()).toMatchObject({
+      simulated: true,
+      values: { eingecheckt_am: '2026-05-08T19:00:00Z' },
+    })
+
+    // New rows are checked where their values decide the base filter.
+    const anmeldung = rows(pages.anmeldung2025?.id as string, 'anmeldung')
+    // The person the upsert test created has no registration yet.
+    const [fresh] = (await root.query(
+      "SELECT id FROM person WHERE email = 'neu@example.com'",
+    )) as unknown as [{ id: number }[]]
+    const outside = await admin.send('POST', anmeldung, {
+      ...edit,
+      values: { person_id: String(fresh[0]?.id), betrag_soll: '1.00', event_id: '2' },
+    })
+    expect(problem(outside).code, outside.body).toBe('base_filter_violation')
+    const inside = await admin.send('POST', anmeldung, {
+      ...edit,
+      values: { person_id: '4', betrag_soll: '1.00' },
+    })
+    expect(inside.statusCode, inside.body).toBe(201)
+
+    // A referenced kontingent cannot be deleted (RESTRICT); the simulation says so.
+    const kontingent = table('hotel_kontingent')
+    await root.query('GRANT DELETE ON wanderverein.hotel_kontingent TO stashley_write')
+    await admin.send('PUT', `/internal/admin/table-access/${kontingent.id}`, {
+      ops: ['read', 'create', 'update', 'delete'],
+      keyColumn: 'id',
+      displayTemplate: kontingent.displayTemplate,
+      apiResource: kontingent.apiResource,
+      mcpEnabled: false,
+      exclusions: [],
+    })
+    await admin.send('POST', `/internal/admin/connections/${connection.id}/grants`)
+    const kontingente = await page('kontingente', {
+      schemaVersion: 1,
+      kind: 'table',
+      title: 'Kontingente',
+      filters: [],
+      parameters: [],
+      rows: [],
+      table: {
+        id: 'kontingente',
+        type: 'table',
+        title: 'Kontingente',
+        restrictions: [],
+        source: source('hotel_kontingent'),
+        bindings: [],
+        table: {
+          columns: [{ kind: 'column', id: 'art', column: { path: [], column: 'zimmerart' } }],
+          sort: null,
+          searchColumns: [],
+          baseFilter: [],
+          bindings: [],
+          pageSize: 50,
+          editing: { ops: ['delete'], fields: [], inline: false, dialog: false },
+        },
+      },
+      access: {
+        view: [role('Orga')],
+        grants: [{ principal: role('Orga'), source: key('hotel_kontingent'), ops: ['read', 'delete'] }],
+      },
+      mcp: { available: false },
+    } as PageDocumentInput)
+    const blocked = await admin.send(
+      'DELETE',
+      `${rows(kontingente.id, 'kontingente')}/1`,
+      edit,
+    )
+    expect(problem(blocked).code, blocked.body).toBe('still_referenced')
+    await root.query('REVOKE DELETE ON wanderverein.hotel_kontingent FROM stashley_write')
+    await admin.send('PUT', `/internal/admin/table-access/${kontingent.id}`, {
+      ops: kontingent.ops,
+      keyColumn: 'id',
+      displayTemplate: kontingent.displayTemplate,
+      apiResource: kontingent.apiResource,
+      mcpEnabled: false,
+      exclusions: [],
+    })
+    await admin.send('POST', `/internal/admin/connections/${connection.id}/grants`)
   })
 
   it('deletes within the base filter and audits the old values', async () => {

@@ -61,6 +61,22 @@ describe('schema diff', () => {
     expect(isEmptyDiff(diffSnapshots(after, after))).toBe(true)
   })
 
+  it('compare foreign key actions only where both snapshots have them', () => {
+    const key = { name: 'fk', columns: ['person_id'], targetObject: 'person', targetColumns: ['id'] }
+    const withKey = (rules: object) => ({
+      ...table('anmeldung', [id]),
+      foreignKeys: [{ ...key, ...rules }],
+    })
+    const old = withKey({})
+    const restrict = withKey({ onDelete: 'restrict', onUpdate: 'restrict' })
+    const cascade = withKey({ onDelete: 'cascade', onUpdate: 'restrict' })
+    // A snapshot from before the actions were read reports no change.
+    expect(isEmptyDiff(diffSnapshots([old], [restrict]))).toBe(true)
+    expect(diffSnapshots([restrict], [cascade]).changedObjects).toMatchObject([
+      { object: 'anmeldung', keysChanged: true },
+    ])
+  })
+
   it('collects affected access, exclusions, templates and relations', () => {
     const diff = diffSnapshots(
       [table('person', [id, col('vorname'), col('telefon')]), table('hotel', [id])],

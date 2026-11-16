@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { CatalogColumn, CatalogObject } from '@stashley/shared'
+import type { CatalogColumn, CatalogObject, ReferentialAction } from '@stashley/shared'
 import { enumValues, valueKind } from '@stashley/shared'
 import type { TargetSession } from '../../target/pools.ts'
 import { viewTables } from './view-deps.ts'
@@ -43,6 +43,25 @@ interface ForeignKeyRow {
   targetObject: string
   targetColumn: string
 }
+interface RuleRow {
+  object: string
+  constraintName: string
+  deleteRule: string
+  updateRule: string
+}
+
+const actions: Readonly<Record<string, ReferentialAction>> = {
+  CASCADE: 'cascade',
+  'SET NULL': 'set_null',
+  'SET DEFAULT': 'set_default',
+  RESTRICT: 'restrict',
+  'NO ACTION': 'no_action',
+}
+
+function referentialAction(rule: string | null | undefined): ReferentialAction | undefined {
+  return rule === null || rule === undefined ? undefined : actions[rule.toUpperCase()]
+}
+
 interface ViewRow {
   name: string
   definition: string | null
@@ -126,6 +145,12 @@ export async function introspect(
       ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION`,
     [database],
   )
+  const rules = await session.query<RuleRow>(
+    `SELECT TABLE_NAME AS object, CONSTRAINT_NAME AS constraintName,
+            DELETE_RULE AS deleteRule, UPDATE_RULE AS updateRule
+       FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = ?`,
+    [database],
+  )
   const views = await session.query<ViewRow>(
     `SELECT TABLE_NAME AS name, VIEW_DEFINITION AS definition
        FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ?`,
@@ -195,6 +220,14 @@ export async function introspect(
     entry.fk.columns.push(row.column)
     entry.fk.targetColumns.push(row.targetColumn)
     constraints.set(key, entry)
+  }
+  for (const rule of rules) {
+    const entry = constraints.get(`${rule.object}\u0000${rule.constraintName}`)
+    if (entry === undefined) continue
+    const onDelete = referentialAction(rule.deleteRule)
+    const onUpdate = referentialAction(rule.updateRule)
+    if (onDelete !== undefined) entry.fk.onDelete = onDelete
+    if (onUpdate !== undefined) entry.fk.onUpdate = onUpdate
   }
   for (const { object, fk } of constraints.values()) objects.get(object)?.foreignKeys.push(fk)
 

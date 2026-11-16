@@ -24,7 +24,13 @@ import type { Actor, AuditLog } from '../audit/audit-log.ts'
 import type { ConnectionsService } from '../connections/service.ts'
 import type { VariablesService, VariableValue } from '../variables/service.ts'
 import { resolveBaseValues } from './base-values.ts'
-import { rowStatement, type ResolvedValues, type ValueOptions } from './sql/table-sql.ts'
+import { affectedObjects } from './cascades.ts'
+import {
+  rowStatement,
+  simulatedRowStatement,
+  type ResolvedValues,
+  type ValueOptions,
+} from './sql/table-sql.ts'
 import type { TableModel } from './sql/table-model.ts'
 import {
   bindWrite,
@@ -306,6 +312,50 @@ export class RowWriter {
     return values
   }
 
+  /** Reads one row of a simulated write through the model; undefined outside the base filter. */
+  private async simulatedVisible(
+    context: Context,
+    session: TargetSession,
+    row: Parameters<typeof simulatedRowStatement>[2],
+  ): Promise<Record<string, unknown> | undefined> {
+    const model = context.write.row
+    const statement = simulatedRowStatement(model, context.base, row)
+    const result = await session.execute(statement.sql, statement.values)
+    const found = result.rows[0]
+    if (found === undefined) return undefined
+    const values: Record<string, unknown> = {}
+    model.columns.forEach((column, index) => {
+      values[column.id] = encodeValue(
+        column.kind,
+        found[index] as string | number | null,
+        context.target.timeZone,
+      ).value
+    })
+    return values
+  }
+
+  /**
+   * Columns of the row the base filter depends on: its own conditions and the columns its
+   * conditions over linked tables join through. A new row can be checked only when it has
+   * values for all of them; database defaults are unknown before the insert.
+   */
+  private baseFilterColumns(context: Context): string[] {
+    const model = context.write.row
+    const byAlias = new Map(model.joins.map((join) => [join.alias, join]))
+    const columns = new Set<string>()
+    for (const condition of model.baseFilter) {
+      let alias = condition.expr.alias
+      if (alias === 't0') columns.add(condition.expr.column)
+      while (alias !== 't0') {
+        const join = byAlias.get(alias)
+        if (join === undefined) break
+        if (join.parent === 't0') columns.add(join.parentColumn)
+        alias = join.parent
+      }
+    }
+    return [...columns]
+  }
+
   /** The opaque version token: the lock column and the values of the writable fields (§11). */
   version(context: Pick<Context, 'write'>, state: RowState): string {
     const values = Object.keys(state.values)
@@ -559,6 +609,43 @@ export class RowWriter {
     }
   }
 
+  /**
+   * Whether a delete would be refused (`still_referenced`), for simulated deletes: a foreign
+   * key with `RESTRICT`/`NO ACTION` and a referring row. Keys the write user cannot read are
+   * left to the real delete.
+   */
+  private async stillReferenced(
+    context: Context,
+    session: TargetSession,
+    object: string,
+    keyColumn: string,
+    key: unknown,
+  ): Promise<boolean> {
+    for (const child of context.source.connection.catalog.values()) {
+      for (const foreign of child.foreignKeys) {
+        if (foreign.targetObject !== object) continue
+        if (foreign.onDelete !== 'restrict' && foreign.onDelete !== 'no_action') continue
+        try {
+          const own = lockWhere(object, keyColumn, foreign.targetColumns, [[keyColumn, key]], false)
+          const row = (await session.execute(own.sql, own.values)).rows[0]
+          if (row === undefined) continue
+          const values = foreign.targetColumns.map((_, index) => row[index])
+          if (values.some((value) => value === null || value === undefined)) continue
+          const statement = exists(
+            child.name,
+            foreign.columns.map((column, index) => [column, values[index]]),
+          )
+          if ((await session.execute(statement.sql, statement.values)).rows.length > 0) return true
+        } catch (error) {
+          const errno = writeErrno(error)
+          if (errno === 1142 || errno === 1143) continue
+          throw error
+        }
+      }
+    }
+    return false
+  }
+
   // Operations
 
   private notifyAndAudit(
@@ -571,7 +658,12 @@ export class RowWriter {
     const object = context.source.object.objectName
     this.deps.events.emit('rows.written', {
       connectionId: context.target.connectionId,
-      objects: [object],
+      objects: affectedObjects(
+        context.source.connection.catalog,
+        object,
+        action === 'row.deleted' ? 'delete' : action === 'row.updated' ? 'update' : null,
+        Object.keys(changes),
+      ),
     })
     const handle = context.handle
     return this.deps.audit
@@ -629,7 +721,19 @@ export class RowWriter {
             errors[0]?.code === 'unique_violation' ? 'unique_violation' : 'foreign_key_violation'
           throw new Abort(new AppError(code, { errors }))
         }
-        return this.outcome(context, values[write.keyColumn] ?? null, undefined, undefined, {
+        // New rows must meet the base filter (§11.2): checked where the values decide it.
+        const given = new Set(Object.keys(values).map(lower))
+        const decidable = this.baseFilterColumns(context).every((column) =>
+          given.has(lower(column)),
+        )
+        let visible: Record<string, unknown> | undefined
+        if (decidable && write.row.baseFilter.length > 0) {
+          visible = await this.simulatedVisible(context, session, {
+            values: this.bound(context, values),
+          })
+          if (visible === undefined) throw new Abort(new AppError('base_filter_violation'))
+        }
+        return this.outcome(context, values[write.keyColumn] ?? null, visible, undefined, {
           created: true,
         })
       })
@@ -740,7 +844,18 @@ export class RowWriter {
       const key = state.key
       const before = await this.visible(context, session, write.row, key)
       if (before === undefined) {
-        throw new Abort(new AppError('columns' in where ? 'base_filter_violation' : 'not_found'))
+        // An upsert key outside the base filter reads like a duplicate on create (N2): the
+        // unique key reveals the value anyway, the base filter does not need to say more.
+        throw new Abort(
+          'columns' in where
+            ? new AppError('unique_violation', {
+                errors: (write.upsertKey ?? []).map((field) => ({
+                  field,
+                  code: 'unique_violation',
+                })),
+              })
+            : new AppError('not_found'),
+        )
       }
       if (version !== undefined && !this.sameVersion(version, this.version(context, state))) {
         throw new Abort(
@@ -769,7 +884,14 @@ export class RowWriter {
             errors[0]?.code === 'unique_violation' ? 'unique_violation' : 'foreign_key_violation'
           throw new Abort(new AppError(code, { errors }))
         }
-        return { key, visible: before, state, changes }
+        // The row as the change would leave it, through the base filter (§11.2).
+        const after = await this.simulatedVisible(context, session, {
+          keyColumn: write.keyColumn,
+          key,
+          changes: this.bound(context, changed),
+        })
+        if (after === undefined) throw new Abort(new AppError('base_filter_violation'))
+        return { key, visible: after, state, changes }
       }
       const sets: [string, WriteValue][] = Object.entries(changes).map(([column, [, value]]) => [
         column,
@@ -909,6 +1031,12 @@ export class RowWriter {
             this.conflict(context, { key, values: before, version: this.version(context, state) }),
           )
         }
+      }
+      if (
+        context.simulate &&
+        (await this.stillReferenced(context, session, object, keyColumn, key))
+      ) {
+        throw new Abort(new AppError('still_referenced'))
       }
       if (!context.simulate) {
         const statement = deleteRow(object, keyColumn, key)
