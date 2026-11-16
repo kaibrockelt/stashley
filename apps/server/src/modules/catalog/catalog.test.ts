@@ -62,7 +62,12 @@ describe('schema diff', () => {
   })
 
   it('compare foreign key actions only where both snapshots have them', () => {
-    const key = { name: 'fk', columns: ['person_id'], targetObject: 'person', targetColumns: ['id'] }
+    const key = {
+      name: 'fk',
+      columns: ['person_id'],
+      targetObject: 'person',
+      targetColumns: ['id'],
+    }
     const withKey = (rules: object) => ({
       ...table('anmeldung', [id]),
       foreignKeys: [{ ...key, ...rules }],

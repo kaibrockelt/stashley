@@ -345,9 +345,9 @@ describe('write models (§11)', () => {
     expect(filled.model?.filled).toEqual([{ column: 'anmeldung_id', index: 0 }])
     // A field for the same column may then be left out of the payload.
     const both = build(payment, { baseFilter })
-    expect(both.model?.payload.create.find((spec) => spec.column === 'anmeldung_id')?.required).toBe(
-      false,
-    )
+    expect(
+      both.model?.payload.create.find((spec) => spec.column === 'anmeldung_id')?.required,
+    ).toBe(false)
     // Conditions over linked tables or other operators fill nothing.
     const linked = build(fields, {
       baseFilter: [
@@ -391,10 +391,10 @@ describe('write models (§11)', () => {
     expect(issues.map((issue) => [issue.code, issue.params])).toEqual([
       ['key_missing', { column: 'id' }],
     ])
-    const withKey = build(
-      fieldList.parse([...fields, { kind: 'input', id: 'id', column: 'id' }]),
-      { object: 'person', connection },
-    )
+    const withKey = build(fieldList.parse([...fields, { kind: 'input', id: 'id', column: 'id' }]), {
+      object: 'person',
+      connection,
+    })
     expect(withKey.issues).toEqual([])
   })
 
@@ -431,16 +431,15 @@ describe('write models (§11)', () => {
           ...narrowed[0],
           reference: {
             target: 'anmeldung',
-            baseFilter: [
-              { column: { path: [], column: 'gibts_nicht' }, operator: 'null' },
-            ],
+            baseFilter: [{ column: { path: [], column: 'gibts_nicht' }, operator: 'null' }],
           },
         },
         ...narrowed.slice(1),
       ]),
     )
-    expect(unknown.issues.map((issue) => [issue.path.replace('rows.0.blocks.0.', ''), issue.code]))
-      .toEqual([['fields.0.reference.baseFilter.0.column', 'unknown_column']])
+    expect(
+      unknown.issues.map((issue) => [issue.path.replace('rows.0.blocks.0.', ''), issue.code]),
+    ).toEqual([['fields.0.reference.baseFilter.0.column', 'unknown_column']])
     const query = build(
       fieldList.parse([
         {

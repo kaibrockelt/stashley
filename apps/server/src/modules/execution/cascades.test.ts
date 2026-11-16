@@ -53,9 +53,7 @@ describe('tables changed by foreign key actions (N6)', () => {
   })
 
   it('follow update actions only for changed referenced columns', () => {
-    expect(affectedObjects(catalog, 'person', 'update', ['nachname']).sort()).toEqual([
-      'person',
-    ])
+    expect(affectedObjects(catalog, 'person', 'update', ['nachname']).sort()).toEqual(['person'])
     expect(affectedObjects(catalog, 'person', 'update', ['EMAIL']).sort()).toEqual([
       'anmeldung',
       'person',

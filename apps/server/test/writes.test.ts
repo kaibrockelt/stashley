@@ -763,15 +763,13 @@ describe.skipIf(targets.length === 0).each(targets)('writes on $name', ({ url })
       },
       access: {
         view: [role('Orga')],
-        grants: [{ principal: role('Orga'), source: key('hotel_kontingent'), ops: ['read', 'delete'] }],
+        grants: [
+          { principal: role('Orga'), source: key('hotel_kontingent'), ops: ['read', 'delete'] },
+        ],
       },
       mcp: { available: false },
-    } as PageDocumentInput)
-    const blocked = await admin.send(
-      'DELETE',
-      `${rows(kontingente.id, 'kontingente')}/1`,
-      edit,
-    )
+    })
+    const blocked = await admin.send('DELETE', `${rows(kontingente.id, 'kontingente')}/1`, edit)
     expect(problem(blocked).code, blocked.body).toBe('still_referenced')
     await root.query('REVOKE DELETE ON wanderverein.hotel_kontingent FROM stashley_write')
     await admin.send('PUT', `/internal/admin/table-access/${kontingent.id}`, {

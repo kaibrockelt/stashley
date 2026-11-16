@@ -783,10 +783,7 @@ export class RowWriter {
 
   /** A version conflict; the current record only for callers that may read it. */
   private conflict(context: Context, current: Record<string, unknown>): AppError {
-    return new AppError(
-      'version_conflict',
-      hasOp(context.handle.ops, 'read') ? { current } : {},
-    )
+    return new AppError('version_conflict', hasOp(context.handle.ops, 'read') ? { current } : {})
   }
 
   /** The record of an editable component with its version token, for edit mode and inline. */

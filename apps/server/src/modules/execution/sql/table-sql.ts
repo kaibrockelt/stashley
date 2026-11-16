@@ -510,9 +510,10 @@ export function simulatedRowStatement(
     (column, index) => sql`${outputSql(column.expr)} AS ${sql.id(`c${index}`)}`,
   )
   selected.push(sql`${columnSql(model.key)} AS ${sql.id('k')}`)
-  const compiled = sql`SELECT ${sql.join(selected)} FROM ${from(model, model.joins, derived)}${where(
-    filter.sql,
-  )} LIMIT 1`.compile(compiler)
+  const compiled =
+    sql`SELECT ${sql.join(selected)} FROM ${from(model, model.joins, derived)}${where(
+      filter.sql,
+    )} LIMIT 1`.compile(compiler)
   return {
     sql: compiled.sql,
     values: [...compiled.parameters],

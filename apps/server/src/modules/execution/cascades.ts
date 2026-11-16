@@ -30,7 +30,10 @@ export function affectedObjects(
         if (key.targetObject !== target || objects.has(child.name)) continue
         const action = columns === null ? key.onDelete : key.onUpdate
         if (action === 'restrict' || action === 'no_action') continue
-        if (columns !== null && !key.targetColumns.some((column) => columns.includes(lower(column))))
+        if (
+          columns !== null &&
+          !key.targetColumns.some((column) => columns.includes(lower(column)))
+        )
           continue
         objects.add(child.name)
         // A cascaded delete deletes further; any other action changes the referring columns.

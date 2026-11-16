@@ -12,6 +12,7 @@ import {
   countStatement,
   rowStatement,
   selectStatement,
+  simulatedRowStatement,
   TableRequestError,
   type ResolvedValues,
   type TableRequest,
@@ -585,6 +586,32 @@ describe('table source SQL', () => {
       /WHERE `t3`.`hotel_id` = \? AND `t3`.`event_id` = \? AND `t0`.`id` = \? LIMIT 1$/,
     )
     expect(row.values.slice(-3)).toEqual([2, 14, 17])
+  })
+
+  it('reads the row a simulated write would leave through a derived table (§11.2)', () => {
+    // An update: the stored row with the changed column replaced, then the base filter.
+    const changed = simulatedRowStatement(model, guestValues, {
+      keyColumn: 'id',
+      key: 17,
+      changes: [['hotel_kontingent_id', '2']],
+    })
+    expect(changed.sql).toContain(
+      'FROM (SELECT `id`, `anreise`, `eingecheckt_am`, `anmeldung_id`, ? AS `hotel_kontingent_id` FROM `hotelbuchung` WHERE `id` = ?) AS `t0` LEFT JOIN',
+    )
+    expect(changed.sql).toMatch(/WHERE `t3`.`hotel_id` = \? AND `t3`.`event_id` = \? LIMIT 1$/)
+    // The display template's literal comes first, then the derived table, then the filter.
+    expect(changed.values).toEqual([' – ', '2', 17, 2, 14])
+    // A new row: only its values, every other own column NULL.
+    const created = simulatedRowStatement(model, guestValues, {
+      values: [
+        ['hotel_kontingent_id', 1],
+        ['anreise', '2026-05-08'],
+      ],
+    })
+    expect(created.sql).toContain(
+      'FROM (SELECT NULL AS `id`, ? AS `anreise`, NULL AS `eingecheckt_am`, NULL AS `anmeldung_id`, ? AS `hotel_kontingent_id`) AS `t0`',
+    )
+    expect(created.values).toEqual([' – ', '2026-05-08', 1, 2, 14])
   })
 
   it('compiles every base filter operator', () => {

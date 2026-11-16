@@ -49,7 +49,7 @@ describe('form fields', () => {
         id: 'anmeldung',
         column: 'anmeldung_id',
         widget: 'reference',
-        reference: { target: 'anmeldung', searchColumns: [], extras: [] },
+        reference: { target: 'anmeldung', searchColumns: [], extras: [], baseFilter: [] },
         required: false,
         hidden: false,
       },
