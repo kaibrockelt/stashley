@@ -628,6 +628,85 @@ describe('page and component rights', () => {
     expect(orga.table?.table?.editing).toBeUndefined()
   })
 
+  it('authorize writes per component and operation before touching the database', async () => {
+    const w = await world()
+    const base = kassePage(w)
+    const kasse = await createPage(w, 'kasse', {
+      ...base,
+      rows: base.rows.map((row) => ({
+        ...row,
+        blocks: row.blocks.map((block) =>
+          block.type === 'form'
+            ? {
+                ...block,
+                fields: [
+                  {
+                    kind: 'input' as const,
+                    id: 'anmeldung',
+                    column: 'anmeldung_id',
+                    widget: 'number' as const,
+                  },
+                  { kind: 'input' as const, id: 'betrag', column: 'betrag' },
+                ],
+              }
+            : block,
+        ),
+      })),
+    })
+    const lindenhof = await createPage(
+      w,
+      'lindenhof',
+      guestPage(w, 1, w.roles.lindenhof.id, 'Lindenhof'),
+    )
+    const rows = (page: string, component: string) =>
+      `/internal/pages/${page}/components/${component}/rows`
+    const form = rows(kasse.id, 'zahlung-erfassen')
+
+    // Fields the form does not write, and payloads that are not row objects.
+    const extra = await w.users.kasse.send('POST', form, { values: { betrag: '1', id: 5 } })
+    expect(problem(extra).errors).toEqual([{ field: 'id', code: 'field_not_writable' }])
+    expect((await w.users.kasse.send('POST', form, { values: [], extra: 1 })).statusCode).toBe(422)
+    // A valid payload passes authorization and reaches the (refused) database.
+    expect(problem(await w.users.kasse.send('POST', form, { values: { betrag: '1' } })).code).toBe(
+      'target_unavailable',
+    )
+    // Orga sees the page but not the form (no create): it does not exist for them (D5).
+    expect((await w.users.orga.send('POST', form, { values: {} })).statusCode).toBe(404)
+    // A read-only metric, a foreign page's table and other operations stay closed.
+    expect(
+      (await w.users.kasse.send('POST', rows(kasse.id, 'summe'), { values: {} })).statusCode,
+    ).toBe(403)
+    expect(
+      (
+        await w.users.kasse.send('PATCH', `${rows(lindenhof.id, 'gaeste')}/1`, {
+          values: {},
+          version: 'v',
+        })
+      ).statusCode,
+    ).toBe(404)
+    expect((await w.users.kasse.send('DELETE', `${form}/1`, {})).statusCode).toBe(403)
+    expect(
+      (await w.users.lindenhof.send('DELETE', `${rows(lindenhof.id, 'gaeste')}/1`, {})).statusCode,
+    ).toBe(403)
+    // Updates name the state they change.
+    expect(problem(await w.users.kasse.send('PATCH', `${form}/1`, { values: {} })).errors).toEqual([
+      { field: 'version', code: 'required' },
+    ])
+    // Users cannot simulate; designers simulate with the chosen roles.
+    expect(
+      (await w.users.kasse.send('POST', form, { mode: 'preview', values: {} })).statusCode,
+    ).toBe(403)
+    expect(
+      (
+        await w.manager.send('POST', form, {
+          mode: 'preview',
+          roles: [w.roles.orga.id],
+          values: { betrag: '1' },
+        })
+      ).statusCode,
+    ).toBe(404)
+  })
+
   it('preview and edit the draft with the rights of chosen roles', async () => {
     const w = await world()
     const page = await createPage(
