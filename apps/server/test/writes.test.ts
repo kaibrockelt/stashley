@@ -542,6 +542,13 @@ describe.skipIf(targets.length === 0).each(targets)('writes on $name', ({ url })
       "SELECT nachname FROM person WHERE email = 'neu@example.com'",
     )) as unknown as [{ nachname: string }[]]
     expect(person[0]?.nachname).toBe('Geändert')
+    // Upsert forms never read: no record by key, no update by key, no record in a conflict.
+    const id = String(first.json<RowWriteResult>().key)
+    expect((await orga.request('GET', `${url}/${id}/edit`)).statusCode).toBe(404)
+    const byKey = await orga.send('PATCH', `${url}/${id}`, { values: {}, version: 'x' })
+    expect(byKey.statusCode).toBe(404)
+    expect(problem(byKey).current).toBeUndefined()
+    expect((await orga.send('DELETE', `${url}/${id}`, {})).statusCode).toBe(403)
 
     const checkin = users.checkin as TestClient
     const checkins = rows(pages.checkin?.id as string, 'checkin')

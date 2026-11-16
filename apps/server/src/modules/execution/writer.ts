@@ -402,13 +402,12 @@ export class RowWriter {
       const value = this.defaultValue(context, field)
       if (value !== undefined) values[field.column] = value
     }
-    write.row.baseFilter.forEach((condition, index) => {
-      if (condition.expr.alias !== 't0' || condition.operator !== 'eq') return
-      const column = condition.expr.column
-      if (Object.hasOwn(values, column)) return
+    for (const { column, index } of write.filled) {
+      const condition = write.row.baseFilter[index]
+      if (condition === undefined || Object.hasOwn(values, column)) continue
       const raw = context.base.baseFilter[index]
       values[column] = this.fromBound(condition.expr.kind, raw, context.options)
-    })
+    }
     const lock = write.lock
     const catalog = context.source.connection.catalog.get(write.object)
     const lockColumn = catalog?.columns.find(
@@ -664,8 +663,31 @@ export class RowWriter {
     return this.outcome(context, written.key, written.visible, written.state, { created: true })
   }
 
+  /**
+   * Updates by key and the record behind them exist only where the component reads its rows:
+   * forms in edit mode and tables. Create and upsert forms never read (§8.2), so they answer
+   * 404 here instead of handing out records or version tokens.
+   */
+  private requireRecordAccess(handle: AuthorizedComponent): void {
+    const block = handle.component.block
+    const editable = block.type === 'table' || (block.type === 'form' && block.mode === 'edit')
+    if (!editable) throw new AppError('not_found')
+    if (!hasOp(handle.ops, 'read') || !hasOp(handle.ops, 'update')) {
+      throw new AppError('forbidden')
+    }
+  }
+
+  /** A version conflict; the current record only for callers that may read it. */
+  private conflict(context: Context, current: Record<string, unknown>): AppError {
+    return new AppError(
+      'version_conflict',
+      hasOp(context.handle.ops, 'read') ? { current } : {},
+    )
+  }
+
   /** The record of an editable component with its version token, for edit mode and inline. */
   async current(handle: AuthorizedComponent, rawKey: string): Promise<WrittenRow> {
+    this.requireRecordAccess(handle)
     const context = await this.context(handle)
     const key = this.key(context.write.keyKind, rawKey)
     const found = await context.target.run(async (session) => {
@@ -688,7 +710,7 @@ export class RowWriter {
     rawKey: string,
     request: WriteRequest,
   ): Promise<WrittenRow> {
-    if (!hasOp(handle.ops, 'update')) throw new AppError('forbidden')
+    this.requireRecordAccess(handle)
     const context = await this.context(handle)
     const key = this.key(context.write.keyKind, rawKey)
     const checked = checkRow(context.write.payload.update, 'update', request.values)
@@ -722,9 +744,7 @@ export class RowWriter {
       }
       if (version !== undefined && !this.sameVersion(version, this.version(context, state))) {
         throw new Abort(
-          new AppError('version_conflict', {
-            current: { key, values: before, version: this.version(context, state) },
-          }),
+          this.conflict(context, { key, values: before, version: this.version(context, state) }),
         )
       }
       const changes: Record<string, [unknown, unknown]> = {}
@@ -863,6 +883,8 @@ export class RowWriter {
     rawKey: string,
     request: { version?: string | undefined },
   ): Promise<WrittenRow> {
+    // Only tables delete (E13); forms have no delete capability.
+    if (handle.component.block.type !== 'table') throw new AppError('not_found')
     if (!hasOp(handle.ops, 'delete')) throw new AppError('forbidden')
     const context = await this.context(handle, false)
     const source = context.source
@@ -883,7 +905,9 @@ export class RowWriter {
           state !== undefined &&
           !this.sameVersion(request.version, this.version(context, state))
         ) {
-          throw new Abort(new AppError('version_conflict', { current: { key, values: before } }))
+          throw new Abort(
+            this.conflict(context, { key, values: before, version: this.version(context, state) }),
+          )
         }
       }
       if (!context.simulate) {
