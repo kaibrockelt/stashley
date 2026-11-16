@@ -180,6 +180,15 @@ const appRoutes = [
   }),
   createRoute({
     getParentRoute: () => appLayout,
+    path: '/pages/$slug/$recordKey',
+    validateSearch: (search: Record<string, unknown>): PageSearch => search,
+    component: lazyRouteComponent(
+      () => import('../features/workspace/page-route.tsx'),
+      'DetailRoute',
+    ),
+  }),
+  createRoute({
+    getParentRoute: () => appLayout,
     path: '/profile',
     component: lazyRouteComponent(() => import('../features/profile/profile.tsx'), 'ProfilePage'),
   }),

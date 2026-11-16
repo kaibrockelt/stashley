@@ -93,3 +93,36 @@
     font-size: 1rem;
   }
 }
+
+.cell {
+  display: inline-flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.cellButton {
+  padding: var(--space-1);
+  margin: calc(-1 * var(--space-1));
+  border: 1px dashed transparent;
+  border-radius: var(--radius-sm, 4px);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: text;
+}
+
+.cellButton:hover,
+.cellButton:focus-visible {
+  border-color: var(--color-border);
+}
+
+.cellError {
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+}
+
+.cellEditor {
+  display: block;
+  min-width: 10rem;
+}

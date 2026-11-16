@@ -154,7 +154,8 @@ export interface RenderComponent {
   formMode?: 'create' | 'edit' | 'upsert'
   /** Table sources: columns, page size and search. */
   table?: {
-    columns: { id: string; label: string | null; kind: ValueKind }[]
+    /** `field`: the input field that edits this column inline. */
+    columns: { id: string; label: string | null; kind: ValueKind; field?: string }[]
     pageSize: number
     searchable: boolean
     sort: { columnId: string; direction: 'asc' | 'desc' } | null

@@ -24,7 +24,11 @@ export function DataTable(props: {
   sort?: { columnId: string; direction: 'asc' | 'desc' } | null | undefined
   onSort?: ((columnId: string) => void) | undefined
   /** Renders a cell, e.g. as a row link; the formatted text is passed in. */
-  cell?: ((row: Record<string, unknown>, column: DataColumn, text: string) => ReactNode) | undefined
+  cell?:
+    | ((row: Record<string, unknown>, column: DataColumn, text: string, index: number) => ReactNode)
+    | undefined
+  /** A last column with actions per row, e.g. edit and delete. */
+  actions?: { label: string; render: (index: number) => ReactNode } | undefined
 }) {
   const t = useT()
   const formatValue = useValueFormatter()
@@ -71,6 +75,11 @@ export function DataTable(props: {
                 </th>
               )
             })}
+            {props.actions !== undefined && (
+              <th scope="col">
+                <span className={styles.visuallyHidden}>{props.actions.label}</span>
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -81,10 +90,13 @@ export function DataTable(props: {
                 const numeric = column.kind !== undefined && numericKinds.has(column.kind)
                 return (
                   <td key={column.id} className={numeric ? styles.numeric : undefined}>
-                    {props.cell === undefined ? text : props.cell(row, column, text)}
+                    {props.cell === undefined ? text : props.cell(row, column, text, index)}
                   </td>
                 )
               })}
+              {props.actions !== undefined && (
+                <td className={styles.rowActions}>{props.actions.render(index)}</td>
+              )}
             </tr>
           ))}
         </tbody>

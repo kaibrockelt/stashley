@@ -87,3 +87,21 @@ export async function api<T>(
   }
   throw error
 }
+
+/** A file the server builds for a POST, e.g. a CSV export; saved under the server's name. */
+export async function download(url: string, body: unknown): Promise<void> {
+  const response = await fetch(url, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'x-csrf-token': csrfToken, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) throw await parseError(response)
+  const disposition = response.headers.get('content-disposition') ?? ''
+  const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'export.csv'
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(await response.blob())
+  link.download = name
+  link.click()
+  URL.revokeObjectURL(link.href)
+}

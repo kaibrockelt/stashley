@@ -938,5 +938,18 @@
   "write.error.permission": "The database user lacks a privilege for this. Ask an admin.",
   "write.error.timeout": "The database took too long. Nothing was saved.",
   "write.error.exportTooLarge": "More than {max} rows; narrow the filters first.",
-  "write.error.exportDisabled": "Export is turned off for this table."
+  "write.error.exportDisabled": "Export is turned off for this table.",
+  "table.actions": "Actions",
+  "table.edit": "Edit",
+  "table.delete": "Delete",
+  "table.editRow": "Edit record",
+  "table.newRow": "New record",
+  "table.editRowOf": "Edit {row}",
+  "table.deleteRowOf": "Delete {row}",
+  "table.deleteRow": "Delete record?",
+  "table.deleteConfirm": "Delete {row}? This cannot be undone; records that depend on it follow the database's rules.",
+  "table.editCell": "Edit {column}: {value}",
+  "table.export": "Export CSV",
+  "detail.record": "Record",
+  "detail.title": "Record {key}"
 }

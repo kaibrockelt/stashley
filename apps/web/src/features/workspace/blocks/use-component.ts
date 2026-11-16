@@ -10,6 +10,8 @@ export interface TableOptions {
   search?: string | undefined
   cursor?: string | undefined
   pageSize?: number | undefined
+  /** Related tables of a detail view: the shown record. */
+  record?: string | undefined
 }
 
 function body(context: ReturnType<typeof usePageContext>, options: TableOptions) {
@@ -21,6 +23,7 @@ function body(context: ReturnType<typeof usePageContext>, options: TableOptions)
     ...(options.search !== undefined && options.search !== '' && { search: options.search }),
     ...(options.cursor !== undefined && { cursor: options.cursor }),
     ...(options.pageSize !== undefined && { pageSize: options.pageSize }),
+    ...(options.record !== undefined && { record: options.record }),
   }
 }
 
@@ -51,7 +54,7 @@ export function useComponentData<T extends ComponentResult | TableResult>(
 
 export function useComponentCount(componentId: string, options: TableOptions, enabled: boolean) {
   const context = usePageContext()
-  const request = body(context, { search: options.search })
+  const request = body(context, { search: options.search, record: options.record })
   return useQuery({
     queryKey: ['workspace', 'count', context.page.id, componentId, request],
     queryFn: () =>

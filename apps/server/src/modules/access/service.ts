@@ -311,11 +311,25 @@ export class AccessService {
       const editing = block.type === 'table' ? block.table?.editing : undefined
       const editOps = (editing?.ops ?? []).filter((op) => hasOp(ops, op))
       out.table = {
-        columns: source.model.columns.map((column) => ({
-          id: column.id,
-          label: column.label ?? null,
-          kind: column.kind,
-        })),
+        columns: source.model.columns.map((column) => {
+          // A column of the row itself that has an input field can be edited inline (E11).
+          const field =
+            editOps.includes('update') &&
+            column.expr.type === 'column' &&
+            column.expr.alias === 't0'
+              ? write?.fields.find(
+                  (entry) =>
+                    entry.column === (column.expr as { column: string }).column &&
+                    write.payload.update.some((spec) => spec.column === entry.column),
+                )
+              : undefined
+          return {
+            id: column.id,
+            label: column.label ?? null,
+            kind: column.kind,
+            ...(field !== undefined && { field: field.id }),
+          }
+        }),
         pageSize: source.model.pageSize,
         searchable: source.model.searchColumns.length > 0,
         sort: source.model.sort,

@@ -182,3 +182,14 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+.rowActions {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.rowButtons {
+  display: inline-flex;
+  gap: var(--space-1);
+}

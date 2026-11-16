@@ -938,5 +938,18 @@
   "write.error.permission": "Dem Datenbank-User fehlt dafür ein Recht. Frag einen Admin.",
   "write.error.timeout": "Die Datenbank hat zu lange gebraucht. Es wurde nichts gespeichert.",
   "write.error.exportTooLarge": "Mehr als {max} Zeilen; grenze die Filter zuerst ein.",
-  "write.error.exportDisabled": "Der Export ist für diese Tabelle abgeschaltet."
+  "write.error.exportDisabled": "Der Export ist für diese Tabelle abgeschaltet.",
+  "table.actions": "Aktionen",
+  "table.edit": "Bearbeiten",
+  "table.delete": "Löschen",
+  "table.editRow": "Datensatz bearbeiten",
+  "table.newRow": "Neuer Datensatz",
+  "table.editRowOf": "{row} bearbeiten",
+  "table.deleteRowOf": "{row} löschen",
+  "table.deleteRow": "Datensatz löschen?",
+  "table.deleteConfirm": "{row} löschen? Das lässt sich nicht rückgängig machen; abhängige Datensätze folgen den Regeln der Datenbank.",
+  "table.editCell": "{column} bearbeiten: {value}",
+  "table.export": "CSV exportieren",
+  "detail.record": "Datensatz",
+  "detail.title": "Datensatz {key}"
 }

@@ -1,11 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { ColumnDisplay, ComponentResult, RenderComponent, TableResult } from '@stashley/shared'
+import type {
+  ColumnDisplay,
+  ComponentResult,
+  RenderComponent,
+  TableResult,
+  TableRow,
+} from '@stashley/shared'
 import { parseSettings } from '@stashley/shared'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useT } from '../../../i18n/use-t.ts'
-import { Button } from '../../../ui/controls.tsx'
+import { download } from '../../../api/client.ts'
+import { Button, Notice } from '../../../ui/controls.tsx'
+import { DeleteDialog, InlineCell, RowDialog } from '../form/row-editing.tsx'
+import { useWriteErrors } from '../form/write-errors.ts'
+import { modeFields, usePageContext } from '../page-context.tsx'
 import { useDebounced } from '../../../ui/use-debounced.ts'
 import { useNavigation } from '../api.ts'
 import { BlockFrame, BlockState, FreshnessLine, LimitHint } from './block-frame.tsx'
@@ -26,11 +36,27 @@ function usePageSlugs(): Map<string, string> {
 
 /**
  * A stored query or a table source (§ Blöcke: Tabelle). Sorting, search and paging run on the
- * server: keyset pages for table sources, the cached result for queries (§10.7). Editing
- * follows in M6.
+ * server: keyset pages for table sources, the cached result for queries (§10.7). Table sources
+ * with editing create, edit (inline or in a dialog) and delete rows within the caller's
+ * rights; tables export as CSV while the caller may read (§ Tabellenseiten).
  */
-export function TableBlock(props: { component: RenderComponent }) {
+export function TableBlock(props: {
+  component: RenderComponent
+  /** Related tables of a detail view read the rows of this record. */
+  record?: string
+  /** The main table of a table page with a detail view links its rows there. */
+  detailSlug?: string
+}) {
   const t = useT()
+  const context = usePageContext()
+  const writeErrors = useWriteErrors()
+  const [dialog, setDialog] = useState<
+    | { kind: 'create' }
+    | { kind: 'edit'; key: unknown }
+    | { kind: 'delete'; key: unknown; label: string }
+    | null
+  >(null)
+  const [exportError, setExportError] = useState<unknown>(null)
   const component = props.component
   const settings = parseSettings('table', component.settings)
   const value = settings.ok ? settings.value : {}
@@ -41,7 +67,13 @@ export function TableBlock(props: { component: RenderComponent }) {
   const debouncedSearch = useDebounced(search.trim())
   const [cursors, setCursors] = useState<string[]>([])
   const pageSize = value.pageSize ?? component.table?.pageSize ?? 50
-  const options = { sort, search: debouncedSearch, cursor: cursors.at(-1), pageSize }
+  const options = {
+    sort,
+    search: debouncedSearch,
+    cursor: cursors.at(-1),
+    pageSize,
+    ...(props.record !== undefined && { record: props.record }),
+  }
   const { query, refresh } = useComponentData<ComponentResult | TableResult>(component.id, options)
   const count = useComponentCount(component.id, options, tableSource)
   const slugs = usePageSlugs()
@@ -57,9 +89,18 @@ export function TableBlock(props: { component: RenderComponent }) {
     reset()
   }
 
+  const editing = component.table?.editing
+  const canDelete = editing?.ops.includes('delete') === true
+  const canEditRow = editing?.ops.includes('update') === true && editing.dialog
+  const canCreate = editing?.ops.includes('create') === true
+  const exportable =
+    component.ops.includes('read') &&
+    (tableSource ? component.table?.csvExport === true : value.csvExport !== false)
+
   let body
   let columns: DataColumn[] = []
   let rows: Record<string, unknown>[]
+  let tableRows: TableRow[] = []
   if (!settings.ok) body = <BlockState kind="error" />
   else if (query.isPending) body = <BlockState kind="loading" />
   else if (query.isError) body = <BlockState kind="error" />
@@ -73,6 +114,7 @@ export function TableBlock(props: { component: RenderComponent }) {
         kind: column.kind,
         format: value.formats?.[column.id],
       }))
+      tableRows = table.rows
       rows = table.rows.map((row) => row.values)
     } else {
       const queryResult = result as ComponentResult
@@ -88,6 +130,16 @@ export function TableBlock(props: { component: RenderComponent }) {
     }
     const link = value.rowLink
     const slug = link === undefined ? undefined : slugs.get(link.pageId)
+    const inline = new Map(
+      editing?.inline === true
+        ? (component.table?.columns ?? []).flatMap((column) => {
+            const field = editing.fields.find((entry) => entry.id === column.field)
+            return field === undefined ? [] : [[column.id, field] as const]
+          })
+        : [],
+    )
+    const keyText = (key: unknown) =>
+      typeof key === 'string' || typeof key === 'number' ? String(key) : ''
     body = (
       <>
         <LimitHint exceeded={false} truncated={'truncated' in result && result.truncated} />
@@ -97,20 +149,72 @@ export function TableBlock(props: { component: RenderComponent }) {
           rows={rows}
           sort={sort}
           onSort={toggleSort}
-          cell={
-            link !== undefined && slug !== undefined
-              ? (row, column, text) =>
-                  column.id === columns[0]?.id ? (
-                    <Link
-                      to="/pages/$slug"
-                      params={{ slug }}
-                      search={{ [link.parameter]: row[link.column] }}
-                    >
-                      {text}
-                    </Link>
-                  ) : (
-                    text
-                  )
+          cell={(row, column, text, index) => {
+            const key = tableRows[index]?.key
+            const field = inline.get(column.id)
+            if (field !== undefined && key !== undefined) {
+              return <InlineCell component={component} field={field} rowKey={key} text={text} />
+            }
+            if (column.id !== columns[0]?.id) return text
+            if (props.detailSlug !== undefined && key !== undefined) {
+              return (
+                <Link
+                  to="/pages/$slug/$recordKey"
+                  params={{ slug: props.detailSlug, recordKey: keyText(key) }}
+                  search={{
+                    ...(context.mode !== 'runtime' && { mode: context.mode }),
+                    ...(context.roles.length > 0 && { roles: context.roles.join(',') }),
+                  }}
+                >
+                  {text}
+                </Link>
+              )
+            }
+            if (link !== undefined && slug !== undefined) {
+              return (
+                <Link
+                  to="/pages/$slug"
+                  params={{ slug }}
+                  search={{ [link.parameter]: row[link.column] }}
+                >
+                  {text}
+                </Link>
+              )
+            }
+            return text
+          }}
+          actions={
+            canDelete || canEditRow
+              ? {
+                  label: t('table.actions'),
+                  render: (index) => {
+                    const row = tableRows[index]
+                    if (row === undefined) return null
+                    const label = keyText(row.values[columns[0]?.id ?? ''] ?? row.key)
+                    return (
+                      <span className={styles.rowButtons}>
+                        {canEditRow && (
+                          <Button
+                            variant="ghost"
+                            aria-label={t('table.editRowOf', { row: label })}
+                            onPress={() => setDialog({ kind: 'edit', key: row.key })}
+                          >
+                            {t('table.edit')}
+                          </Button>
+                        )}
+                        {canDelete && (
+                          <Button
+                            variant="ghost"
+                            aria-label={t('table.deleteRowOf', { row: label })}
+                            onPress={() => setDialog({ kind: 'delete', key: row.key, label })}
+                          >
+                            {t('table.delete')}
+                          </Button>
+                        )}
+                      </span>
+                    )
+                  },
+                }
               : undefined
           }
         />
@@ -127,18 +231,45 @@ export function TableBlock(props: { component: RenderComponent }) {
     <BlockFrame
       component={component}
       tools={
-        searchable ? (
-          <input
-            type="search"
-            className={workspace.nativeInput}
-            aria-label={t('table.search')}
-            placeholder={t('table.search')}
-            value={search}
-            onChange={(event) => {
-              setSearch(event.target.value)
-              reset()
-            }}
-          />
+        searchable || exportable || canCreate ? (
+          <>
+            {searchable && (
+              <input
+                type="search"
+                className={workspace.nativeInput}
+                aria-label={t('table.search')}
+                placeholder={t('table.search')}
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value)
+                  reset()
+                }}
+              />
+            )}
+            {exportable && (
+              <Button
+                variant="ghost"
+                onPress={() => {
+                  setExportError(null)
+                  download(`/internal/pages/${context.page.id}/components/${component.id}/export`, {
+                    ...modeFields(context),
+                    filters: context.filters,
+                    params: context.params,
+                    ...(sort !== undefined && { sort }),
+                    ...(debouncedSearch !== '' && { search: debouncedSearch }),
+                    ...(props.record !== undefined && { record: props.record }),
+                  }).catch(setExportError)
+                }}
+              >
+                {t('table.export')}
+              </Button>
+            )}
+            {canCreate && (
+              <Button variant="primary" onPress={() => setDialog({ kind: 'create' })}>
+                {t('table.newRow')}
+              </Button>
+            )}
+          </>
         ) : undefined
       }
       footer={
@@ -180,7 +311,22 @@ export function TableBlock(props: { component: RenderComponent }) {
         </>
       }
     >
+      {exportError !== null && <Notice tone="error">{writeErrors.message(exportError)}</Notice>}
       {body}
+      {dialog?.kind === 'create' && (
+        <RowDialog component={component} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.kind === 'edit' && (
+        <RowDialog component={component} rowKey={dialog.key} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.kind === 'delete' && (
+        <DeleteDialog
+          component={component}
+          rowKey={dialog.key}
+          label={dialog.label}
+          onClose={() => setDialog(null)}
+        />
+      )}
     </BlockFrame>
   )
 }

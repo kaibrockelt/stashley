@@ -11,6 +11,7 @@ import { StateView } from '../../ui/state.tsx'
 import stateStyles from '../../ui/state.module.css'
 import { useRenderPage } from './api.ts'
 import { Block } from './blocks/block.tsx'
+import { TableBlock } from './blocks/table-block.tsx'
 import { PageFilters } from './filters.tsx'
 import { PreviewBar } from './preview-bar.tsx'
 import { rowSpans } from './grid-layout.ts'
@@ -54,8 +55,19 @@ export function PageGrid(props: {
   renderBlock?: (component: RenderPage['rows'][number]['components'][number]) => ReactNode
 }) {
   const render = props.renderBlock ?? ((component) => <Block component={component} />)
-  if (props.page.table !== null)
-    return <div className={styles.grid}>{render(props.page.table)}</div>
+  if (props.page.table !== null) {
+    // The main table of a table page with a detail view links its rows there (§13.1).
+    const linked = props.renderBlock === undefined && props.page.detail.length > 0
+    return (
+      <div className={styles.grid}>
+        {linked ? (
+          <TableBlock component={props.page.table} detailSlug={props.page.slug} />
+        ) : (
+          render(props.page.table)
+        )}
+      </div>
+    )
+  }
   return (
     <div className={styles.grid}>
       {props.page.rows.map((row) => {
