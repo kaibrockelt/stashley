@@ -25,6 +25,7 @@ import {
   TextField,
 } from '../../../ui/controls.tsx'
 import table from '../../../ui/table.module.css'
+import { ConsequencesNotice, consequencesOf } from '../api/consequences.tsx'
 import styles from './connections.module.css'
 import { AccessWarnings, opLabels } from './texts.tsx'
 
@@ -80,28 +81,38 @@ export function AccessDialog(props: {
       ...hidden,
     ],
   })
+  // A change that takes API endpoints or grants away is confirmed first (E15).
   const save = useMutation({
-    mutationFn: () =>
+    mutationFn: (confirm: boolean) =>
       access === undefined
         ? api('POST', '/internal/admin/table-access', {
             connectionId: props.connectionId,
             objectName: object.name,
             ...body(),
           })
-        : api('PUT', `/internal/admin/table-access/${access.id}`, body()),
+        : api('PUT', `/internal/admin/table-access/${access.id}`, {
+            ...body(),
+            ...(confirm && { confirm: true }),
+          }),
     onSuccess: async () => {
       await refresh()
       props.onClose()
     },
   })
   const remove = useMutation({
-    mutationFn: () => api('DELETE', `/internal/admin/table-access/${access?.id ?? ''}`),
+    mutationFn: (confirm: boolean) =>
+      api(
+        'DELETE',
+        `/internal/admin/table-access/${access?.id ?? ''}${confirm ? '?confirm=true' : ''}`,
+      ),
     onSuccess: async () => {
       await refresh()
       props.onClose()
     },
   })
   const error = save.error ?? remove.error
+  const saveConsequences = consequencesOf(save.error)
+  const removeConsequences = consequencesOf(remove.error)
   const exclusionError = object.columns
     .map((_column, index) => errors.field(save.error, `exclusions.${String(index)}.column`))
     .find((message) => message !== undefined)
@@ -113,9 +124,26 @@ export function AccessDialog(props: {
 
   return (
     <Dialog title={object.name} isOpen isWide onOpenChange={(open) => !open && props.onClose()}>
-      <Form onSubmit={() => save.mutate()}>
-        {error !== null && errors.message(error) !== undefined && (
-          <Notice tone="error">{errors.message(error)}</Notice>
+      <Form onSubmit={() => save.mutate(false)}>
+        {saveConsequences !== undefined ? (
+          <ConsequencesNotice
+            consequences={saveConsequences}
+            onConfirm={() => save.mutate(true)}
+            onCancel={() => save.reset()}
+            isPending={save.isPending}
+          />
+        ) : removeConsequences !== undefined ? (
+          <ConsequencesNotice
+            consequences={removeConsequences}
+            onConfirm={() => remove.mutate(true)}
+            onCancel={() => remove.reset()}
+            isPending={remove.isPending}
+          />
+        ) : (
+          error !== null &&
+          errors.message(error) !== undefined && (
+            <Notice tone="error">{errors.message(error)}</Notice>
+          )
         )}
         {access !== undefined && <AccessWarnings warnings={access.warnings} />}
         <fieldset className={styles.block}>
@@ -265,7 +293,11 @@ export function AccessDialog(props: {
         </div>
         <Actions>
           {access !== undefined && (
-            <Button variant="danger" onPress={() => remove.mutate()} isDisabled={remove.isPending}>
+            <Button
+              variant="danger"
+              onPress={() => remove.mutate(false)}
+              isDisabled={remove.isPending}
+            >
               {t('access.unshare')}
             </Button>
           )}

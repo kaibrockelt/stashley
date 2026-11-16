@@ -48,7 +48,7 @@ export function Button({
 export function TextField(props: {
   label: string
   name?: string
-  type?: 'text' | 'email' | 'password' | 'url' | 'number'
+  type?: 'text' | 'email' | 'password' | 'url' | 'number' | 'date'
   value: string
   onChange: (value: string) => void
   error?: string | undefined

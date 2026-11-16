@@ -89,6 +89,7 @@ export function Shell() {
             <div className={styles.navGroup}>
               <p className={styles.navHeading}>{t('nav.administration')}</p>
               <NavLink to="/admin/connections">{t('connections.title')}</NavLink>
+              <NavLink to="/admin/api">{t('api.title')}</NavLink>
               <NavLink to="/admin/users">{t('users.title')}</NavLink>
               <NavLink to="/admin/identity-providers">{t('providers.title')}</NavLink>
               <NavLink to="/admin/settings">{t('settings.title')}</NavLink>

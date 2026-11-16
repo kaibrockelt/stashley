@@ -255,6 +255,11 @@ const appRoutes = [
     }),
     createRoute({
       getParentRoute: () => adminLayout,
+      path: '/api',
+      component: lazyRouteComponent(() => import('../features/admin/api/api-page.tsx'), 'ApiPage'),
+    }),
+    createRoute({
+      getParentRoute: () => adminLayout,
       path: '/identity-providers',
       component: lazyRouteComponent(
         () => import('../features/admin/identity-providers.tsx'),

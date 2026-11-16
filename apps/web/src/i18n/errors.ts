@@ -57,6 +57,10 @@ const fieldMessages: Record<string, MessageId> = {
   type_mismatch: 'field.typeMismatch',
   used_by_relation: 'field.usedByRelation',
   reserved: 'field.reserved',
+  alias_is_object_name: 'field.aliasIsObjectName',
+  not_available: 'field.notAvailable',
+  endpoint_disabled: 'field.endpointDisabled',
+  in_the_past: 'field.inThePast',
 }
 
 /** Sign-in errors passed back from the OIDC callback as `?error=`. */
