@@ -1,8 +1,8 @@
 # Progress
 
-**Current milestone:** M6 – Forms and table pages (in progress)
+**Current milestone:** M6 – Forms and table pages (in review)
 
-**Next step:** M6 steps 6–7: route tests of the write endpoints, CSV export; then the web client (forms, table pages, editor).
+**Next step:** Review M6 in a fresh session (write path, base filters and option checks with high effort); then the operator's acceptance.
 
 **Recommended model strength:** M6: medium (write path and base filters: high).
 
@@ -18,7 +18,7 @@ The SQL validation of M4 is tested externally; that does not block M6.
 | M3 | Connections and table access: database users, grant inspection, encryption, key rotation, schema introspection and diff, ceilings, column exclusions, virtual relations, display templates | High | Done |
 | M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Done |
 | M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | Done |
-| M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | In progress |
+| M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | In review |
 | M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High | Open |
 | M8 | MCP server: authorization server, metadata, tools, MCP exposure, privacy notice, call log | High | Open |
 | M9 | Demo scenario and acceptance: seed script, configuration export and import, end-to-end suite, accessibility, performance, documentation, release pipeline | Medium (final review: high) | Open |
@@ -325,3 +325,14 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
     - Generated dates and defaults apply when a record is created; on updates an editable generated date is an ordinary input.
     - Write sessions wait at most 10 s for a row lock (`row_locked`).
   - Verified: typecheck, lint, SPDX, i18n (892 keys); 568 server, 86 shared and 62 web unit tests; 196 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7, among them a payment that updates `v_zahlungsstatus` at once, hotels kept apart on writes with manipulated keys, a change moved out of the base filter refused, version conflicts, unchanged repeats, upserts, duplicate and missing references translated, simulation without DML, and writes after the write user was narrowed to column grants.
+- 2026-11-16: M6 steps 6–12 implemented; M6 in review.
+  - Server: route tests of the write endpoints; CSV export (E12) streamed per keyset page, at most 100,000 rows, audited as `table.exported`; related tables of a detail view read the rows of the shown record (`record`, reserved URL name `__record`); the design catalog lists auto-increment, required and writable columns and unique keys; render models name the column each inline field edits.
+  - Web: form blocks (all widgets, numbers in the user's format, date-times as wall times of the instance, a searchable foreign key selection with exact hits and extras, defaults, conflict handling, the action after saving, `*` on required fields); tables edit cells inline, create and edit in a dialog, delete after confirmation and export CSV; table pages link rows to `/pages/:slug/:recordKey` with the record and its related tables; the block dialog configures form fields, defaults, generated dates, edit record, upsert key, base filters, linked columns, table editing and the CSV switch; table pages get related tables. The donut share follows the locale (from M5).
+  - Found and fixed in the browser check: edit mode refused writes instead of simulating them against the ceiling (D10); the foreign key search said "no matches" while the input settled; a conflict in the row dialog left the table behind it stale.
+  - Verified: typecheck, lint, SPDX, i18n (1024 keys); 572 server, 86 shared and 67 web unit tests; 204 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7; initial load 193.6 KB gzip.
+  - Checked in the browser on the rebuilt test stand (MariaDB 12.3) with a temporary page, removed afterwards with its rows: an event form with a decimal comma and a client-side "at most 2 decimals"; upserting a person twice by email (created, then updated, "show record"); a registration with the person chosen by keyboard and the event from the hidden `current_event_id`; a payment where the typed start number was taken at once with the person's name as extra and today's date suggested; inline editing of a last name; a version conflict in the edit dialog; CSV export with `;`; a simulated write in preview at 375 px and in edit mode; the field editor of the block dialog.
+  - Not checked in the browser: the detail view, delete with confirmation, the editor's base filter, linked column and related table controls (unit and integration tests cover the server side), and the station criterion end to end (no demo data on the stand; M9).
+  - Open points for the review:
+    - Stand's `anmeldung` display template falls back to `ticket_typ` (first text-like column); a template such as `{startnummer} – {person.nachname}` would make the payment selection readable. Configuration, not code.
+    - The `Datenstand in 3 Sekunden` line shows a future time when the server clock runs ahead of the browser (from M5).
+    - Required fields are marked with a plain `*` in the label text.

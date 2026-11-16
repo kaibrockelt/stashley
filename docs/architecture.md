@@ -799,19 +799,23 @@ sequenceDiagram
   X-->>R: new row, new version token
 ```
 
-1. **Authorize** with the required operation. In `edit` and `preview` mode the request continues as a simulation (§11.2). The handle carries the writable fields, generated fields, server-side defaults, base filter and lock strategy.
+1. **Authorize** with the required operation. In `edit` and `preview` mode the request continues as a simulation (§11.2). The handle carries the writable fields, generated fields, server-side defaults, base filter and lock strategy. These come from the component's **write model**, compiled with the page (`access/write-model.ts`): the payload per operation, the server values, the lock strategy, the upsert key and the record with its base filter. Configuration problems are issues (§8.6); a write user without the column privileges a write needs withholds that operation (`grant_missing`, E6).
 2. **Validate the payload** with the Zod schema built by `buildRowSchema(fields, columns, mode)` from `shared`. The client uses the same schema. The schema is strict: fields that are not writable are rejected (`field_not_writable`).
-3. **Apply server values:**
-   - Hidden default values from instance variables, the user context or constants.
-   - Generated date fields (`now`, `today`, `now ± <n><unit>`), evaluated with Temporal in `APP_TIMEZONE` and encoded for the connection.
+3. **Apply server values** (new rows only; updates never re-apply them):
+   - Hidden default values from instance variables, the user context or constants, and visible ones the payload left out. Defaults from page filters and URL parameters come from the client (E10).
+   - Generated date fields (`now`, `today`, `now ± <n><unit>` with `min`, `h`, `d`, `w`, `mo`, `y`), evaluated in `APP_TIMEZONE` (`shared/values/date-expression.ts`, with `Intl`, so the client shows the same suggestion). An editable one is an ordinary input on updates.
+   - Equality conditions of the base filter on the row's own columns, so new rows meet it without a field for them.
+   - The lock column where it has no default: version 1, or now.
    - Auto-increment columns are never written.
 4. **Check foreign key fields** against their option source, which is the referenced object or a stored query. The check runs `SELECT 1 … WHERE key = ? LIMIT 1` with the same parameters as the option list. A value outside that list is rejected (`value_not_allowed`).
 5. **Write inside one transaction on the write pool:**
-   - **Update and delete:** lock the row with `SELECT … WHERE pk = ? AND <base filter> FOR UPDATE`. If it is missing, return `404`. If the version token differs, return `409 version_conflict` with the current row.
+   - **Update and delete:** lock the row with `SELECT … FROM <table> WHERE pk = ? FOR UPDATE` on its own table only, then read it through the base filter (with its joins) in the same transaction. `FOR UPDATE` over the joins would lock the joined tables as well and, on MySQL, need write privileges on them. If either finds nothing, return `404`. If the version token differs, return `409 version_conflict` with the current row (`current` in the problem document).
    - **Insert:** a generated `INSERT` of the writable fields and server values.
-   - **Upsert:** a locked lookup by the configured unique key decides between the update path and the insert path (§28, D2). A concurrent duplicate-key error on insert is retried once as an update.
+   - **Upsert:** a locked lookup by the configured unique key decides between the update path and the insert path (§28, D2). The key is the primary key only when it is not auto-increment, otherwise a unique key without nullable columns (E8). A concurrent duplicate-key error on insert is retried once as an update. An existing row outside the base filter answers `403 base_filter_violation`.
    - **Post-write check:** re-select the row by primary key with the base filter. If it is no longer visible, roll back with `403 base_filter_violation`. This covers base filters on lookup columns.
-6. **Commit**, then invalidate the cache for the object (§12), then append the audit event with the old and new values of the changed fields.
+6. **Commit**, then invalidate the cache for the object (§12), then append the audit event (`row.created`, `row.updated`, `row.deleted`) with the old and new values of the changed fields.
+   - **Answer:** the key, and the record with its new version token only when the caller may read the component. Create and upsert forms have no `read` (§8.2), so they answer with the key only and never reveal an existing row.
+   - **Deadlocks** (1213) roll the transaction back; it runs once more. Write sessions wait at most 10 s for a row lock (`innodb_lock_wait_timeout`), then `row_locked`.
    - If the audit insert fails after the commit, the error is logged with IDs only and shown as an admin notice.
 7. **Translate errors** using the error number and the catalog. Raw messages never pass through.
 
@@ -826,13 +830,19 @@ sequenceDiagram
    | Invalid value (1292, 1366) | `invalid_value` |
    | Check constraint (MySQL 3819, MariaDB 4025) | `check_violation` |
    | Timeout (MariaDB 1969, MySQL 3024) | `query_timeout` |
+   | No default for a missing column (1364) | `not_null_violation` |
+   | Lock wait timeout (1205), deadlock after the retry (1213) | `row_locked` |
+   | Missing privileges (1142, 1143) | `target_permission_denied` |
+
+   Duplicate keys and missing referenced rows name their fields: after the refusal the writer checks the unique keys and foreign keys of the catalog with `SELECT`s instead of reading the message.
 
 **Lock strategy,** decided when the page is compiled:
 
 - **Version column** (configured or detected as an integer `version` column): the server increments it on every update.
 - **Otherwise an `updated_at` column** (configured or detected). If the column has no `ON UPDATE` default, the server sets it.
 - **Otherwise the original values** of the changed fields.
-- **The version token** sent with every row is opaque. It holds the lock column value and a hash of the original values of the writable fields, so second-precision timestamps cannot hide concurrent edits.
+- **The version token** sent with every row is opaque. It holds the lock column value and a hash of the original values of the writable fields, so second-precision timestamps cannot hide concurrent edits. It is an HMAC (`rowVersion` key) over the object, key, lock value and field values; the client gets it from `GET …/rows/:key/edit` and sends it with every update.
+- **Configured** on the table access (E7, `lock_mode`, `lock_column`): detected (`auto`), a named integer or date-time column, or none. A configured column that cannot be used shows `lock_column_invalid`; excluded and generated columns never serve.
 
 **Delete** requires `delete` in the effective rights. The UI asks for confirmation. Cascades follow the database's `ON DELETE` rules, and a blocked delete returns `still_referenced`.
 
@@ -848,7 +858,8 @@ In `edit` and `preview` mode, write requests run as a simulation and never chang
 - **Checks instead of writes:** where a real write would send DML, the server uses `SELECT` to find what the database would reject: duplicate primary or unique keys, missing referenced rows, rows outside the base filter, version conflicts.
 - **Response:** the resulting row and any field errors, marked `simulated: true`. Nothing is audited and the cache is not touched.
 - **No rollback trick:** the simulation never runs DML inside a transaction that is rolled back afterwards. Non-transactional tables, triggers and auto-increment counters would leak side effects.
-- **Limits:** checks only the database performs, such as `CHECK` constraints and triggers, are not covered.
+- **Limits:** checks only the database performs, such as `CHECK` constraints and triggers, are not covered. A new row's base filter conditions over linked tables and `still_referenced` on deletes are not simulated either.
+- **Sessions:** a simulation runs in `START TRANSACTION READ ONLY` on the write pool and ends with `ROLLBACK`. In `edit` mode the operations are those of the ceiling and grants (`staticMask`), in `preview` those of the chosen roles.
 
 ## 12. Query cache
 
@@ -915,7 +926,8 @@ type DataSourceRef =
 - **Bindings:** query blocks bind query parameters to page filters or URL parameters; table sources bind columns to them (`eq`, `in`, `contains`, `range`). A table source also carries its columns (own, lookup over up to three steps, display values), sort, search columns, base filter and page size.
 - **M4 scope:** blocks keep their display settings in `settings`, which the editor (M5) specifies; forms carry their table and mode, and their fields follow in M6.
 - **Block configuration** follows each block type: column mapping, formats, thresholds, chart type and height (`S`, `M`, `L`), form fields, editing options, row links.
-- **Table pages** add a detail view. Each related table in it is a component with its own data source and grants.
+- **Table pages** add a detail view (`detail.tables`). Each related table in it is a component with its own data source and grants; its `link.column` must be a relation to the page's table. It reads the rows that refer to the record of the request (`record`, compiled as a binding on the reserved URL name `__record`); the key selects, it never restricts. The client shows it at `/pages/:slug/:recordKey`.
+- **Forms** (M6) carry their fields (input or generated, with widget, default, hidden, foreign key options), the record of edit mode, the upsert key, a base filter and the action after saving. **Table sources** carry `editing` (operations, fields, inline, dialog) and `csvExport`. Documents saved before M6 get these as defaults.
 
 ### 13.2 Drafts, publishing and versions
 
@@ -1074,7 +1086,7 @@ These are the resource groups of the internal API. The exact contracts are Zod s
 | --- | --- |
 | Session | `GET /internal/session` (account, system role, roles, CSRF token, instance time zone, features) · `POST /internal/auth/login` · `POST /internal/auth/mfa` · `POST /internal/auth/logout` · `POST /internal/auth/password-reset` · `POST /internal/auth/password-reset/complete` · `POST /internal/invitations/lookup` · `POST /internal/invitations/accept` |
 | Workspace | `GET /internal/navigation` · `GET /internal/pages/:slug?mode=&roles=` (render model) |
-| Components | Under `/internal/pages/:pageId/components/:componentId`: `POST …/query` · `POST …/count` · `GET …/rows/:key` · `POST …/rows` · `PATCH …/rows/:key` · `DELETE …/rows/:key` · `POST …/fields/:fieldId/options` · `POST …/export` (CSV) · `POST …/refresh` |
+| Components | Under `/internal/pages/:pageId/components/:componentId`: `POST …/query` · `POST …/count` · `GET …/rows/:key` · `GET …/rows/:key/edit` (record and version token) · `POST …/rows` (create, or upsert for upsert forms) · `PATCH …/rows/:key` (`version` required) · `DELETE …/rows/:key` · `POST …/fields/:fieldId/options` · `POST …/export` (CSV) · `POST …/refresh` |
 | Page filters | `POST /internal/pages/:pageId/filters/:filterId/options` |
 | Design | `/internal/design/sections` · `/internal/design/pages` · `…/pages/:id/draft` (`If-Match`) · `…/pages/:id/publish` · `…/pages/:id/versions[/:version[/restore]]` (M5) · `/internal/design/queries[/:id[/versions[/:version]]]` · `…/queries/validate` · `…/queries/run` (test run, 100 rows) · `/internal/design/roles` · `/internal/design/variables` · `/internal/design/catalog` (M5) · `/internal/design/issues` |
 | Administration | `/internal/admin/connections[/test, /:id[/grants, /read-scope, /write-scope, /schema, /schema/refresh, /schema/drifts[/:driftId/acknowledge]]]` · `/internal/admin/table-access` · `/internal/admin/relations` · `/internal/admin/users[/:id[/status, /roles, /links]]` (roles: `PUT …/roles`) · `/internal/admin/identity-providers` · `/internal/admin/api/endpoints` · `/internal/admin/api/tokens` · `/internal/admin/mcp/{settings, notice, tokens, calls}` · `/internal/admin/permissions` · `/internal/admin/audit[/export]` · `/internal/admin/settings` · `/internal/admin/imports` · `/internal/admin/config/{export, import}` |
@@ -1086,6 +1098,8 @@ These are the resource groups of the internal API. The exact contracts are Zod s
   - Only admins can call `admin` routes. They have the manager capabilities as well, except MCP access.
   - Whether managers can create roles is an instance setting.
 - **Component reads use `POST`,** because parameters and filters are structured. They are reads, they never change data, and they still send the CSRF header.
+- **Foreign key options** (`…/fields/:fieldId/options`) use the right of their component: whoever may create or update through it. They search the display value and any configured search columns (from one character, 50 per page, cached 15 min), mark a single exact match of the search columns as `exact`, and return the chosen record's extra columns. A saved key must be in the same list (`value_not_allowed`).
+- **CSV export** (E12): every row of the current filters, search and sort while the user may read; UTF-8 with BOM; delimiter and decimal separator from the user's format (`;` and `,` for a decimal comma); ISO dates, date-times as wall times of `APP_TIMEZONE`; text cells starting with `=`, `+`, `-`, `@`, tab or CR prefixed with `'`, numbers left alone. Table sources page through the database by keyset without the cache, at most 100,000 rows (`export_too_large`). It can be turned off per table (`csvExport`, or `settings.csvExport` for query tables) and is audited as `table.exported` with the row count.
 
 ## 16. Public REST API
 
