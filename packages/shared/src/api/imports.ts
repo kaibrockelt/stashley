@@ -7,6 +7,7 @@ import {
   isDateTimeFormat,
   thousandsSeparators,
 } from '../values/csv-values.ts'
+import { newColumnTypes } from '../values/type-inference.ts'
 import type { FieldError } from './errors.ts'
 
 /**
@@ -70,7 +71,15 @@ export const importMapping = z
 export type ImportMapping = z.infer<typeof importMapping>
 
 export const importSettings = z
-  .object({ options: importParseOptions, mapping: importMapping.nullable() })
+  .object({
+    options: importParseOptions,
+    mapping: importMapping.nullable(),
+    /** Instead of a mapping: a table to create from the file (admins). */
+    newTable: z
+      .lazy(() => newTableImport)
+      .nullable()
+      .default(null),
+  })
   .strict()
 
 export const importStatuses = [
@@ -152,6 +161,14 @@ export interface ImportJob {
   status: ImportStatus
   options: ImportParseOptions
   mapping: ImportMapping | null
+  /** A table to create, with how far its creation got. */
+  newTable:
+    | (NewTableImport & {
+        createdAt: number | null
+        dataDoneAt: number | null
+        outcome: NewTableOutcome | null
+      })
+    | null
   /** Suggested by name (§17 step 3) once a table is chosen. */
   suggestedMapping: ImportColumnMapping[] | null
   dryRun: ImportDryRun | null
@@ -162,4 +179,65 @@ export interface ImportJob {
   createdBy: string
   createdAt: number
   expiresAt: number
+}
+
+// New tables (§17 step 7, E28): admins only, through the schema user.
+
+export const newColumnDefault = z.discriminatedUnion('kind', [
+  /** A literal in the JSON-free text form of the type, e.g. `0`, `12.50`, `2026-05-09`. */
+  z.object({ kind: z.literal('value'), value: z.string().max(255) }).strict(),
+  /** `CURRENT_TIMESTAMP`, for date-times only. */
+  z.object({ kind: z.literal('now') }).strict(),
+])
+export type NewColumnDefault = z.infer<typeof newColumnDefault>
+
+export const newTableColumn = z
+  .object({
+    name: z.string().min(1).max(64),
+    /** The CSV column it is filled from; null in the table designer. */
+    source: z.number().int().min(0).max(999).nullable(),
+    type: z.enum(newColumnTypes),
+    length: z.number().int().min(1).max(16383).optional(),
+    precision: z.number().int().min(1).max(65).optional(),
+    scale: z.number().int().min(0).max(30).optional(),
+    /** NOT NULL. */
+    required: z.boolean(),
+    unique: z.boolean(),
+    default: newColumnDefault.nullable(),
+  })
+  .strict()
+export type NewTableColumn = z.infer<typeof newTableColumn>
+
+export const newTablePrimaryKey = z.discriminatedUnion('kind', [
+  /** An added `BIGINT AUTO_INCREMENT` column, first in the table. */
+  z.object({ kind: z.literal('added'), name: z.string().min(1).max(64) }).strict(),
+  /** One of the columns; it must be unique and never empty. */
+  z.object({ kind: z.literal('column'), column: z.string().min(1).max(64) }).strict(),
+])
+export type NewTablePrimaryKey = z.infer<typeof newTablePrimaryKey>
+
+export const newTableDefinition = z
+  .object({
+    connectionId: z.uuid(),
+    name: z.string().min(1).max(64),
+    columns: z.array(newTableColumn).min(1).max(200),
+    primaryKey: newTablePrimaryKey,
+  })
+  .strict()
+export type NewTableDefinition = z.infer<typeof newTableDefinition>
+
+export const newTableImport = z
+  .object({ definition: newTableDefinition, skipFailed: z.boolean() })
+  .strict()
+export type NewTableImport = z.infer<typeof newTableImport>
+
+/** What creating a table left to do: the grants Stashley's users still need. */
+export interface NewTableOutcome {
+  tableAccessId: string | null
+  /** The `CREATE TABLE` statement as it ran. */
+  ddl: string
+  /** The read user can see the table; until then its table access waits for grants. */
+  readable: boolean
+  /** `GRANT` statements for the database administrator; empty when nothing is missing. */
+  statements: { purpose: 'read' | 'write'; statement: string }[]
 }

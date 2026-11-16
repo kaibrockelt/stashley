@@ -634,6 +634,65 @@ export class TableAccessService {
     return this.get(id)
   }
 
+  /**
+   * Table access for a table Stashley just created (§17 step 7): ceiling read only, and
+   * `pending_grants` until the read user sees it (a catalog read then makes it active). The
+   * catalog may not know the table yet, so this skips the checks of `create`. A second call
+   * for the same table returns the first one.
+   */
+  async createForNewTable(
+    actor: Actor,
+    input: { connectionId: string; objectName: string; keyColumn: string; visible: boolean },
+  ): Promise<string> {
+    const existing = await this.deps.db
+      .selectFrom('table_access')
+      .select('id')
+      .where('connection_id', '=', input.connectionId)
+      .where('object_name', '=', input.objectName)
+      .executeTakeFirst()
+    if (existing !== undefined) return existing.id
+    const taken = new Set(
+      (await this.deps.db.selectFrom('table_access').select('api_resource').execute()).map(
+        (row) => row.api_resource,
+      ),
+    )
+    const base = defaultResource(input.objectName)
+    let apiResource = base
+    for (let index = 2; taken.has(apiResource); index++) {
+      apiResource = `${base.slice(0, 60)}_${index}`
+    }
+    const id = uuidv7()
+    const now = this.clock()
+    const state = input.visible ? 'active' : 'pending_grants'
+    await this.deps.db
+      .insertInto('table_access')
+      .values({
+        id,
+        connection_id: input.connectionId,
+        object_name: input.objectName,
+        object_type: 'table',
+        ops: opsToMask(['read']),
+        key_column: input.keyColumn,
+        display_template: null,
+        api_resource: apiResource,
+        mcp_enabled: 0,
+        state,
+        ...lockColumns({ mode: 'auto' }),
+        created_at: now,
+        updated_at: now,
+      })
+      .execute()
+    await this.deps.audit.record(actor, {
+      action: 'table_access.created',
+      subject: { kind: 'table_access', id, label: input.objectName },
+      connectionId: input.connectionId,
+      objectName: input.objectName,
+      details: { ops: ['read'], keyColumn: input.keyColumn, apiResource, state, newTable: true },
+    })
+    this.changed(input.connectionId)
+    return id
+  }
+
   async update(actor: Actor, id: string, input: UpdateInput): Promise<TableAccess> {
     const before = await this.get(id)
     const values = await this.validate(before.connectionId, before.objectName, input, id)

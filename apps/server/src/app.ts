@@ -134,7 +134,11 @@ export async function createServer(
     tokens: services.apiTokens,
     docs: services.apiDocs,
   })
-  registerImportRoutes(app, { imports: services.imports, maxBytes: config.imports.maxBytes })
+  registerImportRoutes(app, {
+    imports: services.imports,
+    tables: services.tables,
+    maxBytes: config.imports.maxBytes,
+  })
   if (config.publicApi) {
     registerPublicApi(app, {
       access: services.access,

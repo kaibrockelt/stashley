@@ -23,6 +23,7 @@ import { ApiEndpoints } from './modules/public-api/endpoints.ts'
 import { ApiTokens } from './modules/public-api/tokens.ts'
 import { ApiDocs } from './modules/public-api/docs.ts'
 import { ImportService } from './modules/imports/service.ts'
+import { TableCreator } from './modules/imports/tables.ts'
 import { TargetPools, type HostResolver } from './target/pools.ts'
 import { sessionCookieName } from './modules/auth/sessions.ts'
 import { createOidcClient, OidcService, type OidcClient } from './modules/auth/oidc.ts'
@@ -148,9 +149,11 @@ export function createServices(
   catalog.addImpactProvider((connectionId, diff) => apiEndpoints.impact(connectionId, diff))
   const apiTokens = new ApiTokens({ db, audit, events, clock })
   const apiDocs = new ApiDocs({ access, endpoints: apiEndpoints, baseUrl: base, events })
+  const tables = new TableCreator({ connections, pools, catalog, tableAccess, audit, log })
   const imports = new ImportService({
     db,
     access,
+    tables,
     connections,
     pools,
     audit,
@@ -182,6 +185,7 @@ export function createServices(
     apiTokens,
     apiDocs,
     imports,
+    tables,
     facts,
     pages,
     reader,

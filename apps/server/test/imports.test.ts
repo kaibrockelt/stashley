@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { AuditEvent, ImportJob, ImportMapping, TableAccess } from '@stashley/shared'
+import type {
+  AuditEvent,
+  ImportJob,
+  ImportMapping,
+  NewTableDefinition,
+  NewTableOutcome,
+  TableAccess,
+} from '@stashley/shared'
 import iconv from 'iconv-lite'
 import type mysql from 'mysql2/promise'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -25,6 +32,7 @@ describe.skipIf(targets.length === 0).each(targets)('CSV import on $name', ({ ur
   let server: Server
   let admin: TestClient
   let access: Map<string, TableAccess>
+  let connection: { id: string }
 
   const table = (name: string) => access.get(name) as TableAccess
 
@@ -62,7 +70,13 @@ describe.skipIf(targets.length === 0).each(targets)('CSV import on $name', ({ ur
     await prepareDatabase(root)
     await seedDemo(root)
     ;({ server, admin } = await startServer())
-    ;({ access } = await connectDemo(admin, url))
+    ;({ access, connection } = await connectDemo(admin, url, {
+      credentials: {
+        read: { username: 'stashley_read', password: 'demo-read-password' },
+        write: { username: 'stashley_write', password: 'demo-write-password' },
+        schema: { username: 'stashley_schema', password: 'demo-schema-password' },
+      },
+    }))
   })
 
   afterAll(async () => {
@@ -252,5 +266,271 @@ describe.skipIf(targets.length === 0).each(targets)('CSV import on $name', ({ ur
       data: AuditEvent[]
     }>().data
     expect(failed[0]?.subjectId).toBe(job.id)
+  })
+
+  it('creates a table from Windows-1252 with semicolons and German dates, adding an id (§ Abnahme)', async () => {
+    const csv = iconv.encode(
+      [
+        'Vorname;Nachname;E-Mail;Geburtstag;Beitrag;Aktiv',
+        'Jürgen;Müller;juergen@example.com;31.01.1980;12,50;ja',
+        'Zoë;Straße;zoe@example.com;01.02.1990;7,00;nein',
+        'Ali;Öztürk;ali@example.com;15.03.2001;8,00;ja',
+        '',
+      ].join('\r\n'),
+      'windows-1252',
+    )
+    let job = await upload(csv, 'mitglieder.csv')
+    const suggested = (
+      await admin.request(
+        'GET',
+        `/internal/imports/${job.id}/new-table?connectionId=${connection.id}`,
+      )
+    ).json<NewTableDefinition>()
+    expect(suggested.name).toBe('mitglieder')
+    expect(suggested.columns.map((column) => column.type)).toEqual([
+      'varchar',
+      'varchar',
+      'varchar',
+      'date',
+      'decimal',
+      'boolean',
+    ])
+    const definition: NewTableDefinition = {
+      ...suggested,
+      columns: suggested.columns.map((column) =>
+        column.name === 'e_mail'
+          ? { ...column, name: 'email', length: 254, required: true, unique: true }
+          : column,
+      ),
+    }
+    const saved = await admin.send('PUT', `/internal/imports/${job.id}`, {
+      options: job.options,
+      mapping: null,
+      newTable: { definition, skipFailed: false },
+    })
+    expect(saved.statusCode, saved.body).toBe(200)
+    job = await step(job, 'dry-run')
+    expect(job.dryRun?.counts).toMatchObject({ rows: 3, created: 3, failed: 0 })
+    job = await step(job, 'run')
+    expect(job.status, JSON.stringify(job.failure)).toBe('completed')
+    expect(job.result).toMatchObject({ created: 3 })
+    const outcome = job.newTable?.outcome as NewTableOutcome
+    // The read user may read the whole schema, so the table is readable at once.
+    expect(outcome).toMatchObject({ readable: true, statements: [] })
+    expect(outcome.ddl).toContain('`id` BIGINT NOT NULL AUTO_INCREMENT')
+    expect(
+      await rows(
+        "SELECT id, vorname, email, DATE_FORMAT(geburtstag, '%Y-%m-%d') AS geburtstag, beitrag, aktiv FROM mitglieder ORDER BY id",
+      ),
+    ).toEqual([
+      {
+        id: 1,
+        vorname: 'Jürgen',
+        email: 'juergen@example.com',
+        geburtstag: '1980-01-31',
+        beitrag: '12.50',
+        aktiv: 1,
+      },
+      {
+        id: 2,
+        vorname: 'Zoë',
+        email: 'zoe@example.com',
+        geburtstag: '1990-02-01',
+        beitrag: '7.00',
+        aktiv: 0,
+      },
+      {
+        id: 3,
+        vorname: 'Ali',
+        email: 'ali@example.com',
+        geburtstag: '2001-03-15',
+        beitrag: '8.00',
+        aktiv: 1,
+      },
+    ])
+    const created = (
+      await admin.request('GET', '/internal/admin/audit?action=table.created')
+    ).json<{ data: AuditEvent[] }>().data
+    expect(created[0]?.details).toMatchObject({ ddl: outcome.ddl, importId: job.id })
+
+    // Table access with ceiling read, active since the read user sees the table.
+    const list = (
+      await admin.request('GET', `/internal/admin/table-access?connectionId=${connection.id}`)
+    ).json<{ data: TableAccess[] }>().data
+    const table = list.find((entry) => entry.objectName === 'mitglieder') as TableAccess
+    expect(table).toMatchObject({ ops: ['read'], state: 'active', keyColumn: 'id' })
+
+    // After the ceiling is raised, a second import upserts by e-mail; its dry run reports the
+    // faulty row before anything is written.
+    const raised = await admin.send('PUT', `/internal/admin/table-access/${table.id}`, {
+      ops: ['read', 'create', 'update'],
+      keyColumn: 'id',
+      displayTemplate: null,
+      apiResource: table.apiResource,
+      mcpEnabled: false,
+      exclusions: [],
+    })
+    expect(raised.statusCode, raised.body).toBe(200)
+    access.set('mitglieder', raised.json<TableAccess>())
+    let second = await upload(
+      iconv.encode(
+        [
+          'E-Mail;Beitrag;Aktiv',
+          'juergen@example.com;15,00;ja',
+          'zoe@example.com;viel;nein',
+          'neu@example.com;5,00;ja',
+          '',
+        ].join('\r\n'),
+        'windows-1252',
+      ),
+      'beitraege.csv',
+    )
+    second = await configure(second, {
+      table: 'mitglieder',
+      mode: 'upsert',
+      upsertKey: ['email'],
+      skipFailed: true,
+      columns: [
+        { source: 0, target: 'email' },
+        { source: 1, target: 'beitrag' },
+        { source: 2, target: 'aktiv' },
+      ],
+    })
+    second = await step(second, 'dry-run')
+    expect(second.dryRun?.counts).toMatchObject({ rows: 3, created: 1, updated: 1, failed: 1 })
+    expect(second.dryRun?.errors).toEqual([{ line: 3, column: 'beitrag', code: 'invalid' }])
+    second = await step(second, 'run')
+    expect(second.status, JSON.stringify(second.failure)).toBe('completed')
+    expect(await rows('SELECT email, beitrag FROM mitglieder ORDER BY id')).toEqual([
+      { email: 'juergen@example.com', beitrag: '15.00' },
+      { email: 'zoe@example.com', beitrag: '7.00' },
+      { email: 'ali@example.com', beitrag: '8.00' },
+      { email: 'neu@example.com', beitrag: '5.00' },
+    ])
+  })
+
+  it('refuses a name only the database knows', async () => {
+    await root.query('CREATE TABLE geheim (id INT PRIMARY KEY)')
+    const response = await admin.send('POST', '/internal/admin/tables', {
+      connectionId: connection.id,
+      name: 'geheim',
+      primaryKey: { kind: 'added', name: 'id' },
+      columns: [
+        {
+          name: 'text',
+          source: null,
+          type: 'varchar',
+          length: 40,
+          required: false,
+          unique: false,
+          default: null,
+        },
+      ],
+    })
+    expect(response.statusCode).toBe(422)
+    expect(response.json<{ errors: unknown[] }>().errors).toEqual([
+      { field: 'name', code: 'taken' },
+    ])
+  })
+
+  it('designs an empty table that waits for the grants of the read user', async () => {
+    // Narrow the read user to the tables that exist, so a new table is not readable.
+    const tables = await rows<{ name: string }>(
+      "SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'wanderverein'",
+    )
+    await root.query("REVOKE SELECT, SHOW VIEW ON wanderverein.* FROM 'stashley_read'@'%'")
+    for (const { name } of tables) {
+      await root.query(`GRANT SELECT ON wanderverein.\`${name}\` TO 'stashley_read'@'%'`)
+    }
+    // Pooled sessions keep schema privileges until they reconnect.
+    await server.services.pools.closeAll()
+
+    const definition: NewTableDefinition = {
+      connectionId: connection.id,
+      name: 'notizen',
+      primaryKey: { kind: 'added', name: 'id' },
+      columns: [
+        {
+          name: 'titel',
+          source: null,
+          type: 'varchar',
+          length: 120,
+          required: true,
+          unique: true,
+          default: null,
+        },
+        {
+          name: 'erledigt',
+          source: null,
+          type: 'boolean',
+          required: true,
+          unique: false,
+          default: { kind: 'value', value: 'false' },
+        },
+        {
+          name: 'betrag',
+          source: null,
+          type: 'decimal',
+          precision: 8,
+          scale: 2,
+          required: false,
+          unique: false,
+          default: { kind: 'value', value: '0.00' },
+        },
+        {
+          name: 'angelegt',
+          source: null,
+          type: 'datetime',
+          required: true,
+          unique: false,
+          default: { kind: 'now' },
+        },
+        {
+          name: 'notiz',
+          source: null,
+          type: 'varchar',
+          length: 40,
+          required: false,
+          unique: false,
+          default: { kind: 'value', value: "it's new" },
+        },
+      ],
+    }
+    const created = await admin.send('POST', '/internal/admin/tables', definition)
+    expect(created.statusCode, created.body).toBe(201)
+    const outcome = created.json<NewTableOutcome>()
+    expect(outcome.readable).toBe(false)
+    expect(outcome.statements).toEqual([
+      {
+        purpose: 'read',
+        statement: "GRANT SELECT ON `wanderverein`.`notizen` TO 'stashley_read'@'%';",
+      },
+    ])
+    const pending = (
+      await admin.request('GET', `/internal/admin/table-access?connectionId=${connection.id}`)
+    )
+      .json<{ data: TableAccess[] }>()
+      .data.find((entry) => entry.objectName === 'notizen')
+    expect(pending).toMatchObject({ state: 'pending_grants', ops: ['read'] })
+
+    // The defaults work: a row with only the title.
+    await root.query("INSERT INTO wanderverein.notizen (titel) VALUES ('Erste')")
+    expect(await rows('SELECT titel, erledigt, betrag, notiz FROM wanderverein.notizen')).toEqual([
+      { titel: 'Erste', erledigt: 0, betrag: '0.00', notiz: "it's new" },
+    ])
+
+    await root.query(outcome.statements[0]?.statement as string)
+    const checked = await admin.send(
+      'POST',
+      `/internal/admin/tables/${outcome.tableAccessId}/check`,
+    )
+    expect(checked.statusCode, checked.body).toBe(200)
+    expect(checked.json()).toEqual({ readable: true, statements: [] })
+    const active = (
+      await admin.request('GET', `/internal/admin/table-access?connectionId=${connection.id}`)
+    )
+      .json<{ data: TableAccess[] }>()
+      .data.find((entry) => entry.objectName === 'notizen')
+    expect(active?.state).toBe('active')
   })
 })

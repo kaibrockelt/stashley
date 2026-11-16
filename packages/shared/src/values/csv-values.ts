@@ -375,14 +375,14 @@ export function localeFormats(formatLocale: string): FormatSuggestion {
       : sample.includes('.')
         ? 'DD.MM.YYYY'
         : 'DD/MM/YYYY'
-  const german = formatLocale.toLowerCase().startsWith('de')
   return {
     decimalSeparator: comma ? ',' : '.',
     thousandsSeparator: '',
     dateFormat,
     dateTimeFormat: `${dateFormat} HH:mm:ss`,
-    trueValues: german ? ['ja', 'wahr', 'true', '1', 'x'] : ['true', 'yes', '1', 'x'],
-    falseValues: german ? ['nein', 'falsch', 'false', '0'] : ['false', 'no', '0'],
+    // German and English words always (E25): files often come from elsewhere.
+    trueValues: ['true', 'yes', 'ja', 'wahr', '1', 'x'],
+    falseValues: ['false', 'no', 'nein', 'falsch', '0'],
   }
 }
 
@@ -417,12 +417,17 @@ export function suggestFormats(
   let dateFormat = defaults.dateFormat
   if (dateLike.length > 0) {
     const dates = dateLike.map((value) => value.split(/\s+/)[0] as string)
-    const fitting = dateCandidates.filter((candidate) =>
-      dates.every((date) => readDate(date, candidate, false) !== undefined),
-    )
-    if (fitting.includes(defaults.dateFormat as (typeof dateCandidates)[number]))
-      dateFormat = defaults.dateFormat
-    else if (fitting[0] !== undefined) dateFormat = fitting[0]
+    // The format most values fit wins, so one faulty date (29.02.2001) does not decide it;
+    // on a tie the user's format wins. The dry run reports the values that do not fit.
+    const score = (candidate: string) =>
+      dates.filter((date) => readDate(date, candidate, false) !== undefined).length
+    const best = Math.max(...dateCandidates.map(score))
+    if (best > 0) {
+      const fitting = dateCandidates.filter((candidate) => score(candidate) === best)
+      dateFormat = fitting.includes(defaults.dateFormat as (typeof dateCandidates)[number])
+        ? defaults.dateFormat
+        : (fitting[0] as string)
+    }
   }
   // Seconds may be missing in a value, so the format always names them.
   const dateTimeFormat = `${dateFormat} HH:mm:ss`

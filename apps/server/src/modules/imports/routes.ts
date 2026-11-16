@@ -1,22 +1,26 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Readable } from 'node:stream'
-import { importSettings } from '@stashley/shared'
+import { importSettings, newTableDefinition } from '@stashley/shared'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { AppError } from '../../platform/http/problem.ts'
 import { parse } from '../../platform/http/validation.ts'
-import { actorOf, requireActive } from '../auth/context.ts'
+import { actorOf, requireActive, requireRole } from '../auth/context.ts'
 import type { ImportService, ImportUser } from './service.ts'
+import type { TableCreator } from './tables.ts'
 
 export interface ImportRouteDeps {
   imports: ImportService
+  tables: TableCreator
   maxBytes: number
 }
 
 const idParams = z.object({ id: z.uuid() }).strict()
 const targetParams = z.object({ id: z.uuid(), tableAccessId: z.uuid() }).strict()
 const uploadQuery = z.object({ fileName: z.string().trim().min(1).max(255) }).strict()
+const connectionQuery = z.object({ connectionId: z.uuid() }).strict()
+const tableParams = z.object({ tableAccessId: z.uuid() }).strict()
 
 function perUser(max: number) {
   return {
@@ -78,6 +82,26 @@ export function registerImportRoutes(app: FastifyInstance, deps: ImportRouteDeps
   app.get('/internal/imports/:id/targets/:tableAccessId', async (request) => {
     const { id, tableAccessId } = parse(targetParams, request.params)
     return imports.target(userOf(request), id, tableAccessId)
+  })
+
+  // New tables (E28), admins only: a definition suggested from the file.
+  app.get('/internal/imports/:id/new-table', async (request) => {
+    const { id } = parse(idParams, request.params)
+    const { connectionId } = parse(connectionQuery, request.query)
+    return imports.suggestNewTable(userOf(request), id, connectionId)
+  })
+
+  // The table designer: the same definition without a file.
+  app.post('/internal/admin/tables', async (request, reply) => {
+    requireRole(request, ['admin'])
+    const definition = parse(newTableDefinition, request.body)
+    return reply.code(201).send(await deps.tables.design(actorOf(request), definition))
+  })
+
+  app.post('/internal/admin/tables/:tableAccessId/check', async (request) => {
+    requireRole(request, ['admin'])
+    const { tableAccessId } = parse(tableParams, request.params)
+    return deps.tables.check(actorOf(request), tableAccessId)
   })
 
   app.get('/internal/imports/:id/preview', async (request) => {

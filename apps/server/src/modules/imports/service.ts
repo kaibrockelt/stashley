@@ -16,7 +16,25 @@ import type {
   ImportStatus,
   ImportTarget,
 } from '@stashley/shared'
-import { importParseOptions, importMapping, suggestFormats } from '@stashley/shared'
+import {
+  addValue,
+  checkNewTable,
+  emptyStats,
+  fieldSpec,
+  importMapping,
+  importParseOptions,
+  newTableCatalog,
+  normalizeName,
+  suggestFormats,
+  suggestType,
+  uniqueNames,
+} from '@stashley/shared'
+import type {
+  FieldError,
+  NewTableDefinition,
+  NewTableImport,
+  NewTableOutcome,
+} from '@stashley/shared'
 import type { Kysely } from 'kysely'
 import { v7 as uuidv7 } from 'uuid'
 import type { Database, ImportJobsTable, SystemRole } from '../../metastore/schema.ts'
@@ -24,7 +42,7 @@ import { systemClock, type Clock } from '../../platform/clock.ts'
 import { csvRow } from '../../platform/csv.ts'
 import type { EventBus } from '../../platform/events.ts'
 import { AppError } from '../../platform/http/problem.ts'
-import type { TargetPools } from '../../target/pools.ts'
+import type { TargetPools, TargetSession } from '../../target/pools.ts'
 import type { AccessService, ResourceModel } from '../access/service.ts'
 import type { Actor, AuditLog } from '../audit/audit-log.ts'
 import type { ConnectionsService } from '../connections/service.ts'
@@ -41,8 +59,9 @@ import {
   uploadPath,
   type CsvRecord,
 } from './files.ts'
-import { ImportAbort, Importer } from './importer.ts'
-import { buildPlan, importTarget, maxStoredErrors, suggestMapping } from './plan.ts'
+import { ImportAbort, Importer, type ImportPlan, type PlannedColumn } from './importer.ts'
+import { buildPlan, cellFormat, importTarget, maxStoredErrors, suggestMapping } from './plan.ts'
+import type { TableCreator } from './tables.ts'
 
 /**
  * CSV imports into existing tables (§17, E22–E27): upload, detected and adjustable options,
@@ -78,16 +97,36 @@ interface Running {
 
 class Cancelled extends Error {}
 
-function fingerprint(sha256: string, options: unknown, mapping: unknown): string {
+/** What a dry run checked: the file, the options and the mapping or the new table (E23). */
+function fingerprintOf(row: ImportJobsTable): string {
+  const state = row.new_table === null ? null : (JSON.parse(row.new_table) as NewTableState)
+  const newTable =
+    state === null ? null : { definition: state.definition, skipFailed: state.skipFailed }
   return createHash('sha256')
-    .update(JSON.stringify([sha256, options, mapping]))
+    .update(
+      JSON.stringify([
+        row.file_sha256,
+        JSON.parse(row.parse_options),
+        JSON.parse(row.mapping ?? 'null'),
+        newTable,
+      ]),
+    )
     .digest('hex')
+}
+
+/** A table the import creates, and how far its creation got (E28). */
+type NewTableState = NewTableImport & {
+  createdAt: number | null
+  dataDoneAt: number | null
+  dataCounts?: ImportCounts
+  outcome: NewTableOutcome | null
 }
 
 export class ImportService {
   private readonly deps: {
     db: Kysely<Database>
     access: AccessService
+    tables: TableCreator
     connections: ConnectionsService
     pools: TargetPools
     audit: AuditLog
@@ -155,6 +194,8 @@ export class ImportService {
       status: row.status as ImportStatus,
       options: importParseOptions.parse(JSON.parse(row.parse_options)),
       mapping,
+      newTable:
+        row.new_table === null ? null : (JSON.parse(row.new_table) as ImportJob['newTable']),
       suggestedMapping: null,
       dryRun: dryRun === null ? null : { ...dryRun, errors: dryRun.errors.slice(0, shownErrors) },
       result:
@@ -329,30 +370,65 @@ export class ImportService {
   async configure(
     user: ImportUser,
     id: string,
-    settings: { options: ImportParseOptions; mapping: ImportMapping | null },
+    settings: {
+      options: ImportParseOptions
+      mapping: ImportMapping | null
+      newTable?: NewTableImport | null | undefined
+    },
   ): Promise<ImportJob> {
     const row = await this.row(user, id)
     if (this.running.has(id) || row.status === 'completed' || row.status === 'importing') {
       throw new AppError('conflict')
     }
+    const newTable = settings.newTable ?? null
+    const state = row.new_table === null ? null : (JSON.parse(row.new_table) as NewTableState)
+    const created = state !== null && state.createdAt !== null
     let connectionId: string | null = null
-    if (settings.mapping !== null) {
-      const resource = await this.resource(settings.mapping.tableAccessId)
-      const { headers } = await this.sample(id, settings.options, 1)
-      buildPlan(resource, settings.mapping, settings.options, headers.length, this.deps.timeZone)
-      connectionId = resource.connection.connectionId
+    let storedTable: NewTableState | null = null
+    if (newTable !== null) {
+      if (settings.mapping !== null) {
+        throw new AppError('validation_failed', {
+          errors: [{ field: 'newTable', code: 'not_allowed' }],
+        })
+      }
+      await this.checkNewTable(user, id, settings.options, newTable, state)
+      connectionId = newTable.definition.connectionId
+      storedTable = {
+        ...newTable,
+        createdAt: state?.createdAt ?? null,
+        dataDoneAt: state?.dataDoneAt ?? null,
+        ...(state?.dataCounts !== undefined && { dataCounts: state.dataCounts }),
+        outcome: state?.outcome ?? null,
+      }
+    } else {
+      // A created table stays with its job; only its data step can be repeated (E28).
+      if (created) {
+        throw new AppError('conflict', { errors: [{ field: 'newTable', code: 'table_created' }] })
+      }
+      if (settings.mapping !== null) {
+        const resource = await this.resource(settings.mapping.tableAccessId)
+        const { headers } = await this.sample(id, settings.options, 1)
+        buildPlan(resource, settings.mapping, settings.options, headers.length, this.deps.timeZone)
+        connectionId = resource.connection.connectionId
+      }
     }
+    const sameTable =
+      JSON.stringify(
+        state === null ? null : { definition: state.definition, skipFailed: state.skipFailed },
+      ) === JSON.stringify(newTable)
     const changed =
       row.parse_options !== JSON.stringify(settings.options) ||
-      row.mapping !== (settings.mapping === null ? null : JSON.stringify(settings.mapping))
+      row.mapping !== (settings.mapping === null ? null : JSON.stringify(settings.mapping)) ||
+      !sameTable
     await this.deps.db
       .updateTable('import_jobs')
       .set({
         parse_options: JSON.stringify(settings.options),
         mapping: settings.mapping === null ? null : JSON.stringify(settings.mapping),
+        new_table: storedTable === null ? null : JSON.stringify(storedTable),
         connection_id: connectionId,
-        table_access_id: settings.mapping?.tableAccessId ?? null,
-        mode: settings.mapping?.mode ?? 'insert',
+        table_access_id: settings.mapping?.tableAccessId ?? state?.outcome?.tableAccessId ?? null,
+        mode: newTable !== null ? 'create_table' : (settings.mapping?.mode ?? 'insert'),
         upsert_key:
           settings.mapping?.upsertKey === undefined || settings.mapping.upsertKey === null
             ? null
@@ -366,6 +442,155 @@ export class ImportService {
     return this.get(user, id)
   }
 
+  // New tables (E28)
+
+  private requireAdmin(user: ImportUser): void {
+    if (user.systemRole !== 'admin') throw new AppError('forbidden')
+  }
+
+  /**
+   * Checks a table to create from the file: the definition itself, a schema user on the
+   * connection, a free name (until the table exists), and a CSV column for every column a
+   * row cannot do without.
+   */
+  private async checkNewTable(
+    user: ImportUser,
+    id: string,
+    options: ImportParseOptions,
+    newTable: NewTableImport,
+    state: NewTableState | null,
+  ): Promise<void> {
+    this.requireAdmin(user)
+    const definition = newTable.definition
+    const created = state !== null && state.createdAt !== null
+    if (created && JSON.stringify(state.definition) !== JSON.stringify(definition)) {
+      throw new AppError('conflict', {
+        errors: [{ field: 'newTable.definition', code: 'table_created' }],
+      })
+    }
+    await this.deps.tables.schemaUser(definition.connectionId)
+    const { headers } = await this.sample(id, options, 1)
+    const errors: FieldError[] = checkNewTable(definition, {
+      taken: created ? [] : await this.deps.tables.taken(definition.connectionId),
+      sourceCount: headers.length,
+    })
+    const key = definition.primaryKey
+    definition.columns.forEach((column, index) => {
+      if (column.source !== null) return
+      const isKey = key.kind === 'column' && key.column === column.name
+      if (isKey || (column.required && column.default === null)) {
+        errors.push({ field: `columns.${index}.source`, code: 'required' })
+      }
+    })
+    if (errors.length > 0) {
+      throw new AppError('validation_failed', {
+        errors: errors.map((error) => ({ ...error, field: `newTable.definition.${error.field}` })),
+      })
+    }
+  }
+
+  /** A definition suggested from every value of the file (E28); all of it can be changed. */
+  async suggestNewTable(
+    user: ImportUser,
+    id: string,
+    connectionId: string,
+  ): Promise<NewTableDefinition> {
+    this.requireAdmin(user)
+    const row = await this.row(user, id)
+    await this.deps.tables.schemaUser(connectionId)
+    const options = importParseOptions.parse(JSON.parse(row.parse_options))
+    const { headers } = await this.sample(id, options, 1)
+    const format = cellFormat(options, this.deps.timeZone)
+    const stats = headers.map(() => emptyStats())
+    let header = options.header
+    for await (const record of records(this.file(id), options)) {
+      if (header) {
+        header = false
+        continue
+      }
+      stats.forEach((entry, index) => addValue(entry, record.cells[index] ?? '', format))
+    }
+    const taken = await this.deps.tables.taken(connectionId)
+    const base = row.file_name.replace(/\.[^.]*$/, '')
+    const [name = 'imported'] = uniqueNames([normalizeName(base, 'imported')], taken)
+    const keyName = 'id'
+    const names = uniqueNames(
+      headers.map((entry) => normalizeName(entry)),
+      [keyName],
+    )
+    return {
+      connectionId,
+      name,
+      primaryKey: { kind: 'added', name: keyName },
+      columns: headers.map((_, index) => ({
+        name: names[index] ?? `column_${index + 1}`,
+        source: index,
+        ...suggestType(stats[index] ?? emptyStats()),
+        required: false,
+        unique: false,
+        default: null,
+      })),
+    }
+  }
+
+  /** The plan of the data step into a table this import creates. */
+  private newTablePlan(state: NewTableState, options: ImportParseOptions): ImportPlan {
+    const definition = state.definition
+    const catalog = newTableCatalog(definition)
+    const byName = new Map(catalog.map((column) => [column.name, column]))
+    const key = definition.primaryKey
+    const keyColumn = key.kind === 'added' ? key.name : key.column
+    const columns: PlannedColumn[] = definition.columns.flatMap((column) => {
+      const entry = byName.get(column.name)
+      if (column.source === null || entry === undefined) return []
+      return [
+        {
+          source: column.source,
+          catalog: entry,
+          column: {
+            name: entry.name,
+            kind: entry.kind,
+            columnType: entry.columnType,
+            nullable: entry.nullable,
+            spec: fieldSpec(entry),
+            defaultValue: entry.defaultValue,
+            autoIncrement: false,
+            generated: false,
+            lock: false,
+            insertable: true,
+            updatable: false,
+          },
+        },
+      ]
+    })
+    const mapped = new Set(columns.map((planned) => planned.column.name))
+    return {
+      table: {
+        objectName: definition.name,
+        columns: catalog,
+        keyColumn,
+        lock: { kind: 'values' },
+        existing: false,
+      },
+      mode: 'insert',
+      key: null,
+      columns,
+      format: cellFormat(options, this.deps.timeZone),
+      skipFailed: state.skipFailed,
+      // Unique columns and a primary key column are checked for duplicates in the file.
+      uniqueKeys: [
+        ...(key.kind === 'column' ? [[key.column]] : []),
+        ...definition.columns
+          .filter(
+            (column) => column.unique && !(key.kind === 'column' && key.column === column.name),
+          )
+          .map((column) => [column.name]),
+      ].filter((unique) => unique.every((name) => mapped.has(name))),
+      foreignKeys: [],
+      maxErrors: maxStoredErrors,
+    }
+  }
+
   // Dry run and import
 
   private startable(user: ImportUser): void {
@@ -375,6 +600,17 @@ export class ImportService {
         errors: [{ field: '_', code: 'import_running' }],
       })
     }
+  }
+
+  /** Checks the job's settings before a dry run or an import. */
+  private async validate(user: ImportUser, row: ImportJobsTable): Promise<void> {
+    if (row.new_table !== null) {
+      const state = JSON.parse(row.new_table) as NewTableState
+      const options = importParseOptions.parse(JSON.parse(row.parse_options))
+      await this.checkNewTable(user, row.id, options, state, state)
+      return
+    }
+    await this.prepared(row)
   }
 
   private async prepared(row: ImportJobsTable) {
@@ -389,7 +625,11 @@ export class ImportService {
     return { options, mapping, resource, plan }
   }
 
-  /** Streams the data rows in batches through one write session. */
+  /**
+   * Streams the data rows in batches: through one write session for existing tables, the
+   * schema user's session for a table this import created, and without any session for the
+   * dry run of a table that does not exist yet.
+   */
   private async process(
     row: ImportJobsTable,
     write: boolean,
@@ -400,10 +640,6 @@ export class ImportService {
     changed: Set<string>
     wrote: boolean
   }> {
-    const { options, resource, plan } = await this.prepared(row)
-    const resolved = await this.deps.connections.resolve(resource.connection.connectionId)
-    const writer = resolved.users.write
-    if (writer === undefined) throw new AppError('target_unavailable')
     const counts: ImportCounts = {
       rows: 0,
       created: 0,
@@ -415,44 +651,64 @@ export class ImportService {
     const errors: ImportCellError[] = []
     const changed = new Set<string>()
     let wrote = false
-    const importer = new Importer(plan, resolved.row.timezone)
-    await this.deps.pools.run(
-      resource.connection.connectionId,
-      resolved.spec,
-      writer,
-      async (session) => {
-        await session.query(write ? 'START TRANSACTION' : 'START TRANSACTION READ ONLY')
-        try {
-          let batch: CsvRecord[] = []
-          let header = options.header
-          const flush = async () => {
-            if (running.cancel) throw new Cancelled()
-            const outcome = await importer.batch(session, batch, write)
-            for (const key of Object.keys(counts) as (keyof ImportCounts)[])
-              counts[key] += outcome.counts[key]
-            for (const error of outcome.errors)
-              if (errors.length < maxStoredErrors) errors.push(error)
-            for (const column of outcome.changedColumns) changed.add(column)
-            wrote ||= outcome.wroteRows
-            running.rows = counts.rows
-            batch = []
-          }
-          for await (const record of records(this.file(row.id), options)) {
-            if (header) {
-              header = false
-              continue
-            }
-            batch.push(record)
-            if (batch.length >= this.deps.limits.batchSize) await flush()
-          }
-          if (batch.length > 0) await flush()
-          if (running.cancel) throw new Cancelled()
-          await session.query(write ? 'COMMIT' : 'ROLLBACK')
-        } catch (error) {
-          await session.query('ROLLBACK').catch(() => undefined)
-          throw error
+    const options = importParseOptions.parse(JSON.parse(row.parse_options))
+    const consume = async (importer: Importer, session: TargetSession | null) => {
+      let batch: CsvRecord[] = []
+      let header = options.header
+      const flush = async () => {
+        if (running.cancel) throw new Cancelled()
+        const outcome = await importer.batch(session, batch, write)
+        for (const key of Object.keys(counts) as (keyof ImportCounts)[])
+          counts[key] += outcome.counts[key]
+        for (const error of outcome.errors) if (errors.length < maxStoredErrors) errors.push(error)
+        for (const column of outcome.changedColumns) changed.add(column)
+        wrote ||= outcome.wroteRows
+        running.rows = counts.rows
+        batch = []
+      }
+      for await (const record of records(this.file(row.id), options)) {
+        if (header) {
+          header = false
+          continue
         }
-      },
+        batch.push(record)
+        if (batch.length >= this.deps.limits.batchSize) await flush()
+      }
+      if (batch.length > 0) await flush()
+      if (running.cancel) throw new Cancelled()
+    }
+    const transaction = async (session: TargetSession, work: () => Promise<void>) => {
+      await session.query(write ? 'START TRANSACTION' : 'START TRANSACTION READ ONLY')
+      try {
+        await work()
+        await session.query(write ? 'COMMIT' : 'ROLLBACK')
+      } catch (error) {
+        await session.query('ROLLBACK').catch(() => undefined)
+        throw error
+      }
+    }
+
+    if (row.new_table !== null) {
+      const state = JSON.parse(row.new_table) as NewTableState
+      const connectionId = state.definition.connectionId
+      const resolved = await this.deps.connections.resolve(connectionId)
+      const importer = new Importer(this.newTablePlan(state, options), resolved.row.timezone)
+      if (!write) await consume(importer, null)
+      else {
+        await this.deps.tables.withSchemaUser(connectionId, (session) =>
+          transaction(session, () => consume(importer, session)),
+        )
+      }
+      return { counts, errors, changed, wrote }
+    }
+
+    const { resource, plan } = await this.prepared(row)
+    const resolved = await this.deps.connections.resolve(resource.connection.connectionId)
+    const writer = resolved.users.write
+    if (writer === undefined) throw new AppError('target_unavailable')
+    const importer = new Importer(plan, resolved.row.timezone)
+    await this.deps.pools.run(resource.connection.connectionId, resolved.spec, writer, (session) =>
+      transaction(session, () => consume(importer, session)),
     )
     return { counts, errors, changed, wrote }
   }
@@ -503,18 +759,14 @@ export class ImportService {
   async dryRun(user: ImportUser, id: string): Promise<ImportJob> {
     const row = await this.row(user, id)
     if (this.running.has(id) || row.status === 'completed') throw new AppError('conflict')
-    await this.prepared(row)
+    await this.validate(user, row)
     this.startable(user)
     await this.update(id, { status: 'checking', dry_run: null, result: null })
     this.start(user, row, 'checking', async (running) => {
       try {
         const result = await this.process(row, false, running)
         const dryRun: ImportDryRun = {
-          fingerprint: fingerprint(
-            row.file_sha256,
-            JSON.parse(row.parse_options),
-            JSON.parse(row.mapping ?? 'null'),
-          ),
+          fingerprint: fingerprintOf(row),
           counts: result.counts,
           errors: result.errors,
           checkedAt: this.clock(),
@@ -542,14 +794,10 @@ export class ImportService {
       throw new AppError('conflict', { errors: [{ field: '_', code: 'dry_run_required' }] })
     }
     const dryRun = JSON.parse(row.dry_run) as ImportDryRun
-    const current = fingerprint(
-      row.file_sha256,
-      JSON.parse(row.parse_options),
-      JSON.parse(row.mapping ?? 'null'),
-    )
-    if (dryRun.fingerprint !== current) {
+    if (dryRun.fingerprint !== fingerprintOf(row)) {
       throw new AppError('conflict', { errors: [{ field: '_', code: 'dry_run_required' }] })
     }
+    if (row.new_table !== null) return this.runNewTable(user, actor, row, dryRun)
     const { mapping, resource } = await this.prepared(row)
     if (dryRun.counts.failed > 0 && !mapping.skipFailed) {
       throw new AppError('validation_failed', { errors: [{ field: '_', code: 'dry_run_failed' }] })
@@ -610,6 +858,99 @@ export class ImportService {
           connectionId,
           objectName: object,
           details: { ...details, failure: cancelled ? { code: 'cancelled' } : this.failure(error) },
+        })
+        if (!cancelled && !(error instanceof AppError) && !(error instanceof ImportAbort))
+          throw error
+      }
+    })
+    return this.get(user, id)
+  }
+
+  /**
+   * A new table (E28): `CREATE TABLE` through the schema user, then the data through the
+   * schema user in one transaction, then catalog, table access and grants. Each finished step
+   * is kept, so after a failure the next run picks up after the last one; the table itself
+   * stays, since the schema user cannot drop it.
+   */
+  private async runNewTable(
+    user: ImportUser,
+    actor: Actor,
+    row: ImportJobsTable,
+    dryRun: ImportDryRun,
+  ): Promise<ImportJob> {
+    this.requireAdmin(user)
+    let state = JSON.parse(row.new_table as string) as NewTableState
+    const options = importParseOptions.parse(JSON.parse(row.parse_options))
+    await this.checkNewTable(user, row.id, options, state, state)
+    if (dryRun.counts.failed > 0 && !state.skipFailed) {
+      throw new AppError('validation_failed', { errors: [{ field: '_', code: 'dry_run_failed' }] })
+    }
+    this.startable(user)
+    const id = row.id
+    await this.update(id, { status: 'importing' })
+    const definition = state.definition
+    const connectionId = definition.connectionId
+    const save = async (patch: Partial<NewTableState>) => {
+      state = { ...state, ...patch }
+      await this.update(id, { new_table: JSON.stringify(state) })
+    }
+    this.start(user, row, 'importing', async (running) => {
+      const details = {
+        fileName: row.file_name,
+        fileSha256: row.file_sha256,
+        fileSize: row.file_size,
+        mode: 'create_table',
+        skipFailed: state.skipFailed,
+        options: JSON.parse(row.parse_options) as unknown,
+      }
+      try {
+        let ddl = state.outcome?.ddl
+        if (state.createdAt === null || ddl === undefined) {
+          const { headers } = await this.sample(id, options, 1)
+          ddl = await this.deps.tables.create(actor, definition, {
+            sourceCount: headers.length,
+            importId: id,
+          })
+          await save({
+            createdAt: this.clock(),
+            outcome: { tableAccessId: null, ddl, readable: false, statements: [] },
+          })
+        }
+        let counts = state.dataCounts
+        if (state.dataDoneAt === null || counts === undefined) {
+          counts = (await this.process(row, true, running)).counts
+          await save({ dataDoneAt: this.clock(), dataCounts: counts })
+        }
+        const outcome = await this.deps.tables.finish(actor, definition, ddl)
+        await save({ outcome })
+        const finishedAt = this.clock()
+        await this.update(id, {
+          status: 'completed',
+          table_access_id: outcome.tableAccessId,
+          result: JSON.stringify({ counts, finishedAt }),
+          finished_at: finishedAt,
+        })
+        await removeUpload(this.file(id))
+        await this.deps.audit.record(actor, {
+          action: 'import.completed',
+          subject: { kind: 'import', id, label: row.file_name },
+          connectionId,
+          objectName: definition.name,
+          details: { ...details, counts, tableAccessId: outcome.tableAccessId },
+        })
+      } catch (error) {
+        const cancelled = error instanceof Cancelled
+        const failure = cancelled ? { code: 'cancelled' } : this.failure(error)
+        await this.update(id, {
+          status: cancelled ? 'cancelled' : 'failed',
+          result: JSON.stringify({ failure }),
+        })
+        await this.deps.audit.record(actor, {
+          action: 'import.failed',
+          subject: { kind: 'import', id, label: row.file_name },
+          connectionId,
+          objectName: definition.name,
+          details: { ...details, failure, tableCreated: state.createdAt !== null },
         })
         if (!cancelled && !(error instanceof AppError) && !(error instanceof ImportAbort))
           throw error

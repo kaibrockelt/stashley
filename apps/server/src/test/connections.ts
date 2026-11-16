@@ -24,7 +24,7 @@ export async function storeConnection(
     port: 3306,
     tls: { mode: 'verify-full', caPem: null, serverName: null },
   },
-  options: { objects?: CatalogObject[] } = {},
+  options: { objects?: CatalogObject[]; schemaUser?: boolean } = {},
 ): Promise<string> {
   const connectionId = storedConnectionId
   const now = Date.now()
@@ -51,11 +51,16 @@ export async function storeConnection(
   const grants = {
     read: ['GRANT SELECT, SHOW VIEW ON `wanderverein`.* TO `stashley_read`@`%`'],
     write: ['GRANT SELECT, INSERT, UPDATE, DELETE ON `wanderverein`.* TO `stashley_write`@`%`'],
+    schema: ['GRANT CREATE, INSERT ON `wanderverein`.* TO `stashley_schema`@`%`'],
   }
-  for (const [purpose, credentialId] of [
+  const users = [
     ['read', '01890000-0000-7000-8000-0000000000d1'],
     ['write', '01890000-0000-7000-8000-0000000000d2'],
-  ] as const) {
+    ...(options.schemaUser === true
+      ? ([['schema', '01890000-0000-7000-8000-0000000000d3']] as const)
+      : []),
+  ] as const
+  for (const [purpose, credentialId] of users) {
     const report = buildGrantReport({ purpose, database: 'wanderverein', lines: grants[purpose] })
     await db
       .insertInto('connection_credentials')

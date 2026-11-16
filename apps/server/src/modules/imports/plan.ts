@@ -292,7 +292,13 @@ export function buildPlan(
       .map((planned) => planned.column.name),
   )
   return {
-    resource,
+    table: {
+      objectName: resource.object.objectName,
+      columns: catalog.columns,
+      keyColumn: resource.keyColumn,
+      lock: resource.write?.lock ?? { kind: 'values' },
+      existing: true,
+    },
     mode: mapping.mode,
     key,
     columns,

@@ -12,7 +12,7 @@ import type {
 import { checkFieldValue, isEmptyCell, readCell } from '@stashley/shared'
 import { encodeValue } from '../../target/encoding.ts'
 import type { TargetSession } from '../../target/pools.ts'
-import type { ResourceColumn, ResourceModel } from '../access/service.ts'
+import type { ResourceColumn } from '../access/service.ts'
 import { matchStatement } from '../execution/sql/table-sql.ts'
 import type { TableModel } from '../execution/sql/table-model.ts'
 import { bindWrite, updateRow, type WriteValue } from '../execution/sql/write-sql.ts'
@@ -42,8 +42,18 @@ export interface PlannedColumn {
   reference?: PlannedReference
 }
 
+/** The table an import writes: an exposed one, or one it created (no catalog entry yet). */
+export interface ImportTable {
+  objectName: string
+  columns: readonly CatalogColumn[]
+  keyColumn: string
+  lock: LockStrategy
+  /** False for a table created by this import: it is empty, nothing to look up (E28). */
+  existing: boolean
+}
+
 export interface ImportPlan {
-  resource: ResourceModel
+  table: ImportTable
   mode: 'insert' | 'upsert'
   /** Upsert key columns, all mapped. */
   key: string[] | null
@@ -112,25 +122,23 @@ export class Importer {
   constructor(plan: ImportPlan, connectionTimeZone: string) {
     this.plan = plan
     this.timeZone = connectionTimeZone
-    const lock = plan.resource.write?.lock
+    const lock = plan.table.lock
     this.lockColumn =
-      lock === undefined || lock.kind === 'values'
+      lock.kind === 'values'
         ? undefined
-        : plan.resource.catalog.columns.find((column) => lower(column.name) === lower(lock.column))
+        : plan.table.columns.find((column) => lower(column.name) === lower(lock.column))
   }
 
   private get lock(): LockStrategy {
-    return this.plan.resource.write?.lock ?? { kind: 'values' }
+    return this.plan.table.lock
   }
 
   private object(): string {
-    return this.plan.resource.object.objectName
+    return this.plan.table.objectName
   }
 
   private kindOf(column: string): ValueKind {
-    return (
-      this.plan.resource.catalog.columns.find((entry) => entry.name === column)?.kind ?? 'string'
-    )
+    return this.plan.table.columns.find((entry) => entry.name === column)?.kind ?? 'string'
   }
 
   private bind(column: string, value: CellValue): unknown {
@@ -282,7 +290,7 @@ export class Importer {
     const keyColumns = this.plan.key
     const found = new Map<string, { key: unknown; values: Map<string, unknown> }>()
     if (keyColumns === null || rows.length === 0) return found
-    const primary = this.plan.resource.keyColumn
+    const primary = this.plan.table.keyColumn
     const compared = this.updatable().map((planned) => planned.column.name)
     const tuples = rows.map((row) =>
       keyColumns.map((column) => this.bind(column, row.values.get(column))),
@@ -328,7 +336,7 @@ export class Importer {
     rows: { row: Row; except: unknown }[],
     errors: ImportCellError[],
   ): Promise<void> {
-    const primary = this.plan.resource.keyColumn
+    const primary = this.plan.table.keyColumn
     for (const key of this.plan.uniqueKeys) {
       const candidates = rows.filter(({ row }) =>
         key.every((column) => {
@@ -460,26 +468,37 @@ export class Importer {
    * Runs one batch. `write` false is the dry run: every check, no DML. With `write` true and
    * without `skipFailed`, the first failed row stops the import (`ImportAbort`).
    */
-  async batch(session: TargetSession, records: CsvRecord[], write: boolean): Promise<BatchOutcome> {
+  async batch(
+    session: TargetSession | null,
+    records: CsvRecord[],
+    write: boolean,
+  ): Promise<BatchOutcome> {
     const counts = emptyCounts()
     const errors: ImportCellError[] = []
     const changedColumns = new Set<string>()
     const rows = records.map((record) => this.read(record, errors))
     counts.rows = rows.length
-    await this.resolve(
-      session,
-      rows.filter((row) => !row.failed),
-      errors,
-    )
+    // A table this import created is empty and has no foreign keys: nothing to look up, and
+    // its dry run runs before the table exists, without a session.
+    const lookups = this.plan.table.existing
+    if (lookups && session === null) throw new Error('Existing tables need a session')
+    if (lookups && session !== null) {
+      await this.resolve(
+        session,
+        rows.filter((row) => !row.failed),
+        errors,
+      )
+    }
 
     const upsert = this.plan.mode === 'upsert'
-    const found = upsert
-      ? await this.existing(
-          session,
-          rows.filter((row) => !row.failed),
-          write,
-        )
-      : new Map<string, { key: unknown; values: Map<string, unknown> }>()
+    const found =
+      upsert && lookups && session !== null
+        ? await this.existing(
+            session,
+            rows.filter((row) => !row.failed),
+            write,
+          )
+        : new Map<string, { key: unknown; values: Map<string, unknown> }>()
     const inserts: Row[] = []
     const updates: { row: Row; key: unknown; changes: Map<string, unknown> }[] = []
     for (const row of rows) {
@@ -507,6 +526,12 @@ export class Importer {
     }
 
     if (!write) {
+      if (!lookups || session === null) {
+        counts.created = inserts.length
+        counts.failed = rows.filter((row) => row.failed).length
+        errors.sort((a, b) => a.line - b.line)
+        return { counts, errors, changedColumns, wroteRows: false }
+      }
       await this.conflicts(
         session,
         [
@@ -527,6 +552,7 @@ export class Importer {
       return { counts, errors, changedColumns, wroteRows: false }
     }
 
+    if (session === null) throw new Error('Writing needs a session')
     const failed = rows.filter((row) => row.failed)
     if (failed.length > 0 && !this.plan.skipFailed) {
       const first = errors[0]
@@ -590,7 +616,7 @@ export class Importer {
         },
       ])
     }
-    return updateRow(this.object(), this.plan.resource.keyColumn, key, sets)
+    return updateRow(this.object(), this.plan.table.keyColumn, key, sets)
   }
 
   /**

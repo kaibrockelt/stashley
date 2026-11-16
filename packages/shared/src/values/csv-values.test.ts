@@ -206,5 +206,9 @@ describe('suggested formats', () => {
     expect(suggestFormats([['01/02/2026']], 'en-GB')).toMatchObject({ dateFormat: 'DD/MM/YYYY' })
     expect(suggestFormats([['01/02/2026']], 'en-US')).toMatchObject({ dateFormat: 'MM/DD/YYYY' })
     expect(suggestFormats([['13/02/2026']], 'en-US')).toMatchObject({ dateFormat: 'DD/MM/YYYY' })
+    // Most values decide; a single impossible date does not.
+    expect(suggestFormats([['31.01.1980', '01.02.1990', '29.02.2001']], 'en-US')).toMatchObject({
+      dateFormat: 'DD.MM.YYYY',
+    })
   })
 })

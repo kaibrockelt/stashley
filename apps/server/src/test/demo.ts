@@ -157,8 +157,14 @@ export interface Demo {
  * A stored connection with the demo catalog, every demo object exposed with its ceiling and
  * `hotel.kontakt_email` excluded for everyone.
  */
-export async function setupDemo(s: TestSetup): Promise<Demo> {
-  const connectionId = await storeConnection(s.server, undefined, { objects: demoObjects })
+export async function setupDemo(
+  s: TestSetup,
+  options: { schemaUser?: boolean } = {},
+): Promise<Demo> {
+  const connectionId = await storeConnection(s.server, undefined, {
+    objects: demoObjects,
+    ...options,
+  })
   const access = new Map<string, TableAccess>()
   for (const object of demoObjects) {
     const created = await s.admin.send('POST', '/internal/admin/table-access', {
