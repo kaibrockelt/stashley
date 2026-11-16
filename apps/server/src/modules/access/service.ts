@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import type {
+  ApiOperation,
   ImpactItem,
   Navigation,
   NavigationPage,
@@ -47,12 +48,30 @@ import type { WriteField, WriteModel } from './write-model.ts'
 import {
   grantComponent,
   grantFilter,
+  grantResource,
   type AuthorizedComponent,
   type AuthorizedFilter,
+  type AuthorizedResource,
   type RequestUser,
 } from './handles.ts'
+import { buildResourceModel, type ResourceModel } from './resource.ts'
 
-export type { AuthorizedComponent, AuthorizedFilter, RequestUser } from './handles.ts'
+export type {
+  AuthorizedComponent,
+  AuthorizedFilter,
+  AuthorizedResource,
+  RequestUser,
+} from './handles.ts'
+export type { ResourceColumn, ResourceModel } from './resource.ts'
+
+/** What a token brings to an API request (§16). */
+export interface ResourceRequest {
+  alias: string
+  operation: ApiOperation
+  token: { id: string; name: string; grants: ReadonlyMap<string, ReadonlySet<ApiOperation>> }
+  /** The enabled endpoints of a table access. */
+  enabled: (tableAccessId: string) => Promise<ReadonlySet<ApiOperation>>
+}
 
 /** Who is asking: the account, its system role and its roles, read for this request. */
 export interface Viewer {
@@ -80,6 +99,10 @@ const relayout: Record<number, RowLayout> = { 1: '12', 2: '6-6', 3: '4-4-4' }
 export class AccessService {
   private readonly deps: AccessDeps
   private readonly compiled = new Map<string, { generation: number; page: Promise<CompiledPage> }>()
+  private readonly resources = new Map<
+    string,
+    { generation: number; model: Promise<ResourceModel | undefined> }
+  >()
   private generation = 0
 
   constructor(deps: AccessDeps) {
@@ -109,6 +132,60 @@ export class AccessService {
       systemRole: auth.user.system_role,
       roleIds: await this.deps.roles.ofUser(auth.user.id),
     }
+  }
+
+  /** The resource model of a table access, rebuilt when access facts change (§16). */
+  async resourceModel(tableAccessId: string): Promise<ResourceModel | undefined> {
+    const generation = this.deps.facts.generation
+    const cached = this.resources.get(tableAccessId)
+    if (cached !== undefined && cached.generation === generation) return cached.model
+    const model = this.deps.facts
+      .table(tableAccessId)
+      .then((found) =>
+        found === undefined
+          ? undefined
+          : buildResourceModel(found.connection, found.object, found.object.apiResource),
+      )
+    model.catch(() => this.resources.delete(tableAccessId))
+    this.resources.set(tableAccessId, { generation, model })
+    return model
+  }
+
+  /** The table access behind an API resource name. */
+  resourceId(alias: string): Promise<string | undefined> {
+    return this.deps.facts.byResource(alias)
+  }
+
+  /**
+   * Authorizes one operation of a token on an API resource (§16, D5): an unknown name, a
+   * disabled endpoint or an object that cannot serve answers 404; an operation the token has
+   * no grant for answers 403, and so does one the ceiling or the database grants rule out.
+   */
+  async authorizeResource(request: ResourceRequest): Promise<AuthorizedResource> {
+    const id = await this.resourceId(request.alias)
+    if (id === undefined) throw new AppError('not_found')
+    const enabled = await request.enabled(id)
+    if (!enabled.has(request.operation)) throw new AppError('not_found')
+    const model = await this.resourceModel(id)
+    if (model === undefined) throw new AppError('not_found')
+    if (request.token.grants.get(id)?.has(request.operation) !== true) {
+      throw new AppError('forbidden')
+    }
+    if (!model.available.includes(request.operation)) throw new AppError('forbidden')
+    // Like forms without read (§8.2), a token that cannot read gets the key only.
+    const granted = request.token.grants.get(id)
+    const readable = (['get', 'list'] as const).some(
+      (operation) =>
+        granted?.has(operation) === true &&
+        enabled.has(operation) &&
+        model.available.includes(operation),
+    )
+    return grantResource({
+      resource: model,
+      operation: request.operation,
+      token: { id: request.token.id, name: request.token.name },
+      readable,
+    })
   }
 
   /** Design routes: only admins and managers (§ Systemrollen). */

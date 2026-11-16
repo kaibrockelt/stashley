@@ -12,7 +12,8 @@ import type { TableModel } from './sql/table-model.ts'
  */
 export function resolveBaseValues(
   model: TableModel,
-  user: { id: string; email: string },
+  /** Null for API tokens, which have no base filter; a user condition then fails closed. */
+  user: { id: string; email: string } | null,
   variables: ReadonlyMap<string, VariableValue>,
   options: ValueOptions,
 ): { values: unknown[]; variables: string[] } {
@@ -22,8 +23,10 @@ export function resolveBaseValues(
     if (value === undefined) return undefined
     let raw: unknown
     if (value.kind === 'constant') raw = value.value
-    else if (value.kind === 'user') raw = value.field === 'id' ? user.id : user.email
-    else {
+    else if (value.kind === 'user') {
+      if (user === null) throw new AppError('forbidden')
+      raw = value.field === 'id' ? user.id : user.email
+    } else {
       const variable = variables.get(value.name)
       if (variable === undefined) {
         throw new AppError('query_failed', {

@@ -34,8 +34,11 @@ function compile(query: RawBuilder<unknown>): Statement {
   return { sql: compiled.sql, values: [...compiled.parameters] }
 }
 
-/** A column value to write: SQL for the server's own expressions, otherwise a bound value. */
-export type WriteValue = { value: unknown } | { expression: 'increment' }
+/**
+ * A column value to write: SQL for the server's own expressions (the version increment, the
+ * column default of `PUT /:id`), otherwise a bound value.
+ */
+export type WriteValue = { value: unknown } | { expression: 'increment' | 'default' }
 
 const equals = (entries: readonly [string, unknown][]) =>
   sql.join(
@@ -109,11 +112,12 @@ export function updateRow(
   key: unknown,
   sets: readonly [string, WriteValue][],
 ): Statement {
-  const parts = sets.map(([column, value]) =>
-    'expression' in value
+  const parts = sets.map(([column, value]) => {
+    if (!('expression' in value)) return sql`${sql.ref(column)} = ${value.value}`
+    return value.expression === 'increment'
       ? sql`${sql.ref(column)} = ${sql.ref(column)} + 1`
-      : sql`${sql.ref(column)} = ${value.value}`,
-  )
+      : sql`${sql.ref(column)} = DEFAULT`
+  })
   return compile(
     sql`UPDATE ${sql.table(object)} SET ${sql.join(parts)} WHERE ${sql.ref(keyColumn)} = ${key}`,
   )

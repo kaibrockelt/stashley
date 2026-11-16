@@ -98,7 +98,8 @@ export interface WriteModel {
   filled: readonly { column: string; index: number }[]
 }
 
-export type WriteMode = 'create' | 'edit' | 'upsert' | 'table'
+/** `api`: a public API resource; the key is written on create, upsert keys come per request. */
+export type WriteMode = 'create' | 'edit' | 'upsert' | 'table' | 'api'
 
 export interface WriteInput {
   path: string
@@ -364,7 +365,8 @@ export function buildWriteModel(
     if (
       lower(column.name) === lower(keyColumn) &&
       input.mode !== 'create' &&
-      input.mode !== 'upsert'
+      input.mode !== 'upsert' &&
+      input.mode !== 'api'
     ) {
       return fail(`${at}.column`, 'key_not_writable')
     }

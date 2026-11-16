@@ -18,6 +18,8 @@ export interface ObjectFacts extends ModelAccess {
   tableAccessId: string
   objectName: string
   objectType: 'table' | 'view'
+  /** The resource name on the public API (E14). */
+  apiResource: string
   /** Operations the database grants allow (`dbGrants` in §8.3). */
   dbGrants: OpMask
   /** Columns excluded for MCP only, on top of `excluded`. */
@@ -54,7 +56,9 @@ export class AccessFacts {
     tableAccess: TableAccessService
   }
   private readonly byConnection = new Map<string, Promise<ConnectionFacts>>()
-  private tableIndex: Promise<Map<string, { connectionId: string; objectName: string }>> | undefined
+  private tableIndex:
+    | Promise<Map<string, { connectionId: string; objectName: string; apiResource: string }>>
+    | undefined
   /** Increases with every change; compiled pages of an older generation are rebuilt. */
   generation = 0
 
@@ -91,6 +95,7 @@ export class AccessFacts {
         tableAccessId: access.id,
         objectName: access.objectName,
         objectType: access.objectType,
+        apiResource: access.apiResource,
         ceiling: toMask(access.ops),
         dbGrants: toMask(access.grantedOps),
         excluded: new Set(
@@ -125,24 +130,38 @@ export class AccessFacts {
     }
   }
 
-  /** The connection and object of a table access ID. */
-  async table(
-    tableAccessId: string,
-  ): Promise<{ connection: ConnectionFacts; object: ObjectFacts } | undefined> {
+  private index() {
     this.tableIndex ??= this.deps.db
       .selectFrom('table_access')
-      .select(['id', 'connection_id', 'object_name'])
+      .select(['id', 'connection_id', 'object_name', 'api_resource'])
       .execute()
       .then(
         (rows) =>
           new Map(
             rows.map((row) => [
               row.id,
-              { connectionId: row.connection_id, objectName: row.object_name },
+              {
+                connectionId: row.connection_id,
+                objectName: row.object_name,
+                apiResource: row.api_resource,
+              },
             ]),
           ),
       )
-    const entry = (await this.tableIndex).get(tableAccessId)
+    return this.tableIndex
+  }
+
+  /** The table access ID of an API resource name (E14). */
+  async byResource(alias: string): Promise<string | undefined> {
+    for (const [id, entry] of await this.index()) if (entry.apiResource === alias) return id
+    return undefined
+  }
+
+  /** The connection and object of a table access ID. */
+  async table(
+    tableAccessId: string,
+  ): Promise<{ connection: ConnectionFacts; object: ObjectFacts } | undefined> {
+    const entry = (await this.index()).get(tableAccessId)
     if (entry === undefined) return undefined
     const connection = await this.connection(entry.connectionId)
     const object = connection.objects.get(entry.objectName)

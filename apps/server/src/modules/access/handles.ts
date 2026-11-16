@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { OpMask, PageMode } from '@stashley/shared'
+import type { ApiOperation, OpMask, PageMode } from '@stashley/shared'
 import type { CompiledComponent, CompiledFilter, CompiledPage } from './compile.ts'
+import type { ResourceModel } from './resource.ts'
 
 /**
  * Authorized handles (§8.4). Execution takes one as its first argument, and only this
@@ -32,6 +33,22 @@ export interface AuthorizedFilter {
   readonly filter: CompiledFilter
   readonly mode: PageMode
   readonly user: RequestUser
+}
+
+/** One operation on a public API resource, for one token (§16). */
+export interface AuthorizedResource {
+  readonly [authorized]: 'resource'
+  readonly resource: ResourceModel
+  readonly operation: ApiOperation
+  readonly token: { id: string; name: string }
+  /** The token may also read the resource (`get` or `list`); writes answer with the row then. */
+  readonly readable: boolean
+}
+
+export function grantResource(
+  value: Omit<AuthorizedResource, typeof authorized>,
+): AuthorizedResource {
+  return Object.freeze(value) as AuthorizedResource
 }
 
 export function grantComponent(

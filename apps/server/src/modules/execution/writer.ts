@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import { createHmac, timingSafeEqual } from 'node:crypto'
-import type { FieldError, FieldSpec, ValueKind } from '@stashley/shared'
+import type { FieldError, FieldSpec, OpMask, ValueKind } from '@stashley/shared'
 import {
   checkField,
   checkFieldValue,
@@ -9,6 +9,7 @@ import {
   checkRow,
   evaluateDateExpression,
   hasOp,
+  opBits,
   parseDateExpression,
 } from '@stashley/shared'
 import type { Clock } from '../../platform/clock.ts'
@@ -18,7 +19,7 @@ import { AppError } from '../../platform/http/problem.ts'
 import { encodeValue } from '../../target/encoding.ts'
 import type { TargetPools, TargetSession } from '../../target/pools.ts'
 import type { CompiledTableSource } from '../access/compile.ts'
-import type { AuthorizedComponent } from '../access/handles.ts'
+import type { AuthorizedComponent, AuthorizedResource, RequestUser } from '../access/handles.ts'
 import type { WriteField, WriteModel } from '../access/write-model.ts'
 import type { Actor, AuditLog } from '../audit/audit-log.ts'
 import type { ConnectionsService } from '../connections/service.ts'
@@ -108,8 +109,40 @@ interface RowState {
   lock: unknown
 }
 
+/**
+ * Who writes and how (§11, §16): a component of a page with its rights, defaults, option
+ * lists and base filter, or a public API resource with the token's operation and none of
+ * those.
+ */
+interface WriteSubject {
+  ops: OpMask
+  user: RequestUser | null
+  audit: { pageId?: string; componentId?: string }
+  /** Checks a foreign key value against its option list; null leaves it to the database. */
+  references:
+    | ((
+        field: WriteField,
+        value: unknown,
+        input: {
+          filters: Readonly<Record<string, unknown>>
+          params: Readonly<Record<string, unknown>>
+        },
+      ) => Promise<boolean>)
+    | null
+  /** Version tokens of the API never match those of the UI (E17). */
+  versionSpace: 'ui' | 'api'
+}
+
+/** Options of an API update (E17). */
+export interface ResourceUpdate {
+  /** `If-Match`: a version token, `*` for "exists", or undefined. */
+  version?: string | undefined
+  /** `PUT /:id`: writable columns the body leaves out return to their default. */
+  replace?: boolean
+}
+
 interface Context {
-  handle: AuthorizedComponent
+  subject: WriteSubject
   source: CompiledTableSource
   write: WriteModel
   target: Target
@@ -187,9 +220,48 @@ export class RowWriter {
   private async context(handle: AuthorizedComponent, needsWriteModel = true): Promise<Context> {
     const source = handle.component.source
     if (source?.kind !== 'table' || source.model === null) throw new AppError('not_found')
+    return this.contextOf(
+      {
+        ops: handle.ops,
+        user: handle.user,
+        audit: { pageId: handle.page.pageId, componentId: handle.component.id },
+        references: (field, value, input) =>
+          this.deps.references.allowed(handle, field, value, input),
+        versionSpace: 'ui',
+      },
+      source,
+      handle.mode !== 'runtime',
+      needsWriteModel,
+    )
+  }
+
+  /** An API resource writes with the token's operation, without base filter (§16). */
+  private resourceContext(handle: AuthorizedResource, needsWriteModel = true): Promise<Context> {
+    const operation = handle.operation
+    const ops =
+      (handle.readable ? opBits.read : 0) |
+      (operation === 'create' || operation === 'upsert' ? opBits.create : 0) |
+      (operation === 'update' || operation === 'replace' || operation === 'upsert'
+        ? opBits.update
+        : 0) |
+      (operation === 'delete' ? opBits.delete : 0)
+    return this.contextOf(
+      { ops, user: null, audit: {}, references: null, versionSpace: 'api' },
+      handle.resource.source,
+      false,
+      needsWriteModel,
+    )
+  }
+
+  private async contextOf(
+    subject: WriteSubject,
+    source: CompiledTableSource,
+    simulate: boolean,
+    needsWriteModel: boolean,
+  ): Promise<Context> {
+    if (source.model === null) throw new AppError('not_found')
     const write = source.write
     if (write === null && needsWriteModel) throw new AppError('not_found')
-    const simulate = handle.mode !== 'runtime'
     const target = await this.target(source.connection.connectionId, simulate)
     const options: ValueOptions = {
       connectionTimeZone: target.timeZone,
@@ -197,9 +269,9 @@ export class RowWriter {
     }
     const variables = await this.deps.variables.current()
     const model = write?.row ?? source.model
-    const base = resolveBaseValues(model, handle.user, variables, options)
+    const base = resolveBaseValues(model, subject.user, variables, options)
     return {
-      handle,
+      subject,
       source,
       write: write as WriteModel,
       target,
@@ -357,14 +429,50 @@ export class RowWriter {
   }
 
   /** The opaque version token: the lock column and the values of the writable fields (§11). */
-  version(context: Pick<Context, 'write'>, state: RowState): string {
+  version(
+    context: { write: WriteModel; subject: Pick<WriteSubject, 'versionSpace'> },
+    state: RowState,
+  ): string {
     const values = Object.keys(state.values)
       .sort()
       .map((column) => [column, state.values[column]])
+    const parts = [context.write.object, String(state.key), state.lock, values]
+    // UI tokens keep their form; API tokens name their space, so neither passes for the other.
     return createHmac('sha256', this.deps.versionKey)
-      .update(JSON.stringify([context.write.object, String(state.key), state.lock, values]))
+      .update(JSON.stringify(context.subject.versionSpace === 'api' ? ['api', ...parts] : parts))
       .digest('base64url')
       .slice(0, 32)
+  }
+
+  /**
+   * The version token (ETag) of a resource row as the read path returns it (E17): the same
+   * value a write computes from the locked row.
+   */
+  resourceVersion(
+    resource: AuthorizedResource['resource'],
+    row: Record<string, unknown>,
+  ): string | undefined {
+    const write = resource.write
+    if (write === null) return undefined
+    const values: Record<string, unknown> = {}
+    for (const field of write.fields) {
+      if (field.spec.kind === 'unsupported') continue
+      const value = row[field.column] ?? null
+      const checked = value === null ? undefined : checkFieldValue(field.spec, value)
+      values[field.column] = checked?.ok === true ? checked.value : value
+    }
+    let lock: unknown = null
+    if (write.lock.kind !== 'values') {
+      const column = write.lock.column
+      const name = Object.keys(row).find((entry) => lower(entry) === lower(column)) ?? column
+      lock = row[name] ?? null
+      if (!write.fields.some((field) => lower(field.column) === lower(column))) values[name] = lock
+      else lock = values[name] ?? lock
+    }
+    return this.version(
+      { write, subject: { versionSpace: 'api' } },
+      { key: row[resource.keyColumn], values, lock },
+    )
   }
 
   private sameVersion(expected: string, actual: string): boolean {
@@ -380,7 +488,7 @@ export class RowWriter {
     state: RowState | undefined,
     extra: Partial<WrittenRow> = {},
   ): WrittenRow {
-    const readable = hasOp(context.handle.ops, 'read')
+    const readable = hasOp(context.subject.ops, 'read')
     return {
       key,
       ...(readable && values !== undefined && { values }),
@@ -407,7 +515,7 @@ export class RowWriter {
     let raw: unknown
     if (value.kind === 'constant') raw = value.value
     else if (value.kind === 'user')
-      raw = value.field === 'id' ? context.handle.user.id : context.handle.user.email
+      raw = value.field === 'id' ? context.subject.user?.id : context.subject.user?.email
     else if (value.kind === 'variable') {
       const variable = context.variables.get(value.name)
       if (variable === undefined)
@@ -506,13 +614,15 @@ export class RowWriter {
     values: Record<string, unknown>,
     request: WriteRequest,
   ): Promise<void> {
+    const check = context.subject.references
+    if (check === null) return
     const input = { filters: request.filters ?? {}, params: request.params ?? {} }
     const errors: FieldError[] = []
     for (const field of context.write.fields) {
       if (field.reference === undefined) continue
       const value = values[field.column]
       if (value === undefined || value === null) continue
-      if (!(await this.deps.references.allowed(context.handle, field, value, input))) {
+      if (!(await check(field, value, input))) {
         errors.push({ field: field.column, code: 'value_not_allowed' })
       }
     }
@@ -665,14 +775,14 @@ export class RowWriter {
         Object.keys(changes),
       ),
     })
-    const handle = context.handle
+    const refs = context.subject.audit
     return this.deps.audit
       .record(actor, {
         action,
         subject: { kind: 'row', id: String(key), label: `${object} ${String(key)}` },
         changes,
-        pageId: handle.page.pageId,
-        componentId: handle.component.id,
+        ...(refs.pageId !== undefined && { pageId: refs.pageId }),
+        ...(refs.componentId !== undefined && { componentId: refs.componentId }),
         connectionId: context.target.connectionId,
         objectName: object,
         rowKey: String(key),
@@ -682,8 +792,8 @@ export class RowWriter {
         this.deps.log.error(
           {
             err: error,
-            pageId: handle.page.pageId,
-            componentId: handle.component.id,
+            pageId: refs.pageId,
+            componentId: refs.componentId,
             object,
             key: String(key),
           },
@@ -783,7 +893,7 @@ export class RowWriter {
 
   /** A version conflict; the current record only for callers that may read it. */
   private conflict(context: Context, current: Record<string, unknown>): AppError {
-    return new AppError('version_conflict', hasOp(context.handle.ops, 'read') ? { current } : {})
+    return new AppError('version_conflict', hasOp(context.subject.ops, 'read') ? { current } : {})
   }
 
   /** The record of an editable component with its version token, for edit mode and inline. */
@@ -830,6 +940,8 @@ export class RowWriter {
     where: { key: unknown } | { columns: [string, unknown][] },
     values: Record<string, unknown>,
     version: string | undefined,
+    /** Columns set to their column default (`PUT /:id`); always written. */
+    defaults: readonly string[] = [],
   ): Promise<WrittenRow> {
     const write = context.write
     const result = await context.target.run(async (session) => {
@@ -865,7 +977,7 @@ export class RowWriter {
         if (JSON.stringify(current ?? null) !== JSON.stringify(value))
           changes[column] = [current ?? null, value]
       }
-      if (Object.keys(changes).length === 0) {
+      if (Object.keys(changes).length === 0 && defaults.length === 0) {
         return { key, visible: before, state, changes, unchanged: true as const }
       }
       if (context.simulate) {
@@ -894,6 +1006,7 @@ export class RowWriter {
         column,
         { value: bindWrite(this.kindOf(context, column), value, context.target.timeZone) },
       ])
+      for (const column of defaults) sets.push([column, { expression: 'default' }])
       const lock = write.lock
       if (lock.kind === 'version') sets.push([lock.column, { expression: 'increment' }])
       if (lock.kind === 'timestamp' && lock.setByServer) {
@@ -922,6 +1035,12 @@ export class RowWriter {
       const after = await this.visible(context, session, write.row, key)
       if (after === undefined) throw new Abort(new AppError('base_filter_violation'))
       const next = await this.readState(context, session, { key }, false)
+      // A column back at its default records the value the database chose.
+      for (const column of defaults) {
+        const now = next?.values[column] ?? after[column] ?? null
+        const old = state.values[column] ?? null
+        if (JSON.stringify(old) !== JSON.stringify(now)) changes[column] = [old, now]
+      }
       return { key, visible: after, state: next, changes }
     })
     if ('missing' in result) return { key: undefined }
@@ -942,7 +1061,15 @@ export class RowWriter {
     actor: Actor,
     request: WriteRequest,
   ): Promise<WrittenRow> {
-    const context = await this.context(handle)
+    return this.upsertIn(await this.context(handle), actor, request)
+  }
+
+  private async upsertIn(
+    context: Context,
+    actor: Actor,
+    request: WriteRequest,
+  ): Promise<WrittenRow> {
+    const ops = context.subject.ops
     const write = context.write
     if (write.upsertKey === null) throw new AppError('not_found')
     const values = this.createValues(context, request.values)
@@ -969,14 +1096,14 @@ export class RowWriter {
       ),
     )
     for (let attempt = 0; attempt < 2; attempt++) {
-      const updated = hasOp(handle.ops, 'update')
+      const updated = hasOp(ops, 'update')
         ? await this.change(context, actor, { columns: where }, changes, undefined)
         : await this.existing(context, where)
       if (updated.key !== undefined) {
-        if (!hasOp(handle.ops, 'update')) throw new AppError('forbidden')
+        if (!hasOp(ops, 'update')) throw new AppError('forbidden')
         return { ...updated, created: false }
       }
-      if (!hasOp(handle.ops, 'create')) throw new AppError('forbidden')
+      if (!hasOp(ops, 'create')) throw new AppError('forbidden')
       try {
         return await this.insert(context, actor, values)
       } catch (error) {
@@ -1005,7 +1132,15 @@ export class RowWriter {
     // Only tables delete (E13); forms have no delete capability.
     if (handle.component.block.type !== 'table') throw new AppError('not_found')
     if (!hasOp(handle.ops, 'delete')) throw new AppError('forbidden')
-    const context = await this.context(handle, false)
+    return this.removeIn(await this.context(handle, false), actor, rawKey, request)
+  }
+
+  private async removeIn(
+    context: Context,
+    actor: Actor,
+    rawKey: string,
+    request: { version?: string | undefined },
+  ): Promise<WrittenRow> {
     const source = context.source
     const model = source.model as TableModel
     const object = source.object.objectName
@@ -1060,5 +1195,80 @@ export class RowWriter {
       key: this.answerKey(model.key.kind, key),
       ...(context.simulate && { simulated: true as const }),
     }
+  }
+
+  // Public API (§16): the token's operation, no base filter, no option lists, no simulation.
+
+  async createResource(
+    handle: AuthorizedResource,
+    actor: Actor,
+    payload: unknown,
+  ): Promise<WrittenRow> {
+    const context = await this.resourceContext(handle)
+    return this.insert(context, actor, this.createValues(context, payload))
+  }
+
+  /**
+   * `PATCH /:id` changes the given columns, `PUT /:id` replaces every writable column: one
+   * the body leaves out takes its column default, or null (D6). `If-Match: *` only needs the
+   * row to exist.
+   */
+  async updateResource(
+    handle: AuthorizedResource,
+    actor: Actor,
+    rawKey: string,
+    payload: unknown,
+    options: ResourceUpdate = {},
+  ): Promise<WrittenRow> {
+    const context = await this.resourceContext(handle)
+    const write = context.write
+    const key = this.key(write.keyKind, rawKey)
+    const checked = checkRow(write.payload.update, 'update', payload)
+    if (!checked.ok) throw this.invalid(checked.errors)
+    const values = { ...checked.values }
+    const defaults: string[] = []
+    if (options.replace === true) {
+      const missing: FieldError[] = []
+      for (const spec of write.payload.update) {
+        if (Object.hasOwn(values, spec.column)) continue
+        const column = this.catalog(context)?.columns.find((entry) => entry.name === spec.column)
+        if (column?.defaultValue !== null && column?.defaultValue !== undefined) {
+          defaults.push(spec.column)
+        } else if (column?.nullable === true) values[spec.column] = null
+        else missing.push({ field: spec.column, code: 'required' })
+      }
+      if (missing.length > 0) throw this.invalid(missing)
+    }
+    const version = options.version === '*' ? undefined : options.version
+    return this.change(context, actor, { key }, values, version, defaults)
+  }
+
+  /** `PUT /?on=<column>`: the idempotent upsert of integrations (D6, E18). */
+  async upsertResource(
+    handle: AuthorizedResource,
+    actor: Actor,
+    payload: unknown,
+    on: string,
+  ): Promise<WrittenRow> {
+    const context = await this.resourceContext(handle)
+    const column = handle.resource.upsertColumns.find((entry) => entry === on)
+    if (column === undefined) {
+      throw new AppError('bad_request', { errors: [{ field: 'on', code: 'upsert_key_invalid' }] })
+    }
+    return this.upsertIn({ ...context, write: { ...context.write, upsertKey: [column] } }, actor, {
+      values: payload,
+    })
+  }
+
+  async removeResource(
+    handle: AuthorizedResource,
+    actor: Actor,
+    rawKey: string,
+    version: string | undefined,
+  ): Promise<WrittenRow> {
+    const context = await this.resourceContext(handle, false)
+    return this.removeIn(context, actor, rawKey, {
+      version: version === '*' ? undefined : version,
+    })
   }
 }

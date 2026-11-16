@@ -88,6 +88,7 @@ function facts(
         tableAccessId: `${object.name}-id`,
         objectName: object.name,
         objectType: 'table',
+        apiResource: object.name,
         ceiling: toMask(['read', 'create', 'update']),
         dbGrants: toMask(['read', 'create', 'update']),
         excluded: new Set(object.name === 'zahlung' ? ['intern'] : []),
