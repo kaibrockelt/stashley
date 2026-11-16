@@ -2,7 +2,7 @@
 
 **Current milestone:** M6 – Forms and table pages (in progress)
 
-**Next step:** M6 step 1, column grants of the write user (plan approved 2026-11-15, see log).
+**Next step:** M6 steps 6–7: route tests of the write endpoints, CSV export; then the web client (forms, table pages, editor).
 
 **Recommended model strength:** M6: medium (write path and base filters: high).
 
@@ -312,3 +312,16 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - E11: inline editing saves per cell (one `PATCH` with the version token; Escape discards). The manager chooses inline, dialog or both per table. No bulk editing or bulk deletion in the MVP.
   - E12: CSV export in UTF-8 with BOM; delimiter and decimal separator follow the user's format (`;` and `,` for German); dates ISO, date-times as wall times in `APP_TIMEZONE`; foreign keys as shown in the table. Text cells starting with `=`, `+`, `-`, `@`, tab or CR are defused; numeric columns stay numbers. At most 100,000 rows per export.
   - E13: rows are deleted one at a time with confirmation, also in the detail view; cascades follow the database's `ON DELETE` rules.
+- 2026-11-16: M6 steps 1–5 implemented (effort high, as the operator asked).
+  - Step 1 (E6): the write scope suggests `INSERT (…)` and `UPDATE (…)` on tables with exclusions; table access warns with `excluded_column_writable` and `excluded_column_required` and lists `writableColumns`.
+  - Step 2: form fields (input or generated), defaults, foreign key options, the record of edit mode, upsert key, base filter and after-save action on forms; table editing and the CSV switch on table sources; detail tables on table pages. Documents saved before M6 get defaults. `checkRow`/`buildRowSchema` for client and server; date expressions evaluated with `Intl`, checked against Temporal in 2000 random cases per run. The lock column on table access (E7, migration `0006_table_lock`).
+  - Step 3: write models compiled with the page, with issues (`required_field_missing`, `upsert_key_invalid`, `widget_unsuitable`, …); missing column grants withhold an operation (`grant_missing`). Render models carry fields and editing within the caller's rights, never hidden server defaults.
+  - Steps 4–5: the write path with locked rows, base filter checks before and after, version tokens, unchanged writes, upserts, translated errors, audit, cache invalidation and simulation; foreign key option lists with exact matches and the `value_not_allowed` check.
+  - Decisions made on the way:
+    - Row locks take only the written table; the base filter is checked by a separate read in the same transaction. `FOR UPDATE` over joins would lock the joined tables and, on MySQL, need write privileges on them.
+    - New rows get equality conditions of the base filter on their own columns as server values, so a form on the current event needs no event field.
+    - Forms without `read` (create and upsert) answer with the key only, never with values of an existing row.
+    - Option lists always search the display value; configured search columns are searched too and decide exact matches.
+    - Generated dates and defaults apply when a record is created; on updates an editable generated date is an ordinary input.
+    - Write sessions wait at most 10 s for a row lock (`row_locked`).
+  - Verified: typecheck, lint, SPDX, i18n (892 keys); 568 server, 86 shared and 62 web unit tests; 196 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7, among them a payment that updates `v_zahlungsstatus` at once, hotels kept apart on writes with manipulated keys, a change moved out of the base filter refused, version conflicts, unchanged repeats, upserts, duplicate and missing references translated, simulation without DML, and writes after the write user was narrowed to column grants.
