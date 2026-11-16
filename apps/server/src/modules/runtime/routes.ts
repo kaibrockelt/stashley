@@ -3,21 +3,29 @@
 import {
   componentId,
   componentQuery,
+  fieldOptionsQuery,
   filterOptionsQuery,
   pageModes,
+  rowDelete,
   rowQuery,
+  rowWrite,
+  type TableOp,
 } from '@stashley/shared'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { AppError } from '../../platform/http/problem.ts'
 import { parse } from '../../platform/http/validation.ts'
 import type { AccessService, Viewer } from '../access/service.ts'
-import { requireActive } from '../auth/context.ts'
+import { actorOf, requireActive } from '../auth/context.ts'
 import type { ComponentInput, ComponentReader } from '../execution/component-reader.ts'
+import type { RowWriter } from '../execution/writer.ts'
 
 const componentParams = z.object({ pageId: z.uuid(), componentId }).strict()
 const rowParams = componentParams.extend({ key: z.string().min(1).max(200) }).strict()
 const filterParams = z.object({ pageId: z.uuid(), filterId: componentId }).strict()
+const fieldParams = componentParams.extend({ fieldId: componentId }).strict()
+/** Writes per user and minute; a station stamps a few per minute at most (§14.6). */
+const writeLimit = { rateLimit: { max: 300, timeWindow: '1 minute' } }
 const slugParams = z.object({ slug: z.string().min(1).max(63) }).strict()
 const pageQuery = z
   .object({ mode: z.enum(pageModes).optional(), roles: z.string().max(2000).optional() })
@@ -59,9 +67,9 @@ function inputOf(body: z.infer<typeof componentQuery>, refresh = false): Compone
  */
 export function registerRuntimeRoutes(
   app: FastifyInstance,
-  deps: { access: AccessService; reader: ComponentReader; clock?: () => number },
+  deps: { access: AccessService; reader: ComponentReader; writer: RowWriter; clock?: () => number },
 ): void {
-  const { access, reader } = deps
+  const { access, reader, writer } = deps
   const clock = deps.clock ?? Date.now
   const refreshed = new Map<string, number>()
   const viewer = (request: FastifyRequest): Promise<Viewer> => access.viewer(requireActive(request))
@@ -82,17 +90,112 @@ export function registerRuntimeRoutes(
   const authorize = async (
     request: FastifyRequest,
     body: { mode?: (typeof pageModes)[number] | undefined; roles?: string[] | undefined },
+    op: TableOp | readonly TableOp[] = 'read',
   ) => {
-    const { pageId, componentId: id } = parse(componentParams, request.params)
+    // Row routes carry a key as well; it is parsed by the route.
+    const params = request.params as Record<string, unknown>
+    const { pageId, componentId: id } = parse(componentParams, {
+      pageId: params.pageId,
+      componentId: params.componentId,
+    })
     return access.authorizeComponent(
       await viewer(request),
       pageId,
       id,
-      'read',
+      op,
       body.mode ?? 'runtime',
       body.roles ?? [],
     )
   }
+
+  // Writes (§11). Forms create, update or upsert by their mode; tables by their editing.
+  app.post(
+    '/internal/pages/:pageId/components/:componentId/rows',
+    { config: writeLimit },
+    async (request, reply) => {
+      const body = parse(rowWrite, request.body)
+      const handle = await authorize(request, body, ['create', 'update'])
+      const block = handle.component.block
+      const input = { values: body.values, filters: body.filters, params: body.params }
+      const written =
+        block.type === 'form' && block.mode === 'upsert'
+          ? await writer.upsert(handle, actorOf(request), input)
+          : await writer.create(handle, actorOf(request), input)
+      return reply.code(written.created === false ? 200 : 201).send(written)
+    },
+  )
+
+  app.patch(
+    '/internal/pages/:pageId/components/:componentId/rows/:key',
+    { config: writeLimit },
+    async (request) => {
+      const { key } = parse(rowParams, request.params)
+      const body = parse(rowWrite, request.body)
+      // Updates from the UI always say which state they change (§11 lock strategy).
+      if (body.version === undefined) {
+        throw new AppError('validation_failed', {
+          errors: [{ field: 'version', code: 'required' }],
+        })
+      }
+      const handle = await authorize(request, body, 'update')
+      return writer.update(handle, actorOf(request), key, {
+        values: body.values,
+        version: body.version,
+        filters: body.filters,
+        params: body.params,
+      })
+    },
+  )
+
+  app.delete(
+    '/internal/pages/:pageId/components/:componentId/rows/:key',
+    { config: writeLimit },
+    async (request) => {
+      const { key } = parse(rowParams, request.params)
+      const body = parse(rowDelete, request.body ?? {})
+      const handle = await authorize(request, body, 'delete')
+      return writer.remove(handle, actorOf(request), key, { version: body.version })
+    },
+  )
+
+  /** The record of a form in edit mode or a row edited inline, with its version token. */
+  app.get('/internal/pages/:pageId/components/:componentId/rows/:key/edit', async (request) => {
+    const { pageId, componentId: id, key } = parse(rowParams, request.params)
+    const query = parse(rowQuery, request.query)
+    const handle = await access.authorizeComponent(
+      await viewer(request),
+      pageId,
+      id,
+      'update',
+      query.mode ?? 'runtime',
+      rolesOf(query.roles),
+    )
+    return writer.current(handle, key)
+  })
+
+  app.post(
+    '/internal/pages/:pageId/components/:componentId/fields/:fieldId/options',
+    async (request) => {
+      const { pageId, componentId: id, fieldId } = parse(fieldParams, request.params)
+      const body = parse(fieldOptionsQuery, request.body ?? {})
+      // Option lists use the right of their component (D12): whoever may write the field.
+      const handle = await access.authorizeComponent(
+        await viewer(request),
+        pageId,
+        id,
+        ['create', 'update'],
+        body.mode ?? 'runtime',
+        body.roles ?? [],
+      )
+      return reader.fieldOptions(handle, fieldId, {
+        search: body.search,
+        cursor: body.cursor,
+        values: body.values,
+        filters: body.filters ?? {},
+        params: body.params ?? {},
+      })
+    },
+  )
 
   app.post('/internal/pages/:pageId/components/:componentId/query', async (request) => {
     const body = parse(componentQuery, request.body ?? {})

@@ -173,8 +173,9 @@ function referenceModel(
       })),
     ],
     sort: { columnId: 'label', direction: 'asc' as const },
-    searchColumns:
-      searchColumns.length > 0 ? searchColumns.map((_, index) => `s${index}`) : ['label'],
+    // The display value is always searched; configured columns are searched too and decide
+    // exact matches, e.g. a start number typed at a station.
+    searchColumns: ['label', ...searchColumns.map((_, index) => `s${index}`)],
     baseFilter: [],
     bindings: [],
     pageSize: 50,
@@ -192,7 +193,8 @@ function referenceModel(
       target: relation.targetObject,
       targetColumn: relation.targetColumn,
       model,
-      searchColumns: config.searchColumns,
+      searchColumns:
+        searchColumns.length > 0 ? searchColumns.map((_, index) => `s${index}`) : ['label'],
       extras: options.extras.map((column, index) => ({
         id: `x${index}`,
         label: [...column.path.map((step) => step.target), column.column].join('.'),

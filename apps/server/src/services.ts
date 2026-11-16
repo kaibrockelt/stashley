@@ -17,6 +17,7 @@ import { QueriesService } from './modules/queries/service.ts'
 import { RolesService } from './modules/roles/service.ts'
 import { TableAccessService } from './modules/table-access/service.ts'
 import { VariablesService } from './modules/variables/service.ts'
+import { RowWriter } from './modules/execution/writer.ts'
 import { TargetPools, type HostResolver } from './target/pools.ts'
 import { sessionCookieName } from './modules/auth/sessions.ts'
 import { createOidcClient, OidcService, type OidcClient } from './modules/auth/oidc.ts'
@@ -132,11 +133,27 @@ export function createServices(
     displayTimeZone: config.timeZone,
     clock,
   })
+  const writer = new RowWriter({
+    connections,
+    pools,
+    audit,
+    variables,
+    events,
+    references: {
+      allowed: (handle, field, value, input) =>
+        reader.referenceAllowed(handle, field, value, input),
+    },
+    versionKey: keys.key('rowVersion'),
+    timeZone: config.timeZone,
+    log,
+    clock,
+  })
   return {
     access,
     facts,
     pages,
     reader,
+    writer,
     cache,
     executor,
     queries,

@@ -54,6 +54,15 @@ export interface TargetSession {
    * the server's own timeout is stopped with `KILL QUERY` over a separate connection (§9.2).
    */
   execute(sql: string, params: unknown[]): Promise<ExecuteResult>
+  /** Runs a prepared `INSERT`, `UPDATE` or `DELETE` (write pool). */
+  write(sql: string, params: unknown[]): Promise<WriteResult>
+}
+
+export interface WriteResult {
+  /** Matched rows (client flag `FOUND_ROWS`). */
+  affectedRows: number
+  /** The generated auto-increment value of an insert, 0 without one. */
+  insertId: number | string
 }
 
 /** Interrupted by `KILL QUERY` (1317), or by the server timeout: MariaDB 1969, MySQL 3024. */
@@ -167,6 +176,11 @@ async function setUp(raw: RawSession, spec: TargetSpec, purpose: CredentialPurpo
     await raw.query({
       sql: "SET SESSION sql_mode = CONCAT_WS(',', NULLIF(@@SESSION.sql_mode, ''), 'STRICT_ALL_TABLES')",
     })
+    // A row another session holds is a quick `row_locked`, not a request that hangs (§11).
+    await raw.query({
+      sql: 'SET SESSION innodb_lock_wait_timeout = ?',
+      values: [writeLockWaitSeconds],
+    })
   }
   return server
 }
@@ -181,6 +195,9 @@ function fieldInfo(field: unknown): FieldInfo {
     columnLength: Number(value.columnLength ?? 0),
   }
 }
+
+/** How long a write waits for a row lock before it fails as `row_locked` (errno 1205). */
+const writeLockWaitSeconds = 10
 
 /** The client gives up this long after the server timeout should have stopped a statement. */
 const killGraceMs = 2_000
@@ -233,6 +250,23 @@ function session(
         throw toTargetError(error)
       } finally {
         if (timer !== undefined) clearTimeout(timer)
+      }
+    },
+    async write(sql: string, params: unknown[]) {
+      try {
+        const [result] = await raw.execute({
+          sql,
+          values: params,
+          timeout: spec.queryTimeoutMs + dropGraceMs,
+        })
+        const header = result as { affectedRows?: unknown; insertId?: unknown }
+        const insertId = header.insertId
+        return {
+          affectedRows: Number(header.affectedRows ?? 0),
+          insertId: typeof insertId === 'number' || typeof insertId === 'string' ? insertId : 0,
+        }
+      } catch (error) {
+        throw toTargetError(error)
       }
     },
   }

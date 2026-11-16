@@ -9,6 +9,7 @@ const purposes = {
   state: 'stashley/state/v1',
   csrf: 'stashley/csrf/v1',
   oauthCookies: 'stashley/oauth-cookies/v1',
+  rowVersion: 'stashley/row-version/v1',
 } as const
 
 export type KeyPurpose = keyof typeof purposes

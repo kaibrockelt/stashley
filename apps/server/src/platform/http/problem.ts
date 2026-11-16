@@ -13,19 +13,24 @@ export class AppError extends Error {
   readonly code: ErrorCode
   readonly errors: FieldError[] | undefined
   readonly detail: string | undefined
+  readonly current: unknown
 
-  constructor(code: ErrorCode, options: { detail?: string; errors?: FieldError[] } = {}) {
+  constructor(
+    code: ErrorCode,
+    options: { detail?: string; errors?: FieldError[]; current?: unknown } = {},
+  ) {
     super(errorCodes[code].title)
     this.name = 'AppError'
     this.code = code
     this.errors = options.errors
     this.detail = options.detail
+    this.current = options.current
   }
 }
 
 export function problem(
   code: ErrorCode,
-  extra: Partial<Pick<ProblemDocument, 'detail' | 'errors' | 'errorId'>> = {},
+  extra: Partial<Pick<ProblemDocument, 'detail' | 'errors' | 'errorId' | 'current'>> = {},
 ): ProblemDocument {
   const { status, title } = errorCodes[code]
   return { type: problemType(code), title, status, code, ...extra }
@@ -60,6 +65,7 @@ export function errorHandler(
       problem(error.code, {
         ...(error.detail !== undefined && { detail: error.detail }),
         ...(error.errors !== undefined && { errors: error.errors }),
+        ...(error.current !== undefined && { current: error.current }),
       }),
     )
   }

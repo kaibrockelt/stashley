@@ -5,6 +5,7 @@ import type {
   ComponentResult,
   CountResult,
   FieldError,
+  FieldOptions,
   FilterOptions,
   Freshness,
   PageDocument,
@@ -19,16 +20,19 @@ import { systemClock } from '../../platform/clock.ts'
 import { AppError } from '../../platform/http/problem.ts'
 import { encodeValue } from '../../target/encoding.ts'
 import type { AuthorizedComponent, AuthorizedFilter } from '../access/handles.ts'
+import { AccessFacts } from '../access/facts.ts'
+import type { CompiledReference, WriteField } from '../access/write-model.ts'
 import type { CompiledQuerySource, CompiledTableSource } from '../access/compile.ts'
 import type { QueryCache } from '../cache/query-cache.ts'
 import { buildStatement } from '../queries/sql-guard/executable.ts'
 import type { VariablesService } from '../variables/service.ts'
+import { resolveBaseValues } from './base-values.ts'
+import { bindWrite, exists } from './sql/write-sql.ts'
 import type { ReadExecutor } from './executor.ts'
 import { normalizeResult } from './results.ts'
 import { decodeCursor, encodeCursor } from './sql/cursor.ts'
 import { ParameterError, resolveParameters, type ResolvedParameters } from './sql/parameters.ts'
 import {
-  bindForColumn,
   countStatement,
   rowStatement,
   selectStatement,
@@ -335,40 +339,8 @@ export class ComponentReader {
     user: { id: string; email: string },
     options: ValueOptions,
   ): Promise<{ values: unknown[]; variables: string[] }> {
-    const model = source.model
-    if (model === null) return { values: [], variables: [] }
-    const current = await this.variables.current()
-    const variables: string[] = []
-    const values = model.baseFilter.map((condition, index) => {
-      const value = condition.value
-      if (value === undefined) return undefined
-      let raw: unknown
-      if (value.kind === 'constant') raw = value.value
-      else if (value.kind === 'user') raw = value.field === 'id' ? user.id : user.email
-      else {
-        const variable = current.get(value.name)
-        // Fail closed: without its value, a base filter would restrict nothing.
-        if (variable === undefined) {
-          throw new AppError('query_failed', {
-            errors: [{ field: `baseFilter.${index}`, code: 'variable_missing' }],
-          })
-        }
-        variables.push(value.name)
-        raw = variable.value
-      }
-      const bind = (item: unknown) => {
-        const checked = bindForColumn(condition.expr.kind, item, options)
-        if (!checked.ok) {
-          throw new AppError('query_failed', {
-            errors: [{ field: `baseFilter.${index}`, code: checked.code }],
-          })
-        }
-        return checked.value
-      }
-      if (condition.operator === 'in') return (Array.isArray(raw) ? raw : [raw]).map(bind)
-      return bind(raw)
-    })
-    return { values, variables }
+    if (source.model === null) return { values: [], variables: [] }
+    return resolveBaseValues(source.model, user, await this.variables.current(), options)
   }
 
   private async tableContext(
@@ -577,6 +549,227 @@ export class ComponentReader {
     const [row] = this.encodeRows(model.columns, raw.rows, raw.timeZone, model.key.kind).rows
     if (row === undefined) throw new AppError('not_found')
     return row
+  }
+
+  /** A foreign key field of the component's write model, with its options. */
+  private referenceField(
+    handle: AuthorizedComponent,
+    fieldId: string,
+  ): WriteField & { reference: CompiledReference } {
+    const source = handle.component.source
+    const field =
+      source?.kind === 'table'
+        ? source.write?.fields.find((entry) => entry.id === fieldId)
+        : undefined
+    if (field?.reference === undefined) throw new AppError('not_found')
+    return field as WriteField & { reference: CompiledReference }
+  }
+
+  /** The rows of an option query, by the same parameters as the list the user saw. */
+  private async referenceRows(
+    handle: AuthorizedComponent,
+    reference: CompiledReference,
+    input: {
+      filters: Readonly<Record<string, unknown>>
+      params: Readonly<Record<string, unknown>>
+    },
+  ): Promise<{ options: { value: unknown; label: string }[]; freshness: Freshness }> {
+    const query = reference.query
+    if (query?.source === undefined) throw new AppError('not_found')
+    const values: Record<string, unknown> = {}
+    for (const binding of query.bindings) {
+      const value = this.bound(binding.from, { filters: input.filters, params: input.params })
+      if (value !== undefined && value !== null && value !== '') values[binding.parameter] = value
+    }
+    const prepared = await this.prepareQuery(query.source, handle.user, values)
+    const { result, freshness } = await this.loadQuery(prepared, false)
+    return {
+      options: result.rows.map((row) => ({
+        value: row[query.valueColumn] ?? null,
+        label: text(row[query.labelColumn]),
+      })),
+      freshness,
+    }
+  }
+
+  /**
+   * Options of a foreign key field (§ Auswahllisten): server-side search from one character,
+   * 50 per page, by display value. A single option whose search columns equal the search is
+   * marked `exact`, so a start number can be taken without another step.
+   */
+  async fieldOptions(
+    handle: AuthorizedComponent,
+    fieldId: string,
+    input: {
+      search?: string | undefined
+      cursor?: string | undefined
+      values?: readonly (string | number)[] | undefined
+      filters: Readonly<Record<string, unknown>>
+      params: Readonly<Record<string, unknown>>
+    },
+  ): Promise<FieldOptions> {
+    this.inputs(handle.page.document, { filters: input.filters, params: input.params })
+    const field = this.referenceField(handle, fieldId)
+    const reference = field.reference
+    const search = (input.search ?? '').trim()
+    const fingerprint = hash([
+      handle.page.pageId,
+      handle.component.id,
+      fieldId,
+      search,
+      input.values ?? null,
+    ])
+    if (reference.query !== undefined) {
+      const { options: all, freshness } = await this.referenceRows(handle, reference, input)
+      if (input.values !== undefined) {
+        const wanted = new Set(input.values.map((value) => text(value)))
+        return {
+          options: all.filter((option) => wanted.has(text(option.value))),
+          nextCursor: null,
+          ...freshness,
+        }
+      }
+      const lowered = search.toLowerCase()
+      const matching = all.filter(
+        (option) => lowered === '' || option.label.toLowerCase().includes(lowered),
+      )
+      const exact = all.filter((option) => lowered !== '' && option.label.toLowerCase() === lowered)
+      let offset = 0
+      if (input.cursor !== undefined) {
+        const position = decodeCursor(this.cursorKey, input.cursor, fingerprint)
+        if (position === undefined || typeof position.key !== 'number')
+          throw new AppError('cursor_invalid')
+        offset = position.key
+      }
+      const next = offset + optionPageSize
+      return {
+        options: matching.slice(offset, next),
+        nextCursor:
+          next < matching.length
+            ? encodeCursor(this.cursorKey, {
+                fingerprint,
+                direction: 'next',
+                sort: null,
+                key: next,
+              })
+            : null,
+        ...(exact.length === 1 && { exact: exact[0]?.value }),
+        ...freshness,
+      }
+    }
+
+    const model = reference.model
+    const connectionId = handle.component.source?.connection.connectionId as string
+    const target = await this.executor.target(connectionId)
+    const options: ValueOptions = {
+      connectionTimeZone: target.timeZone,
+      displayTimeZone: this.displayTimeZone,
+    }
+    let cursor: CursorPosition | undefined
+    if (input.cursor !== undefined) {
+      cursor = decodeCursor(this.cursorKey, input.cursor, fingerprint)
+      if (cursor === undefined) throw new AppError('cursor_invalid')
+    }
+    const filters =
+      input.values === undefined
+        ? []
+        : [{ columnId: 'value', operator: 'in' as const, value: [...input.values] }]
+    let statement
+    try {
+      statement = selectStatement(
+        model,
+        { baseFilter: [], bindings: [] },
+        { search: search === '' ? undefined : search, filters, cursor, limit: optionPageSize },
+        options,
+      )
+    } catch (error) {
+      if (error instanceof TableRequestError) throw invalid(error.errors)
+      throw error
+    }
+    const deps = AccessFacts.dependencies(handle.component.source!.connection, model.objects)
+    const loaded = await this.cache.load<TablePage>({
+      key: `options:${handle.page.pageId}:${handle.component.id}:${fieldId}:${fingerprint}:${input.cursor ?? ''}`,
+      // Foreign key option lists keep 15 minutes; writes to their tables evict them (§12).
+      ttlSeconds: 900,
+      dependencies: { connectionId, tables: deps.tables, allTables: deps.allTables, variables: [] },
+      refresh: false,
+      load: async () => {
+        const raw = await this.executor.execute(connectionId, statement)
+        const rows = raw.rows.slice(0, optionPageSize)
+        if (statement.reversed) rows.reverse()
+        const encoded = this.encodeRows(model.columns, rows, raw.timeZone, model.key.kind)
+        const page: TablePage = {
+          rows: encoded.rows,
+          raw: rows.map((row) => [row[model.columns.length], row[model.columns.length + 1]]),
+          invalidRows: [],
+          more: raw.rows.length > optionPageSize,
+        }
+        return { value: page, size: JSON.stringify(page.rows).length * 2 }
+      },
+    })
+    const page = loaded.value
+    const lowered = search.toLowerCase()
+    const exact = page.rows.filter(
+      (row) =>
+        lowered !== '' &&
+        reference.searchColumns.some((id) => text(row.values[id]).toLowerCase() === lowered),
+    )
+    const last = page.raw.at(-1)
+    return {
+      options: page.rows.map((row) => ({
+        value: row.values.value ?? null,
+        label: text(row.values.label),
+        ...(reference.extras.length > 0 && {
+          extras: Object.fromEntries(
+            reference.extras.map((extra) => [extra.id, row.values[extra.id] ?? null]),
+          ),
+        }),
+      })),
+      nextCursor:
+        page.more && last !== undefined
+          ? encodeCursor(this.cursorKey, {
+              fingerprint,
+              direction: 'next',
+              sort: statement.sortIsKey ? null : last[1],
+              key: last[0],
+            })
+          : null,
+      ...(exact.length === 1 && { exact: exact[0]?.values.value }),
+      ...this.freshness(loaded, 900, undefined),
+    }
+  }
+
+  /**
+   * Whether a foreign key value is in its option list (§ Auswahllisten): a row of the
+   * option query, or a record of the target. A manipulated value outside is rejected.
+   */
+  async referenceAllowed(
+    handle: AuthorizedComponent,
+    field: WriteField,
+    value: unknown,
+    input: {
+      filters: Readonly<Record<string, unknown>>
+      params: Readonly<Record<string, unknown>>
+    },
+  ): Promise<boolean> {
+    const reference = field.reference
+    if (reference === undefined) return true
+    if (reference.query !== undefined) {
+      const { options } = await this.referenceRows(handle, reference, input)
+      return options.some((option) => text(option.value) === text(value))
+    }
+    const source = handle.component.source
+    if (source === undefined) return false
+    const target = await this.executor.target(source.connection.connectionId)
+    const kind =
+      source.connection.catalog
+        .get(reference.target)
+        ?.columns.find((column) => column.name === reference.targetColumn)?.kind ?? field.spec.kind
+    const statement = exists(reference.target, [
+      [reference.targetColumn, bindWrite(kind, value, target.timeZone)],
+    ])
+    const result = await this.executor.execute(source.connection.connectionId, statement)
+    return result.rows.length > 0
   }
 
   /** Options of a select page filter, searchable and paged (§13.6). */

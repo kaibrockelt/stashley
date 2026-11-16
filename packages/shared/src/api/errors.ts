@@ -35,6 +35,20 @@ export const errorCodes = {
   target_permission_denied: { status: 503, title: 'Database permission missing' },
   cursor_invalid: { status: 400, title: 'Invalid cursor' },
   cursor_expired: { status: 409, title: 'Cursor expired' },
+  // Writes (§11 step 7). Field errors name the columns where they are known.
+  version_conflict: { status: 409, title: 'Changed in the meantime' },
+  base_filter_violation: { status: 403, title: 'Outside the base filter' },
+  row_locked: { status: 409, title: 'Row locked' },
+  unique_violation: { status: 409, title: 'Duplicate value' },
+  foreign_key_violation: { status: 422, title: 'Referenced record missing' },
+  still_referenced: { status: 409, title: 'Still referenced' },
+  value_not_allowed: { status: 422, title: 'Value not allowed' },
+  not_null_violation: { status: 422, title: 'Value required' },
+  value_too_long: { status: 422, title: 'Value too long' },
+  value_out_of_range: { status: 422, title: 'Value out of range' },
+  invalid_value: { status: 422, title: 'Invalid value' },
+  check_violation: { status: 422, title: 'Check failed' },
+  write_failed: { status: 422, title: 'Write failed' },
   internal_error: { status: 500, title: 'Internal error' },
   service_unavailable: { status: 503, title: 'Service unavailable' },
 } as const satisfies Record<string, { status: number; title: string }>
@@ -56,6 +70,8 @@ export interface ProblemDocument {
   detail?: string
   errors?: FieldError[]
   errorId?: string
+  /** `version_conflict`: the record as it is now, or null when it is gone. */
+  current?: unknown
 }
 
 export const problemTypePrefix = 'urn:stashley:problem:'

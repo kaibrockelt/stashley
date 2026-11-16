@@ -350,7 +350,8 @@ export class AccessService {
     viewer: Viewer,
     pageId: string,
     componentId: string,
-    op: TableOp,
+    /** The operation, or several of which one suffices (upserts create or update). */
+    op: TableOp | readonly TableOp[],
     mode: PageMode,
     previewRoles: readonly string[] = [],
   ): Promise<AuthorizedComponent> {
@@ -366,7 +367,8 @@ export class AccessService {
     const delivered =
       mode === 'edit' ? hasOp(ops, 'read') : visible && isDelivered(component.kind, ops)
     if (!delivered) throw new AppError('not_found')
-    if (!hasOp(ops, op)) throw new AppError('forbidden')
+    const wanted: readonly TableOp[] = typeof op === 'string' ? [op] : op
+    if (!wanted.some((entry) => hasOp(ops, entry))) throw new AppError('forbidden')
     return grantComponent({ page, component, mode, ops, user: viewer.user })
   }
 

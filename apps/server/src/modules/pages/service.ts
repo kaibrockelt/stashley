@@ -686,10 +686,9 @@ export class PagesService {
 
 /** The draft changed since the caller loaded it; carries the current one (§13.2). */
 export class DraftConflict extends AppError {
-  readonly current: PageDetail
+  declare readonly current: PageDetail
 
   constructor(current: PageDetail) {
-    super('conflict')
-    this.current = current
+    super('conflict', { current })
   }
 }

@@ -291,6 +291,62 @@ export interface FilterOptions extends Freshness {
   nextCursor: string | null
 }
 
+/** Options of a foreign key field (§ Auswahllisten), searchable and paged. */
+export const fieldOptionsQuery = z
+  .object({
+    ...modeFields,
+    search: z.string().max(200).optional(),
+    cursor: z.string().max(4096).optional(),
+    /** Only the options with these keys, e.g. to label a value already chosen. */
+    values: z
+      .array(z.union([z.string().max(1000), z.number()]))
+      .max(100)
+      .optional(),
+    filters: z.record(z.string(), z.unknown()).optional(),
+    params: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict()
+
+export interface FieldOption {
+  value: unknown
+  label: string
+  /** Further columns of the record, shown read-only after choosing it. */
+  extras?: Record<string, unknown>
+}
+
+export interface FieldOptions extends Freshness {
+  options: FieldOption[]
+  nextCursor: string | null
+  /** The one option whose search columns equal the search exactly; taken at once. */
+  exact?: unknown
+}
+
+/** A row write of a form or an editable table (§11). */
+export const rowWrite = z
+  .object({
+    ...modeFields,
+    values: z.record(z.string(), z.unknown()),
+    /** The version token of the row as loaded; required to update. */
+    version: z.string().max(64).optional(),
+    filters: z.record(z.string(), z.unknown()).optional(),
+    params: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict()
+
+export const rowDelete = z
+  .object({ ...modeFields, version: z.string().max(64).optional() })
+  .strict()
+
+/** The answer to a write: the record when the caller may read it, and its version token. */
+export interface RowWriteResult {
+  key: unknown
+  values?: Record<string, unknown>
+  version?: string
+  unchanged?: true
+  simulated?: true
+  created?: boolean
+}
+
 /** Admin overview (§8.7): who can do what on which object, through which page. */
 export interface PermissionEntry {
   connectionId: string

@@ -126,7 +126,11 @@ export async function createServer(
   registerRoleRoutes(app, { roles: services.roles, variables: services.variables })
   registerQueryRoutes(app, { queries: services.queries })
   registerPageRoutes(app, { pages: services.pages, access: services.access })
-  registerRuntimeRoutes(app, { access: services.access, reader: services.reader })
+  registerRuntimeRoutes(app, {
+    access: services.access,
+    reader: services.reader,
+    writer: services.writer,
+  })
 
   const jobs: JobDefinition[] = [
     {
