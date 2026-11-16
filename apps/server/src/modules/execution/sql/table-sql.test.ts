@@ -6,10 +6,12 @@ import { tableConfig, toMask } from '@stashley/shared'
 import { describe, expect, it } from 'vitest'
 import { demoObjects } from '../../../test/demo.ts'
 import { decodeCursor, encodeCursor } from './cursor.ts'
+import { updateRow } from './write-sql.ts'
 import { buildTableModel, ModelError, type ModelAccess, type ModelContext } from './table-model.ts'
 import {
   bindForColumn,
   countStatement,
+  matchStatement,
   rowStatement,
   selectStatement,
   simulatedRowStatement,
@@ -991,5 +993,120 @@ describe('table source edge cases', () => {
     ).toThrow(TableRequestError)
     expect(bindForColumn('string', 'x', options)).toEqual({ ok: true, value: 'x' })
     expect(bindForColumn('set', 'a,b', options)).toEqual({ ok: true, value: 'a,b' })
+  })
+})
+
+describe('public API and import statements', () => {
+  const plain = { baseFilter: [], bindings: [] }
+  const people = buildTableModel(
+    'person',
+    config({
+      columns: [
+        { kind: 'column', id: 'vorname', column: { path: [], column: 'vorname' } },
+        { kind: 'column', id: 'nachname', column: { path: [], column: 'nachname' } },
+      ],
+    }),
+    ctx,
+  )
+
+  it("filters with the client's own LIKE pattern and refuses anything else (E19)", () => {
+    const statement = selectStatement(
+      people,
+      plain,
+      page({ filters: [{ columnId: 'nachname', operator: 'like', value: 'B%' }] }),
+      options,
+    )
+    expect(statement.sql).toContain('WHERE `t0`.`nachname` LIKE ? ORDER BY')
+    expect(statement.values).toEqual(['B%', 51])
+    for (const value of [5, 'x'.repeat(1001)]) {
+      expect(() =>
+        selectStatement(
+          people,
+          plain,
+          page({ filters: [{ columnId: 'nachname', operator: 'like', value }] }),
+          options,
+        ),
+      ).toThrow(TableRequestError)
+    }
+  })
+
+  it('pages by position, ordered by every column, for views without a key', () => {
+    const first = selectStatement(people, plain, page({ offset: 0, limit: 10 }), options)
+    expect(first.sql).toBe(
+      'SELECT `t0`.`vorname` AS `c0`, `t0`.`nachname` AS `c1`, `t0`.`id` AS `k` FROM `person` AS `t0` ORDER BY `t0`.`vorname` ASC, `t0`.`nachname` ASC LIMIT ? OFFSET ?',
+    )
+    expect(first.values).toEqual([11, 0])
+    expect(first).toMatchObject({ sortIsKey: true, reversed: false })
+    const sorted = selectStatement(
+      people,
+      plain,
+      page({ offset: 20, limit: 10, sort: { columnId: 'nachname', direction: 'desc' } }),
+      options,
+    )
+    expect(sorted.sql).toContain(
+      'ORDER BY `t0`.`nachname` DESC, `t0`.`vorname` ASC, `t0`.`nachname` ASC LIMIT ? OFFSET ?',
+    )
+    expect(sorted.values).toEqual([11, 20])
+    const ascending = selectStatement(
+      people,
+      plain,
+      page({
+        offset: 0,
+        limit: 1,
+        sort: { columnId: 'vorname', direction: 'asc' },
+        filters: [{ columnId: 'nachname', operator: 'eq', value: 'Berg' }],
+      }),
+      options,
+    )
+    expect(ascending.sql).toContain(
+      'WHERE `t0`.`nachname` = ? ORDER BY `t0`.`vorname` ASC, `t0`.`vorname` ASC',
+    )
+  })
+
+  it('looks up keys by a column or a display value (E26)', () => {
+    const byEmail = buildTableModel(
+      'person',
+      config({
+        columns: [
+          { kind: 'column', id: 'value', column: { path: [], column: 'id' } },
+          { kind: 'column', id: 'match', column: { path: [], column: 'email' } },
+        ],
+      }),
+      ctx,
+    )
+    const statement = matchStatement(byEmail, ['a@example.com', 'b@example.com'])
+    expect(statement.sql).toBe(
+      'SELECT `t0`.`id` AS `v`, `t0`.`email` AS `m` FROM `person` AS `t0` WHERE `t0`.`email` IN (?, ?)',
+    )
+    expect(statement.values).toEqual(['a@example.com', 'b@example.com'])
+    // The import builds this model itself; the display value of the row's own object.
+    const byName = buildTableModel(
+      'person',
+      {
+        ...config(),
+        columns: [
+          { kind: 'column', id: 'value', column: { path: [], column: 'id' } },
+          { kind: 'display', id: 'match', path: [] },
+        ],
+      },
+      ctx,
+    )
+    expect(matchStatement(byName, ['Anna Berg']).sql).toContain(
+      "WHERE CONCAT(COALESCE(CAST(`t0`.`vorname` AS CHAR), ''), ?, COALESCE(CAST(`t0`.`nachname` AS CHAR), '')) IN (?)",
+    )
+    expect(() => matchStatement(byEmail, [])).toThrow(TableRequestError)
+    expect(() => matchStatement(people, ['x'])).toThrow(TableRequestError)
+  })
+
+  it('sets a column back to its default with PUT /:id (D6)', () => {
+    const statement = updateRow('person', 'id', 7, [
+      ['vorname', { value: 'Anna' }],
+      ['telefon', { expression: 'default' }],
+      ['version', { expression: 'increment' }],
+    ])
+    expect(statement.sql).toBe(
+      'UPDATE `person` SET `vorname` = ?, `telefon` = DEFAULT, `version` = `version` + 1 WHERE `id` = ?',
+    )
+    expect(statement.values).toEqual(['Anna', 7])
   })
 })
