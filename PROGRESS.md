@@ -1,10 +1,10 @@
 # Progress
 
-**Current milestone:** M6 – Forms and table pages (in review)
+**Current milestone:** M7 – Public REST API and CSV import (in progress)
 
-**Next step:** Review M6 in a fresh session (write path, base filters and option checks with high effort); then the operator's acceptance.
+**Next step:** Implement M7 steps 1–10; stop before step 11 (new tables through the schema user) so the operator can raise the effort to extra high.
 
-**Recommended model strength:** M6: medium (write path and base filters: high).
+**Recommended model strength:** M7: high (new tables and the review: extra high).
 
 The SQL validation of M4 is tested externally; that does not block M6.
 
@@ -19,7 +19,7 @@ The SQL validation of M4 is tested externally; that does not block M6.
 | M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Done |
 | M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | Done |
 | M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | Done |
-| M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High | Open |
+| M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High (new tables, review: extra high) | In progress |
 | M8 | MCP server: authorization server, metadata, tools, MCP exposure, privacy notice, call log | High | Open |
 | M9 | Demo scenario and acceptance: seed script, configuration export and import, end-to-end suite, accessibility, performance, documentation, release pipeline | Medium (final review: high) | Open |
 
@@ -354,3 +354,21 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Not covered by tests: a cancelled export (Fastify `inject` cannot abort a stream) and the per-user rate limit key.
   - Checked in the browser on the rebuilt test stand (MariaDB 12.3) with a temporary page and temporary rows, removed afterwards: a booking form whose kontingent selection is narrowed to one hotel lists only that hotel's kontingents (search "Einzel" finds one of two), and the field editor shows the condition under "Auswahl eingrenzen".
 - 2026-11-16: M6 accepted by the operator. The priority order (security and bugs, then quality and usability, then new features) is for internal prioritization only; reports keep their usual structure. Work continues along the milestone plan.
+- 2026-11-16: M7 plan approved with E14–E29. Steps: migration and module boundaries; API and import model in `shared`; endpoints and aliases; tokens; a resource model with its own authorized handle and a write path shared by components and the API; API reads and writes; OpenAPI; upload and parsing; imports into existing tables; new tables (extra high effort); web pages for the API and the import; tests and browser check.
+  - E14: endpoints can be enabled only once the alias differs from the object name (case-insensitive); format `^[a-z][a-z0-9_-]{0,62}$`; errors and the OpenAPI document never name the table. Closes the item carried over from M3.
+  - E15: effective token rights are grant ∩ enabled endpoint ∩ ceiling ∩ database grants, evaluated per request. Disabling an endpoint or lowering a ceiling deletes the affected endpoints and token grants, so raising it later reopens nothing; a save that would do so first answers with the consequences, and the dialog asks to confirm. Upsert is its own grant and needs `create` and `update` in the ceiling.
+  - E16: the API reads every column not excluded for everyone, as raw values (§9.5), without display values or linked columns. Writable: not generated, not auto-increment, not the lock column, within column grants. Unknown and excluded columns in the body, `fields`, `filter` or `sort` reject the whole request with the same `400 unknown_field`; known read-only columns answer `422 field_not_writable`.
+  - E17: a strong `ETag` from the version token over all writable columns and the lock value, in its own key space. `If-Match` on `PATCH`, `PUT /:id` and `DELETE` (`*` means "exists"); refused with `400` on `POST` and `PUT /?on=`. `PUT /:id` sets missing writable columns to `DEFAULT`.
+  - E18: `?on=` takes the primary key when it is not auto-increment, or a single-column unique key; a nullable one requires its value in the body. `201` for a new row, `200` otherwise.
+  - E19: table and view endpoints read live through the read user, without the query cache; API writes invalidate the cache of the UI. One sort column plus the key; `like` with client `%`/`_` and `\` as escape; `in` up to 100 values.
+  - E20: tokens belong to the instance, not to the admin who created them. Name, expiry, IP allowlist and rate limit can change later (audited), the secret never. Invalid, expired or revoked tokens answer `401`, limited per IP; an address outside the allowlist `403`. Usage counters are written every 30 s.
+  - E21: `/api/docs` without a token answers `401` with `WWW-Authenticate: Bearer`, like the API itself (the code is public, hiding the path would gain nothing). `STASHLEY_PUBLIC_API=off` leaves the API routes unregistered.
+  - E22: managers and admins import within the ceiling (insert: `create`; upsert: `create` and `update`) through the write user, without base filters and independent of page rights. Auto-increment columns cannot be mapped. Upsert keys: the primary key or a unique key without nullable columns.
+  - E23: every import needs a passed dry run with the same settings (fingerprint of file hash, options and mapping). The dry run only reads, like D10; `CHECK` constraints and triggers stay unseen.
+  - E24: one audit event `import.completed` per import (file hash, mode, counts, table, options, user), not one per row.
+  - E25: date-times without an offset are wall times in `APP_TIMEZONE`. Decimal separator and an optional thousands separator; true, false and empty values are configurable. Defaults come from the data where it is unambiguous, otherwise from the user's format. Non-text cells are trimmed.
+  - E26: foreign keys resolve through a unique column of the target or its display value; an ambiguous display value is a cell error `ambiguous_reference`.
+  - E27: dry runs and imports run in the background with progress; `STASHLEY_IMPORT_CONCURRENCY` (2), `STASHLEY_IMPORT_PER_USER` (1), `STASHLEY_IMPORT_MAX_MB` (50) and `STASHLEY_IMPORT_BATCH_SIZE` (500). Cancelling rolls back; a restart marks running jobs as failed.
+  - E28: types and names are suggested from the whole file and can all be changed; the data is written by the schema user, and a failed data step leaves the empty table for a retry. A table designer without CSV uses the same form and DDL generator (create only, with column defaults).
+  - E29: development dependency `@seriousme/openapi-schema-validator` (MIT) to check the generated OpenAPI document in tests; an addition to the D8 list.
+- 2026-11-16: Noted for after the MVP: query endpoints on the public API, served from the query cache. Open questions: the endpoint pins a query version, and a new version needs the admin's approval again; how the objects and columns a query joins are disclosed (listed and confirmed by the admin, or each one must be an API resource itself); instance variables such as `current_event_id` change the results; paging through result snapshots within the 10,000-row limit; a separate grant in the token matrix. Until then, views cover joined data.
