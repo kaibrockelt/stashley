@@ -219,6 +219,22 @@ const appRoutes = [
     }),
     createRoute({
       getParentRoute: () => designLayout,
+      path: '/imports',
+      component: lazyRouteComponent(
+        () => import('../features/design/imports/imports.tsx'),
+        'ImportsPage',
+      ),
+    }),
+    createRoute({
+      getParentRoute: () => designLayout,
+      path: '/imports/$importId',
+      component: lazyRouteComponent(
+        () => import('../features/design/imports/imports.tsx'),
+        'ImportPage',
+      ),
+    }),
+    createRoute({
+      getParentRoute: () => designLayout,
       path: '/roles',
       component: lazyRouteComponent(() => import('../features/design/roles.tsx'), 'RolesPage'),
     }),

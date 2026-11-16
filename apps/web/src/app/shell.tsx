@@ -81,6 +81,7 @@ export function Shell() {
               <p className={styles.navHeading}>{t('nav.design')}</p>
               <NavLink to="/design/pages">{t('pages.title')}</NavLink>
               <NavLink to="/design/queries">{t('queries.title')}</NavLink>
+              <NavLink to="/design/imports">{t('imports.title')}</NavLink>
               <NavLink to="/design/roles">{t('roles.title')}</NavLink>
               <NavLink to="/design/variables">{t('variables.title')}</NavLink>
             </div>

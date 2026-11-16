@@ -105,3 +105,40 @@ export async function download(url: string, body: unknown): Promise<void> {
   link.click()
   URL.revokeObjectURL(link.href)
 }
+
+/** Uploads a file as the raw request body (D1), e.g. a CSV import. */
+export async function uploadFile<T>(url: string, file: File, contentType: string): Promise<T> {
+  const send = () =>
+    fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        accept: 'application/json',
+        'x-csrf-token': csrfToken,
+        'content-type': contentType,
+      },
+      body: file,
+    })
+  let response = await send()
+  if (!response.ok) {
+    const error = await parseError(response)
+    if (error.code !== 'csrf_failed') throw error
+    await fetchSession()
+    response = await send()
+    if (!response.ok) throw await parseError(response)
+  }
+  return (await response.json()) as T
+}
+
+/** Downloads a file the server builds for a GET, e.g. an import's error list. */
+export async function downloadGet(url: string, fallback: string): Promise<void> {
+  const response = await fetch(url, { credentials: 'same-origin' })
+  if (!response.ok) throw await parseError(response)
+  const disposition = response.headers.get('content-disposition') ?? ''
+  const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? fallback
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(await response.blob())
+  link.download = name
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
