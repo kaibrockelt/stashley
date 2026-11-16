@@ -53,6 +53,7 @@ import {
 import { renderMarkdown } from '../workspace/blocks/text-block.tsx'
 import { grantOf, offeredOps, setGrant, sourceKeyOf, withDescription } from './document-ops.ts'
 import styles from './editor.module.css'
+import { FormSettings, LinkedColumnPicker, TableEditingSettings } from './write-settings.tsx'
 
 type BlockType = Block['type']
 const none = ''
@@ -828,7 +829,11 @@ function BindingsFields(props: {
   )
 }
 
-function TableSourceFields(props: { block: Block; onBlock: (block: Block) => void }) {
+function TableSourceFields(props: {
+  block: Block
+  document: PageDocument
+  onBlock: (block: Block) => void
+}) {
   const t = useT()
   const connections = useDesignConnections()
   const block = props.block
@@ -952,8 +957,24 @@ function TableSourceFields(props: { block: Block; onBlock: (block: Block) => voi
               />
             )
           })}
-          <p className={styles.muted}>{t('editor.tableLater')}</p>
         </fieldset>
+      )}
+      {block.type === 'table' && block.table !== null && object !== undefined && catalog.data && (
+        <>
+          <LinkedColumnPicker
+            object={object}
+            catalog={catalog.data}
+            table={block.table}
+            onTable={(table) => props.onBlock({ ...block, table })}
+          />
+          <TableEditingSettings
+            object={object}
+            catalog={catalog.data}
+            table={block.table}
+            document={props.document}
+            onTable={(table) => props.onBlock({ ...block, table })}
+          />
+        </>
       )}
       {block.type === 'form' && (
         <SelectField
@@ -965,6 +986,15 @@ function TableSourceFields(props: { block: Block; onBlock: (block: Block) => voi
             { id: 'edit', label: t('editor.formMode.edit') },
             { id: 'upsert', label: t('editor.formMode.upsert') },
           ]}
+        />
+      )}
+      {block.type === 'form' && object !== undefined && catalog.data && (
+        <FormSettings
+          block={block}
+          object={object}
+          catalog={catalog.data}
+          document={props.document}
+          onBlock={props.onBlock}
         />
       )}
     </>
@@ -1146,7 +1176,7 @@ export function BlockDialog(props: {
             )}
             {(block.type === 'form' ||
               (block.type === 'table' && block.source.kind === 'table')) && (
-              <TableSourceFields block={block} onBlock={setBlock} />
+              <TableSourceFields block={block} document={document} onBlock={setBlock} />
             )}
             {unsetTable && (
               <p className={styles.muted}>

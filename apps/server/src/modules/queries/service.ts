@@ -18,6 +18,7 @@ import type {
   queryTestRun,
   queryUpdate,
 } from '@stashley/shared'
+import { columnRequired, editableKind } from '@stashley/shared'
 import { checkParamList, checkParamValue, isUserContextParam, toMask } from '@stashley/shared'
 import type { Kysely } from 'kysely'
 import { v7 as uuidv7 } from 'uuid'
@@ -545,6 +546,9 @@ export class QueriesService {
           kind: column.kind,
           nullable: column.nullable,
           key: key.has(column.name),
+          autoIncrement: column.autoIncrement,
+          required: columnRequired(column),
+          writable: !column.generated && editableKind(column.kind),
         }))
       visible.set(object.name, new Set(columns.map((column) => column.name)))
       objects.push({
@@ -556,6 +560,9 @@ export class QueriesService {
           (object.primaryKey.length === 1 ? (object.primaryKey[0] ?? null) : null),
         ceiling: access.ops,
         columns,
+        uniqueKeys: object.uniqueKeys.filter((unique) =>
+          unique.every((column) => !excluded.has(column)),
+        ),
       })
     }
     const relations = (await this.deps.tableAccess.relations(connectionId))

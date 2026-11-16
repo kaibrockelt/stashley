@@ -200,7 +200,18 @@ export interface DesignCatalogObject {
   /** The permission ceiling: what pages may offer on this object at most. */
   ceiling: TableOp[]
   /** Columns without those excluded for everyone. */
-  columns: { name: string; kind: ValueKind; nullable: boolean; key: boolean }[]
+  columns: {
+    name: string
+    kind: ValueKind
+    nullable: boolean
+    key: boolean
+    /** Forms (M6): assigned by the database, required on insert, writable at all. */
+    autoIncrement: boolean
+    required: boolean
+    writable: boolean
+  }[]
+  /** Unique keys besides the primary key, for upserts (E8). */
+  uniqueKeys?: string[][]
 }
 
 export interface DesignCatalog {

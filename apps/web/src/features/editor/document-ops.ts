@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import { capabilityOf, componentKindOf, noOps, toMask, toOps } from '@stashley/shared'
+import {
+  capabilityOf,
+  componentKindOf,
+  componentsOf,
+  noOps,
+  toMask,
+  toOps,
+  type DetailTable,
+} from '@stashley/shared'
 import type { Block, DashboardRowInput, PageDocument, TableOp } from './types.ts'
 import { layoutsFor } from '../workspace/grid-layout.ts'
 
@@ -33,9 +41,8 @@ export function sourceKeyOf(block: Block): string | undefined {
 /** Sources still used by a component; select filters need no grants. */
 function usedSources(document: PageDocument): Set<string> {
   const keys = new Set<string>()
-  const blocks =
-    document.table === null ? document.rows.flatMap((row) => row.blocks) : [document.table]
-  for (const block of blocks) {
+  // Related tables of a detail view use grants too (§13.1).
+  for (const { component: block } of componentsOf(document)) {
     const key = sourceKeyOf(block)
     if (key !== undefined) keys.add(key)
   }
@@ -119,6 +126,16 @@ export function replaceBlock(
 ): PageDocument {
   if (document.table !== null && document.table.id === previousId) {
     return pruneGrants({ ...document, table: block as PageDocument['table'] })
+  }
+  if (document.detail?.tables.some((entry) => entry.id === previousId) === true) {
+    return pruneGrants({
+      ...document,
+      detail: {
+        tables: document.detail.tables.map((entry) =>
+          entry.id === previousId ? ({ ...block, link: entry.link } as DetailTable) : entry,
+        ),
+      },
+    })
   }
   return pruneGrants(
     withRows(
@@ -297,4 +314,14 @@ export function withDescription<T extends { description?: string | undefined }>(
   if (description === '') delete next.description
   else next.description = description
   return next
+}
+
+/** Adds a related table to the detail view of a table page. */
+export function addDetailTable(document: PageDocument, table: DetailTable): PageDocument {
+  return { ...document, detail: { tables: [...(document.detail?.tables ?? []), table] } }
+}
+
+export function removeDetailTable(document: PageDocument, id: string): PageDocument {
+  const tables = (document.detail?.tables ?? []).filter((entry) => entry.id !== id)
+  return pruneGrants({ ...document, detail: tables.length === 0 ? null : { tables } })
 }

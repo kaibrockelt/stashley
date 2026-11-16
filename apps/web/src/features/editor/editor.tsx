@@ -23,13 +23,16 @@ import {
   addRow,
   moveBlock,
   newId,
+  addDetailTable,
   removeBlock,
+  removeDetailTable,
   removeRow,
   reorderBlocks,
   reorderRows,
   replaceBlock,
   setRowLayout,
 } from './document-ops.ts'
+import { DetailTableAdder } from './write-settings.tsx'
 import styles from './editor.module.css'
 import { IssueList, issuesAt, issuesOf } from './issues.tsx'
 import { PageSettingsDialog } from './page-settings-dialog.tsx'
@@ -266,6 +269,7 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
   for (const row of props.page.rows)
     for (const component of row.components) renderedById.set(component.id, component)
   if (props.page.table !== null) renderedById.set(props.page.table.id, props.page.table)
+  for (const component of props.page.detail) renderedById.set(component.id, component)
   const savedById = new Map(
     componentsOf(saved.draft).map(({ component, path }) => [component.id, { component, path }]),
   )
@@ -302,9 +306,11 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
         onEdit={() => setEditing({ block, isNew: false, rowId })}
         onRemove={() =>
           setDocument(
-            document.kind === 'table'
-              ? { ...document, table: null }
-              : removeBlock(document, block.id),
+            document.detail?.tables.some((entry) => entry.id === block.id) === true
+              ? removeDetailTable(document, block.id)
+              : document.kind === 'table'
+                ? { ...document, table: null, detail: null }
+                : removeBlock(document, block.id),
           )
         }
         onMove={(target) => setDocument(moveBlock(document, block.id, target))}
@@ -397,7 +403,20 @@ function EditorBody(props: { page: RenderPage; toolbar: ReactNode; initial: Page
             {t('editor.addTable')}
           </Button>
         ) : (
-          card(document.table, null, null)
+          <>
+            {card(document.table, null, null)}
+            <section className={styles.detail} aria-label={t('editor.detail')}>
+              <h2 className={styles.detailTitle}>{t('editor.detail')}</h2>
+              <p className={styles.muted}>{t('editor.detail.hint')}</p>
+              {(document.detail?.tables ?? []).map((table) => (
+                <div key={table.id}>{card(table, null, null)}</div>
+              ))}
+              <DetailTableAdder
+                document={document}
+                onAdd={(table) => setDocument(addDetailTable(document, table))}
+              />
+            </section>
+          </>
         )
       ) : (
         <>

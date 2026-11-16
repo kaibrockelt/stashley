@@ -44,6 +44,9 @@ const object = (
     kind,
     nullable: true,
     key: column === 'id',
+    autoIncrement: column === 'id',
+    required: false,
+    writable: column !== 'id',
   })),
 })
 

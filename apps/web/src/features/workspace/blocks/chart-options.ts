@@ -114,7 +114,12 @@ export function buildOption(
             radius: ['45%', '70%'],
             center: ['50%', '45%'],
             avoidLabelOverlap: true,
-            label: { color: palette.text, formatter: '{b}: {d} %' },
+            // The share in the user's number format (62,5 %), not ECharts' own.
+            label: {
+              color: palette.text,
+              formatter: (params: { name?: string; percent?: number }) =>
+                `${params.name ?? ''}: ${labels.percent(typeof params.percent === 'number' ? params.percent / 100 : null)}`,
+            },
             // A missing value is a gap: its segment is left out.
             data: data.categories.flatMap((category, index) => {
               const value = entry?.values[index] ?? null

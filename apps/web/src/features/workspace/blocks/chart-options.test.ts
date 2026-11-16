@@ -66,6 +66,12 @@ describe('buildOption', () => {
     })
   })
 
+  it('formats the donut share through the locale', () => {
+    const donut = option({ chart: 'donut' }, rows)
+    const label = (donut.series[0] as { label: { formatter: (params: unknown) => string } }).label
+    expect(label.formatter({ name: 'DE', percent: 62.5 })).toBe('DE: 63 %')
+  })
+
   it('leaves missing donut segments out and colors Other neutrally', () => {
     const donut = option({ chart: 'donut' }, [...rows, { k: 'CH', v: null, w: 0 }])
     const data = donut.series[0]?.data as { name: string }[]
