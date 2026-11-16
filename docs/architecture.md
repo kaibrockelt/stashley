@@ -221,6 +221,10 @@ routes (Fastify + Zod)  →  services  →  repositories (Kysely → metadata st
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
 | `APP_TIMEZONE` | `UTC` | IANA zone for display and date expressions. |
 | `PORT` | `8080` | Listening port. |
+| `STASHLEY_PUBLIC_API` | `on` | `off` leaves the public REST API routes unregistered, so everything under `/api` answers `404` (E21). |
+| `STASHLEY_IMPORT_CONCURRENCY`, `STASHLEY_IMPORT_PER_USER` | `2`, `1` | Dry runs and imports running at once per instance and per user (E27). |
+| `STASHLEY_IMPORT_MAX_MB` | `50` | Largest CSV upload. Uploads are kept under `/data/uploads` for at most 24 h. |
+| `STASHLEY_IMPORT_BATCH_SIZE` | `500` | Rows per batch of an import (§17). |
 
 - **Secrets from files:** every secret variable also accepts a `_FILE` variant that points to a file, for Docker secrets.
 - **Validation:** configuration is validated with Zod at startup. On failure the process exits and lists the variable names and reasons, never their values.

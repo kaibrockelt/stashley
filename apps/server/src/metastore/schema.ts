@@ -31,6 +31,10 @@ export interface Database {
   instance_variables: InstanceVariablesTable
   queries: QueriesTable
   query_versions: QueryVersionsTable
+  api_endpoints: ApiEndpointsTable
+  api_tokens: ApiTokensTable
+  api_token_grants: ApiTokenGrantsTable
+  import_jobs: ImportJobsTable
 }
 
 export interface SectionsTable {
@@ -339,4 +343,60 @@ export interface AuditEventsTable {
   changes: string | null
   /** JSON object. */
   details: string | null
+}
+
+export interface ApiEndpointsTable {
+  table_access_id: string
+  /** An `ApiOperation`. */
+  operation: string
+  enabled_by: string | null
+  enabled_at: number
+}
+
+export interface ApiTokensTable {
+  id: string
+  name: string
+  /** SHA-256 of the token, base64url. */
+  token_hash: string
+  token_hint: string
+  expires_at: number | null
+  /** JSON array of addresses and CIDR ranges; empty means any address. */
+  ip_allowlist: string
+  rate_limit_per_minute: number
+  created_by: string | null
+  created_at: number
+  updated_at: number
+  revoked_at: number | null
+  last_used_at: number | null
+  request_count: number
+}
+
+export interface ApiTokenGrantsTable {
+  token_id: string
+  table_access_id: string
+  operation: string
+}
+
+export interface ImportJobsTable {
+  id: string
+  connection_id: string
+  table_access_id: string | null
+  /** JSON: the definition of a table to create (E28). */
+  new_table: string | null
+  mode: 'insert' | 'upsert' | 'create_table'
+  /** JSON array of column names. */
+  upsert_key: string | null
+  file_name: string
+  file_sha256: string
+  file_size: number
+  parse_options: string
+  mapping: string | null
+  status: string
+  dry_run: string | null
+  result: string | null
+  created_by: string
+  created_at: number
+  updated_at: number
+  finished_at: number | null
+  expires_at: number
 }

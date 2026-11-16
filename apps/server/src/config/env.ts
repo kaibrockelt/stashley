@@ -52,6 +52,11 @@ const schema = z
     PORT: z.coerce.number().int().min(1).max(65535).default(8080),
     STASHLEY_DATA_DIR: z.string().default('/data'),
     STASHLEY_WEB_DIR: z.string().default(defaultWebDir),
+    STASHLEY_PUBLIC_API: z.enum(['on', 'off']).default('on'),
+    STASHLEY_IMPORT_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(2),
+    STASHLEY_IMPORT_PER_USER: z.coerce.number().int().min(1).max(64).default(1),
+    STASHLEY_IMPORT_MAX_MB: z.coerce.number().int().min(1).max(4096).default(50),
+    STASHLEY_IMPORT_BATCH_SIZE: z.coerce.number().int().min(10).max(10_000).default(500),
   })
   .superRefine((value, ctx) => {
     if (value.APP_BASE_URL.protocol === 'http:' && !isLocalHost(value.APP_BASE_URL.hostname)) {
@@ -80,6 +85,10 @@ export interface AppConfig {
   dataDir: string
   webDir: string
   secureCookies: boolean
+  /** `STASHLEY_PUBLIC_API=off` leaves the public API routes unregistered (E21). */
+  publicApi: boolean
+  /** CSV import limits (E27). */
+  imports: { concurrency: number; perUser: number; maxBytes: number; batchSize: number }
 }
 
 export class ConfigError extends Error {
@@ -164,5 +173,12 @@ export function loadConfig(
     dataDir: v.STASHLEY_DATA_DIR,
     webDir: v.STASHLEY_WEB_DIR,
     secureCookies: v.APP_BASE_URL.protocol === 'https:',
+    publicApi: v.STASHLEY_PUBLIC_API === 'on',
+    imports: {
+      concurrency: v.STASHLEY_IMPORT_CONCURRENCY,
+      perUser: v.STASHLEY_IMPORT_PER_USER,
+      maxBytes: v.STASHLEY_IMPORT_MAX_MB * 1024 * 1024,
+      batchSize: v.STASHLEY_IMPORT_BATCH_SIZE,
+    },
   }
 }

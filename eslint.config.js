@@ -5,6 +5,17 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
+const handlePattern = {
+  group: ['**/access/handles.ts', '**/access/compile.ts'],
+  allowTypeImports: true,
+  message: 'Authorized handles come from the access service only.',
+}
+
+const optionalModulePattern = {
+  group: ['**/public-api/**', '**/imports/**', '**/mcp/**'],
+  message: 'The core never imports from optional modules; wire them in the composition root.',
+}
+
 export default tseslint.config(
   { ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**'] },
   js.configs.recommended,
@@ -26,23 +37,35 @@ export default tseslint.config(
     },
   },
   {
-    // Only `access` creates authorized handles (§8.4); execution takes them as given.
+    // Only `access` creates authorized handles (§8.4); execution takes them as given. The
+    // core never imports from the optional modules (public API, import, MCP), so a reduced
+    // build can leave them out; only the composition root wires them in.
     files: ['apps/server/src/**/*.ts'],
-    ignores: ['apps/server/src/modules/access/**'],
+    ignores: [
+      'apps/server/src/modules/access/**',
+      'apps/server/src/modules/public-api/**',
+      'apps/server/src/modules/imports/**',
+      'apps/server/src/modules/mcp/**',
+      'apps/server/src/app.ts',
+      'apps/server/src/services.ts',
+    ],
     rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['**/access/handles.ts', '**/access/compile.ts'],
-              allowTypeImports: true,
-              message: 'Authorized handles come from the access service only.',
-            },
-          ],
-        },
-      ],
+      'no-restricted-imports': ['error', { patterns: [handlePattern, optionalModulePattern] }],
     },
+  },
+  {
+    files: ['apps/server/src/modules/access/**/*.ts'],
+    rules: { 'no-restricted-imports': ['error', { patterns: [optionalModulePattern] }] },
+  },
+  {
+    files: [
+      'apps/server/src/modules/public-api/**/*.ts',
+      'apps/server/src/modules/imports/**/*.ts',
+      'apps/server/src/modules/mcp/**/*.ts',
+      'apps/server/src/app.ts',
+      'apps/server/src/services.ts',
+    ],
+    rules: { 'no-restricted-imports': ['error', { patterns: [handlePattern] }] },
   },
   {
     files: ['**/*.mjs', '**/*.js'],
