@@ -397,4 +397,68 @@ describe('write models (§11)', () => {
     )
     expect(withKey.issues).toEqual([])
   })
+
+  it('narrow table option lists by their own base filter, never query lists (S1)', () => {
+    const narrowed = fieldList.parse([
+      {
+        kind: 'input',
+        id: 'anmeldung',
+        column: 'anmeldung_id',
+        reference: {
+          target: 'anmeldung',
+          baseFilter: [
+            {
+              column: { path: [{ column: 'person_id', target: 'person' }], column: 'email' },
+              operator: 'eq',
+              value: { kind: 'user', field: 'email' },
+            },
+          ],
+        },
+      },
+      { kind: 'input', id: 'betrag', column: 'betrag' },
+      { kind: 'input', id: 'eingang', column: 'eingang_am' },
+    ])
+    const { model, issues } = build(narrowed)
+    expect(issues).toEqual([])
+    const reference = model?.fields[0]?.reference
+    expect(reference?.model.baseFilter).toMatchObject([
+      { expr: { column: 'email' }, operator: 'eq', value: { kind: 'user', field: 'email' } },
+    ])
+    // Unknown columns are reported at their condition.
+    const unknown = build(
+      fieldList.parse([
+        {
+          ...narrowed[0],
+          reference: {
+            target: 'anmeldung',
+            baseFilter: [
+              { column: { path: [], column: 'gibts_nicht' }, operator: 'null' },
+            ],
+          },
+        },
+        ...narrowed.slice(1),
+      ]),
+    )
+    expect(unknown.issues.map((issue) => [issue.path.replace('rows.0.blocks.0.', ''), issue.code]))
+      .toEqual([['fields.0.reference.baseFilter.0.column', 'unknown_column']])
+    const query = build(
+      fieldList.parse([
+        {
+          ...narrowed[0],
+          reference: {
+            target: 'anmeldung',
+            query: {
+              source: { kind: 'query', queryId: '00000000-0000-4000-8000-000000000000' },
+              valueColumn: 'id',
+              labelColumn: 'label',
+              bindings: [],
+            },
+            baseFilter: [{ column: { path: [], column: 'startnummer' }, operator: 'not_null' }],
+          },
+        },
+        ...narrowed.slice(1),
+      ]),
+    )
+    expect(query.issues.map((issue) => issue.code)).toEqual(['not_allowed'])
+  })
 })

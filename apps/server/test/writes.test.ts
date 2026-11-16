@@ -299,6 +299,28 @@ describe.skipIf(targets.length === 0).each(targets)('writes on $name', ({ url })
       ),
     )
 
+    // The kontingent selection lists the hotel's own kontingents only (S1).
+    const narrowed = hotelPage(1, role('Lindenhof'), ['hotel_kontingent_id'], ['read'])
+    const narrowedTable = narrowed.table as { table: { editing: { fields: unknown[] } } }
+    narrowedTable.table.editing.fields = [
+      {
+        kind: 'input',
+        id: 'hotel_kontingent_id',
+        column: 'hotel_kontingent_id',
+        reference: {
+          target: 'hotel_kontingent',
+          baseFilter: [
+            {
+              column: { path: [], column: 'hotel_id' },
+              operator: 'eq',
+              value: { kind: 'constant', value: 1 },
+            },
+          ],
+        },
+      },
+    ]
+    pages.kontingent = await page('kontingent', narrowed)
+
     pages.personen = await page(
       'personen',
       dashboard(
@@ -519,6 +541,72 @@ describe.skipIf(targets.length === 0).each(targets)('writes on $name', ({ url })
       'SELECT hotel_kontingent_id AS k FROM hotelbuchung WHERE id = 1',
     )) as unknown as [{ k: number }[]]
     expect(String(stored[0]?.k)).toBe('1')
+  })
+
+  it('lists and accepts only options inside the selection base filter (S1)', async () => {
+    const reception = users.lindenhof as TestClient
+    const base = rows(pages.kontingent?.id as string, 'gaeste')
+    const url = `/internal/pages/${pages.kontingent?.id as string}/components/gaeste/fields/hotel_kontingent_id/options`
+    const listed = (await reception.send('POST', url, {})).json<FieldOptions>()
+    expect(listed.options.map((option) => option.value).sort()).toEqual(['1', '3'])
+    const loaded = (await reception.request('GET', `${base}/1/edit`)).json<RowWriteResult>()
+    const foreign = await reception.send('PATCH', `${base}/1`, {
+      values: { hotel_kontingent_id: '2' },
+      version: loaded.version,
+    })
+    expect(problem(foreign)).toMatchObject({
+      code: 'value_not_allowed',
+      errors: [{ field: 'hotel_kontingent_id', code: 'value_not_allowed' }],
+    })
+    const own = await reception.send('PATCH', `${base}/1`, {
+      values: { hotel_kontingent_id: '3' },
+      version: loaded.version,
+    })
+    // Kontingent 3 belongs to the hotel but to last year's event: the table's base filter refuses.
+    expect(problem(own).code).toBe('base_filter_violation')
+  })
+
+  it('fills required columns from equality conditions of the base filter (E9)', async () => {
+    const created = await page(
+      'anmeldung-2025',
+      dashboard(
+        'Anmeldung 2025',
+        [
+          {
+            id: 'anmeldung',
+            type: 'form',
+            title: 'Anmeldung',
+            restrictions: [],
+            source: source('anmeldung'),
+            mode: 'create',
+            baseFilter: [
+              {
+                column: { path: [], column: 'event_id' },
+                operator: 'eq',
+                value: { kind: 'constant', value: 1 },
+              },
+            ],
+            fields: ['person_id', 'betrag_soll'].map((column) => ({
+              kind: 'input',
+              id: column,
+              column,
+              widget: 'number',
+            })),
+          },
+        ],
+        [{ principal: role('Orga'), source: key('anmeldung'), ops: ['read', 'create'] }],
+        [role('Orga')],
+      ),
+    )
+    const orga = users.orga as TestClient
+    const saved = await orga.send('POST', rows(created.id, 'anmeldung'), {
+      values: { person_id: '3', betrag_soll: '25.00' },
+    })
+    expect(saved.statusCode, saved.body).toBe(201)
+    const [stored] = (await root.query(
+      'SELECT event_id AS e FROM anmeldung WHERE person_id = 3 AND event_id = 1',
+    )) as unknown as [{ e: number }[]]
+    expect(stored).toHaveLength(1)
   })
 
   it('creates or updates by the upsert key and translates duplicate keys', async () => {

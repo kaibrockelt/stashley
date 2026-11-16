@@ -748,14 +748,14 @@ export class ComponentReader {
     const field = this.referenceField(handle, fieldId)
     const reference = field.reference
     const search = (input.search ?? '').trim()
-    const fingerprint = hash([
-      handle.page.pageId,
-      handle.component.id,
-      fieldId,
-      search,
-      input.values ?? null,
-    ])
     if (reference.query !== undefined) {
+      const fingerprint = hash([
+        handle.page.pageId,
+        handle.component.id,
+        fieldId,
+        search,
+        input.values ?? null,
+      ])
       const { options: all, freshness } = await this.referenceRows(handle, reference, input)
       if (input.values !== undefined) {
         const wanted = new Set(input.values.map((value) => text(value)))
@@ -796,11 +796,16 @@ export class ComponentReader {
 
     const model = reference.model
     const connectionId = handle.component.source?.connection.connectionId as string
-    const target = await this.executor.target(connectionId)
-    const options: ValueOptions = {
-      connectionTimeZone: target.timeZone,
-      displayTimeZone: this.displayTimeZone,
-    }
+    const { options, base } = await this.referenceBase(handle, reference)
+    // The resolved base filter is part of the key: user context gives each user their list.
+    const fingerprint = hash([
+      handle.page.pageId,
+      handle.component.id,
+      fieldId,
+      search,
+      input.values ?? null,
+      base.values,
+    ])
     let cursor: CursorPosition | undefined
     if (input.cursor !== undefined) {
       cursor = decodeCursor(this.cursorKey, input.cursor, fingerprint)
@@ -814,7 +819,7 @@ export class ComponentReader {
     try {
       statement = selectStatement(
         model,
-        { baseFilter: [], bindings: [] },
+        { baseFilter: base.values, bindings: [] },
         { search: search === '' ? undefined : search, filters, cursor, limit: optionPageSize },
         options,
       )
@@ -827,7 +832,12 @@ export class ComponentReader {
       key: `options:${handle.page.pageId}:${handle.component.id}:${fieldId}:${fingerprint}:${input.cursor ?? ''}`,
       // Foreign key option lists keep 15 minutes; writes to their tables evict them (§12).
       ttlSeconds: 900,
-      dependencies: { connectionId, tables: deps.tables, allTables: deps.allTables, variables: [] },
+      dependencies: {
+        connectionId,
+        tables: deps.tables,
+        allTables: deps.allTables,
+        variables: base.variables,
+      },
       refresh: false,
       load: async () => {
         const raw = await this.executor.execute(connectionId, statement)
@@ -875,6 +885,26 @@ export class ComponentReader {
     }
   }
 
+  /** Value options and the resolved base filter of a table option list. */
+  private async referenceBase(
+    handle: AuthorizedComponent,
+    reference: CompiledReference,
+  ): Promise<{ options: ValueOptions; base: { values: unknown[]; variables: string[] } }> {
+    const connectionId = handle.component.source?.connection.connectionId as string
+    const target = await this.executor.target(connectionId)
+    const options: ValueOptions = {
+      connectionTimeZone: target.timeZone,
+      displayTimeZone: this.displayTimeZone,
+    }
+    const base = resolveBaseValues(
+      reference.model,
+      handle.user,
+      await this.variables.current(),
+      options,
+    )
+    return { options, base }
+  }
+
   /**
    * Whether a foreign key value is in its option list (§ Auswahllisten): a row of the
    * option query, or a record of the target. A manipulated value outside is rejected.
@@ -896,6 +926,24 @@ export class ComponentReader {
     }
     const source = handle.component.source
     if (source === undefined) return false
+    if (reference.model.baseFilter.length > 0) {
+      // The same records as the list: the value must be one of them, inside the base filter.
+      const { options, base } = await this.referenceBase(handle, reference)
+      let statement
+      try {
+        statement = selectStatement(
+          reference.model,
+          { baseFilter: base.values, bindings: [] },
+          { filters: [{ columnId: 'value', operator: 'eq', value }], limit: 1 },
+          options,
+        )
+      } catch (error) {
+        if (error instanceof TableRequestError) return false
+        throw error
+      }
+      const result = await this.executor.execute(source.connection.connectionId, statement)
+      return result.rows.length > 0
+    }
     const target = await this.executor.target(source.connection.connectionId)
     const kind =
       source.connection.catalog

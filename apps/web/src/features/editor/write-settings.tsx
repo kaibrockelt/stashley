@@ -14,7 +14,13 @@ import type {
   TableConfig,
   TableEditing,
 } from '@stashley/shared'
-import { baseFilterOperators, editOps, parseDateExpression, widgetsFor } from '@stashley/shared'
+import {
+  baseFilterOperators,
+  editOps,
+  parseDateExpression,
+  serverDefault,
+  widgetsFor,
+} from '@stashley/shared'
 import type { MessageId } from '../../i18n/locale.ts'
 import { useT } from '../../i18n/use-t.ts'
 import { Button, CheckboxField, SelectField, SwitchField, TextField } from '../../ui/controls.tsx'
@@ -145,6 +151,16 @@ function DefaultEditor(props: {
   )
 }
 
+/** The option settings of a foreign key field, with the defaults the schema gives them. */
+function referenceOf(
+  field: Extract<FormField, { kind: 'input' }>,
+  target: DesignCatalogObject | undefined,
+): NonNullable<Extract<FormField, { kind: 'input' }>['reference']> {
+  return (
+    field.reference ?? { target: target?.name ?? '', searchColumns: [], extras: [], baseFilter: [] }
+  )
+}
+
 /** One column of the object as a field: not included, an input, or automatic. */
 function FieldRow(props: {
   column: DesignCatalogObject['columns'][number]
@@ -152,6 +168,7 @@ function FieldRow(props: {
   index: number
   relation: boolean
   target: DesignCatalogObject | undefined
+  catalog: DesignCatalog
   document: PageDocument
   onChange: (field: FormField | undefined) => void
   used: readonly string[]
@@ -244,24 +261,40 @@ function FieldRow(props: {
               onChange={(hidden) => set({ hidden })}
             />
           </div>
+          {field.default !== undefined && serverDefault(field.default) && !field.hidden && (
+            <p className={styles.muted}>{t('editor.field.visibleDefaultHint')}</p>
+          )}
           {(field.widget ?? widgets[0]) === 'reference' && props.target !== undefined && (
-            <SelectField
-              label={t('editor.field.searchColumn')}
-              value={field.reference?.searchColumns[0] ?? none}
-              onChange={(searchColumn) =>
-                set({
-                  reference: {
-                    target: props.target?.name ?? '',
-                    searchColumns: searchColumn === none ? [] : [searchColumn],
-                    extras: field.reference?.extras ?? [],
-                  },
-                })
-              }
-              options={[
-                { id: none, label: t('editor.field.searchLabel') },
-                ...props.target.columns.map((entry) => ({ id: entry.name, label: entry.name })),
-              ]}
-            />
+            <>
+              <SelectField
+                label={t('editor.field.searchColumn')}
+                value={field.reference?.searchColumns[0] ?? none}
+                onChange={(searchColumn) =>
+                  set({
+                    reference: {
+                      ...referenceOf(field, props.target),
+                      searchColumns: searchColumn === none ? [] : [searchColumn],
+                    },
+                  })
+                }
+                options={[
+                  { id: none, label: t('editor.field.searchLabel') },
+                  ...props.target.columns.map((entry) => ({ id: entry.name, label: entry.name })),
+                ]}
+              />
+              {field.reference?.query === undefined && (
+                <BaseFilterEditor
+                  object={props.target}
+                  catalog={props.catalog}
+                  conditions={field.reference?.baseFilter ?? []}
+                  legend={t('editor.field.optionFilter')}
+                  hint={t('editor.field.optionFilterHint')}
+                  onChange={(baseFilter) =>
+                    set({ reference: { ...referenceOf(field, props.target), baseFilter } })
+                  }
+                />
+              )}
+            </>
           )}
         </>
       )}
@@ -337,6 +370,7 @@ export function FieldListEditor(props: {
             index={index}
             relation={relation !== undefined}
             target={props.catalog.objects.find((entry) => entry.name === relation?.targetObject)}
+            catalog={props.catalog}
             document={props.document}
             used={used}
             onChange={(next) => {
@@ -360,6 +394,9 @@ export function BaseFilterEditor(props: {
   object: DesignCatalogObject
   catalog: DesignCatalog
   conditions: readonly BaseFilterCondition[]
+  /** Another heading and hint, e.g. for the records of a foreign key selection. */
+  legend?: string
+  hint?: string
   onChange: (conditions: BaseFilterCondition[]) => void
 }) {
   const t = useT()
@@ -392,8 +429,8 @@ export function BaseFilterEditor(props: {
     props.onChange(props.conditions.map((entry, at) => (at === index ? condition : entry)))
   return (
     <fieldset className={styles.fieldset}>
-      <legend>{t('editor.baseFilter')}</legend>
-      <p className={styles.muted}>{t('editor.baseFilter.hint')}</p>
+      <legend>{props.legend ?? t('editor.baseFilter')}</legend>
+      <p className={styles.muted}>{props.hint ?? t('editor.baseFilter.hint')}</p>
       {props.conditions.map((condition, index) => {
         const valueless = condition.operator === 'null' || condition.operator === 'not_null'
         const value = condition.value

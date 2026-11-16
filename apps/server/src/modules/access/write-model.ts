@@ -181,11 +181,16 @@ function referenceModel(
     // The display value is always searched; configured columns are searched too and decide
     // exact matches, e.g. a start number typed at a station.
     searchColumns: ['label', ...searchColumns.map((_, index) => `s${index}`)],
-    baseFilter: [],
+    // Narrows table lists for everyone (§ Auswahllisten); query lists narrow themselves.
+    baseFilter: options.query === undefined ? [...options.baseFilter] : [],
     bindings: [],
     pageSize: 50,
     editing: null,
     csvExport: false,
+  }
+  if (options.query !== undefined && options.baseFilter.length > 0) {
+    issue(`${at}.baseFilter`, 'not_allowed')
+    return undefined
   }
   // Relations into views use the view's key column; a target without one cannot list options.
   if (target.keyColumn === null) {
@@ -218,6 +223,11 @@ function referenceModel(
     // Columns of the synthesized configuration map back to the options' settings.
     const prefix = `${at}.columns.`
     for (const problem of error.errors) {
+      // Base filter problems already name their condition.
+      if (problem.field.startsWith(`${at}.baseFilter.`)) {
+        issue(problem.field, problem.code)
+        continue
+      }
       const index = problem.field.startsWith(prefix)
         ? Number.parseInt(problem.field.slice(prefix.length), 10)
         : Number.NaN
@@ -374,7 +384,12 @@ export function buildWriteModel(
       reference = referenceModel(
         connection,
         relation,
-        field.reference ?? { target: relation.targetObject, searchColumns: [], extras: [] },
+        field.reference ?? {
+          target: relation.targetObject,
+          searchColumns: [],
+          extras: [],
+          baseFilter: [],
+        },
         `${at}.reference`,
         fail,
       )

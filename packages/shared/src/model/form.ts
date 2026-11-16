@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { ValueKind } from '../values/column-kinds.ts'
 import { parseDateExpression } from '../values/date-expression.ts'
 import {
+  baseFilterCondition,
   columnRef,
   componentId,
   identifier,
@@ -103,7 +104,8 @@ export function widgetsFor(kind: ValueKind, columnType: string, reference: boole
  * Options of a foreign key field: the records of the referenced object with their display
  * value, or the rows of a stored query that returns key and label (e.g. only paid
  * registrations that are not checked in). The server checks a saved key against the same
- * list (`value_not_allowed`).
+ * list (`value_not_allowed`). A base filter on the target narrows the records of a table
+ * list for everyone, e.g. to the kontingents of one hotel; query lists narrow themselves.
  */
 export const referenceOptions = z
   .object({
@@ -124,6 +126,8 @@ export const referenceOptions = z
     template: z.string().min(1).max(500).optional(),
     /** Further columns of the chosen record, shown read-only, relative to the target. */
     extras: z.array(columnRef).max(10).default([]),
+    /** Fixed conditions on the target's records, relative to the target (§ Basisfilter). */
+    baseFilter: z.array(baseFilterCondition).max(20).default([]),
   })
   .strict()
 export type ReferenceOptions = z.infer<typeof referenceOptions>
