@@ -361,14 +361,14 @@ The lists below give each table's columns. Encrypted columns use the format desc
 | Table | Purpose and main columns |
 | --- | --- |
 | `api_endpoints` | `table_access_id`, `operation` (`list`, `get`, `count`, `create`, `update`, `replace`, `upsert`, `delete`, `schema`), `enabled_by`, `enabled_at` |
-| `api_tokens` | `id`, `name`, `token_hash` (unique), `token_hint`, `expires_at`, `ip_allowlist` (JSON), `rate_limit_per_minute`, `created_by`, `created_at`, `revoked_at`, `last_used_at`, `request_count` |
+| `api_tokens` | `id`, `name`, `token_hash` (unique), `token_hint`, `expires_at`, `ip_allowlist` (JSON), `rate_limit_per_minute`, `created_by`, `created_at`, `updated_at`, `revoked_at`, `last_used_at`, `request_count` |
 | `api_token_grants` | `token_id`, `table_access_id`, `operation` |
 
 **Imports**
 
 | Table | Purpose and main columns |
 | --- | --- |
-| `import_jobs` | `id`, `connection_id`, `table_access_id` or `new_table` (JSON), `mode` (`insert`, `upsert`), `upsert_key`, `file_name`, `file_sha256`, `file_size`, `parse_options` (JSON), `mapping` (JSON), `status`, `dry_run` (JSON), `result` (JSON), `created_by`, `created_at`, `finished_at`, `expires_at` |
+| `import_jobs` | `id`, `connection_id` and `table_access_id` (set once a target is chosen), `new_table` (JSON: definition, `skipFailed`, and how far creating it got), `mode` (`insert`, `upsert`, `create_table`), `upsert_key`, `file_name`, `file_sha256`, `file_size`, `encoding_detected`, `parse_options` (JSON), `mapping` (JSON), `status` (`uploaded`, `checking`, `checked`, `importing`, `completed`, `failed`, `cancelled`), `dry_run` (JSON: fingerprint, counts, at most 10,000 problems), `result` (JSON: counts or failure), `created_by`, `created_at`, `updated_at`, `finished_at`, `expires_at` (24 h) |
 
 **MCP and OAuth**
 
@@ -990,7 +990,7 @@ type DataSourceRef =
 | --- | --- | --- |
 | `/internal/…` | Internal API for the web client. Not versioned, because client and server ship together. | Session cookie + CSRF header |
 | `/api/v1/…` | Public REST API | `Authorization: Bearer stl_api_…` |
-| `/api/docs` | OpenAPI 3.1 document | Optional bearer token |
+| `/api/docs` | OpenAPI 3.1 document of the calling token's endpoints | `Authorization: Bearer stl_api_…`; `401` without (E21) |
 | `/mcp` | MCP (Streamable HTTP) | Bearer: OAuth access token or `stl_mcp_…` |
 | `/oauth/…` | OAuth 2.1 authorization server | OAuth |
 | `/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration`, `/.well-known/oauth-protected-resource[/mcp]` | Metadata | None |
@@ -1100,12 +1100,13 @@ These are the resource groups of the internal API. The exact contracts are Zod s
 | Components | Under `/internal/pages/:pageId/components/:componentId`: `POST …/query` · `POST …/count` · `GET …/rows/:key` · `GET …/rows/:key/edit` (record and version token) · `POST …/rows` (create, or upsert for upsert forms) · `PATCH …/rows/:key` (`version` required) · `DELETE …/rows/:key` · `POST …/fields/:fieldId/options` · `POST …/export` (CSV) · `POST …/refresh` |
 | Page filters | `POST /internal/pages/:pageId/filters/:filterId/options` |
 | Design | `/internal/design/sections` · `/internal/design/pages` · `…/pages/:id/draft` (`If-Match`) · `…/pages/:id/publish` · `…/pages/:id/versions[/:version[/restore]]` (M5) · `/internal/design/queries[/:id[/versions[/:version]]]` · `…/queries/validate` · `…/queries/run` (test run, 100 rows) · `/internal/design/roles` · `/internal/design/variables` · `/internal/design/catalog` (M5) · `/internal/design/issues` |
-| Administration | `/internal/admin/connections[/test, /:id[/grants, /read-scope, /write-scope, /schema, /schema/refresh, /schema/drifts[/:driftId/acknowledge]]]` · `/internal/admin/table-access` · `/internal/admin/relations` · `/internal/admin/users[/:id[/status, /roles, /links]]` (roles: `PUT …/roles`) · `/internal/admin/identity-providers` · `/internal/admin/api/endpoints` · `/internal/admin/api/tokens` · `/internal/admin/mcp/{settings, notice, tokens, calls}` · `/internal/admin/permissions` · `/internal/admin/audit[/export]` · `/internal/admin/settings` · `/internal/admin/imports` · `/internal/admin/config/{export, import}` |
+| Administration | `/internal/admin/connections[/test, /:id[/grants, /read-scope, /write-scope, /schema, /schema/refresh, /schema/drifts[/:driftId/acknowledge]]]` · `/internal/admin/table-access` · `/internal/admin/relations` · `/internal/admin/users[/:id[/status, /roles, /links]]` (roles: `PUT …/roles`) · `/internal/admin/identity-providers` · `/internal/admin/api/endpoints[/:tableAccessId]` · `/internal/admin/api/tokens[/:id[/revoke]]` · `/internal/admin/api/openapi` · `/internal/admin/tables[/:tableAccessId/check]` (E28) · `/internal/admin/mcp/{settings, notice, tokens, calls}` · `/internal/admin/permissions` · `/internal/admin/audit[/export]` · `/internal/admin/settings` · `/internal/admin/config/{export, import}` |
+| Import | `/internal/imports` (upload: raw `text/csv`, `?fileName=`) · `/internal/imports/targets` · `/internal/imports/:id[/preview, /targets/:tableAccessId, /new-table?connectionId=, /dry-run, /run, /cancel, /errors]` |
 | Profile | `/internal/profile` · `…/password` · `…/mfa` · `…/mcp/connections` · `…/mcp/tokens` |
 | OAuth interaction | `GET /internal/oauth/interactions/:uid` · `POST …/consent` · `POST …/abort` |
 
 - **Who can call what:**
-  - Managers can call `design` routes and the import routes for existing tables.
+  - Managers can call `design` routes and the import routes for existing tables; new tables are for admins.
   - Only admins can call `admin` routes. They have the manager capabilities as well, except MCP access.
   - Whether managers can create roles is an instance setting.
 - **Component reads use `POST`,** because parameters and filters are structured. They are reads, they never change data, and they still send the CSRF header.
@@ -1114,54 +1115,61 @@ These are the resource groups of the internal API. The exact contracts are Zod s
 
 ## 16. Public REST API
 
-- **Routes:** a fixed set of generic routes (`/api/v1/:resource`, `/api/v1/:resource/:id`, `/count`, `/schema`). The resource alias is resolved to table access. Real table names are never exposed.
-- **Resolution order:**
-  1. Unknown alias or disabled endpoint: `404`.
-  2. Token without a grant for the operation: `403`.
-  3. Operation outside the ceiling: it cannot be enabled in the first place.
+- **Routes:** generic routes under `/api/v1`: `GET /:resource` (list), `GET /:resource/count`, `GET /:resource/schema`, `GET /:resource/:id`, `POST /:resource` (create), `PATCH /:resource/:id` (update), `PUT /:resource/:id` (replace), `PUT /:resource?on=<column>` (upsert), `DELETE /:resource/:id`. The module is `modules/public-api`; `STASHLEY_PUBLIC_API=off` leaves it unregistered (E21).
+- **Aliases (E14):** the resource name is the table access's `api_resource`. Endpoints open only once it differs from the object name, so the real table name is never part of the public contract; errors and the OpenAPI document never name it. A rename while endpoints are open asks first (E15).
+- **Endpoints (E15):** admins enable single operations per table access. `list`, `get`, `count` and `schema` need read in the ceiling, `create` create, `update` and `replace` update, `upsert` create and update, `delete` delete. Tables need a single-column primary key; views offer `list`, `count` and `schema`, `get` only with a key column, and never write. Disabling an endpoint, lowering a ceiling, renaming or removing a table access that would take endpoints or token grants away answers `409 confirmation_required` with the `consequences`; sent again with `confirm`, the endpoints and grants go in the same transaction (`TableAccessDependent`), so raising the ceiling later reopens nothing.
+- **Resolution order (D5):**
+  1. No valid token: `401` with `WWW-Authenticate: Bearer` (also for `/api/docs`).
+  2. Unknown alias, disabled endpoint, or an object that cannot serve (pending grants, gone from the catalog): `404`.
+  3. Token without a grant for the operation, an operation the database grants or column grants withhold, or a client address outside the allowlist: `403`.
+- **Resource model (`access/resource.ts`):** built from table access, catalog and grant reports and cached per access generation, like a compiled page. It reads every column not excluded for everyone (MCP-only exclusions do not apply), as raw values (§9.5) without display values or linked columns (E16), and has no base filter. Writable are columns that are not generated, not auto-increment, not JSON and not the lock column, within the write user's column grants; a required column the client cannot write rules out create. Create-only tables serve `create`: the write path reads its row back, but every read operation stays closed. `authorizeResource` turns it into an `AuthorizedResource` handle; only the access module creates handles (§8.4).
 - **Reserved IDs:** a row whose ID is literally `count` or `schema` cannot be fetched by ID, because the static routes take precedence. The API reference documents this.
-- **Tokens:**
-  - Lookup by SHA-256 hash, with an in-memory cache invalidated on revoke.
-  - Checks: expiry, IP allowlist (client IP from `TRUST_PROXY`, CIDR matching), rate limit per token.
-  - Usage counters are written in batches.
-- **`list` parameters:**
-  - `limit` up to 1,000, and `cursor` (the keyset cursor from §10.6).
-  - `sort=-column`.
-  - `fields=a,b`, where excluded and unsupported columns count as unknown.
-  - `filter[column][op]=value` with `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in` (comma-separated), `like` and `null` (`true` or `false`).
-- **Writes** use the write executor from §11, with the token as the actor and no base filter.
-  - `POST /` only creates. A duplicate primary or unique key returns `422 unique_violation` on the key's fields.
-  - `PATCH /:id` updates the given fields of an existing row.
-  - `PUT /:id` replaces all writable fields of an existing row. Missing fields take the column default, or null. An unknown ID returns `404`, so `PUT` never creates a row by ID.
-  - `PUT /` with `?on=<column>` upserts on the primary key or a single-column unique key. It is idempotent: a repeated call updates the same row instead of creating a duplicate, and an unchanged repeat writes nothing (§11.1). Integrations whose events can arrive more than once use this endpoint. It needs a unique key from the source system in the target table.
-- **Concurrency:** `ETag` is derived from the row's version token. `If-Match` is an optional request header. When it is sent it must match the current row, otherwise the response is `412` (§28, D6).
-- **OpenAPI 3.1** is generated from table access, the catalog and the enabled endpoints. With a bearer token, it lists only the endpoints that token can use. Generated documents are cached per token and configuration revision.
-- **CORS** is not enabled. The API is meant for server-to-server clients.
+- **Tokens (§21.4, E20):** `stl_api_`, 32 random bytes in base62 and a CRC32 checksum; checked for form before any lookup, stored as SHA-256 with a four-character hint and shown once. They belong to the instance, not to the admin who created them. Name, expiry, IP allowlist (addresses and CIDR ranges, IPv4-mapped IPv6 as IPv4, client IP from `TRUST_PROXY`) and rate limit change later, the secret never. The lookup cache drops on every change of endpoints, tokens or table access, so a revocation takes effect at once. Grants count only on enabled endpoints. Usage counters are written every 30 s and on shutdown. Invalid tokens are limited per address (20 per minute, then a growing delay); each token has its own requests per minute (`429` with `Retry-After`).
+- **`list` and `count` parameters (E16, E19):**
+  - `limit` from 1 to 1,000 (default 100) and `cursor`, the keyset cursor of §10.6 signed for this sort and these filters. Views without a key column page by position, ordered by every column, with a signed offset cursor.
+  - `sort=column` or `sort=-column`: one column, the key breaks ties.
+  - `fields=a,b`.
+  - `filter[column][op]=value` with `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in` (up to 100 comma-separated values), `like` (the client's pattern with `%` and `_`, backslash escapes) and `null` (`true` or `false`).
+  - Unknown parameters, operators and columns answer `400` (`unknown_parameter`, `unknown_operator`, `unknown_field`); an excluded column answers exactly like one that does not exist.
+- **Reads** go live through the read user, without the query cache (E19). Counts use the estimate of D7 for large unfiltered objects. `GET /:id` sends an `ETag`.
+- **Writes** use the write executor of §11 with an API write subject: the token as the actor (`actor_kind = api_token`), no base filter, no option lists (foreign keys are the database's), no simulation. Bodies are JSON objects of at most 1 MB; unknown and excluded columns answer `400 unknown_field`, known columns the operation cannot write `422 field_not_writable`. A token that may also `get` or `list` the resource gets the row back with its `ETag`; otherwise the answer is the key only, like forms without read (§8.2).
+  - `POST /` only creates; `201` with `Location`. A duplicate key returns `422 unique_violation` on the key's fields.
+  - `PATCH /:id` updates the given columns.
+  - `PUT /:id` replaces every writable column of an existing row: a left-out column with a column default goes back to it (`DEFAULT`, always written), one without is set to NULL, a required one without default is `422 required`. An unknown ID returns `404`, so `PUT` never creates a row by ID.
+  - `PUT /?on=<column>` upserts on the primary key unless it is auto-increment, or on a single-column unique key; a nullable one needs its value (E18). `201` for a new row, `200` otherwise. An unchanged repeat writes nothing (§11.1).
+- **Concurrency (D6, E17):** the `ETag` is a strong tag of the version token over all writable columns and the lock value, in its own key space (UI tokens never pass). `If-Match` is optional on `PATCH`, `PUT /:id` and `DELETE`; `*` only needs the row to exist; a mismatch answers `412 precondition_failed` without the current row. `If-Match` on `POST` and `PUT /?on=` is `400`.
+- **OpenAPI 3.1 (`/api/docs`):** generated from table access, the catalog and the enabled endpoints: paths per operation, row, create and update schemas in the JSON forms of §9.5, parameters, `If-Match`, `ETag` and problem responses. With a token it lists only what that token can use; admins download the full document from `/internal/admin/api/openapi`. Cached per token and dropped on every change. Tests validate it against the OpenAPI 3.1 schema (E29).
+- **Schema impact:** a schema change on an object with open endpoints lists them as `api_endpoint` items, new columns included (`column_added`), because they change the public contract.
+- **CORS** is not enabled. The API is meant for server-to-server clients. Responses carry `cache-control: no-store`.
 
 ## 17. CSV import
 
-1. **Upload:** `POST /internal/imports` with a raw `text/csv` body of at most 50 MB.
+The module is `modules/imports`. Managers and admins import into existing tables within the ceiling; admins also create tables (E22, E28). Jobs are visible to the user who uploaded them and to admins.
+
+1. **Upload:** `POST /internal/imports?fileName=` with a raw `text/csv` body (D1) of at most `STASHLEY_IMPORT_MAX_MB` (50).
    - The body is streamed to `/data/uploads/<id>.csv`, and its SHA-256 is computed while streaming.
-   - Encoding detection: a BOM means UTF-8. Otherwise the file is tried as strict UTF-8 and falls back to Windows-1252.
-   - The delimiter (`,`, `;` or tab) is detected by frequency outside quotes, and the header row by heuristics. All three can be overridden.
-2. **Parsing:** csv-parse reads an iconv-lite decode stream. Options: decimal separator, date format (tokens such as `DD.MM.YYYY HH:mm`), values for true, false and empty.
-3. **Mapping:** columns are matched by normalized name (case, separators, transliteration) and can be changed. Foreign keys can be resolved through the display template or a unique field of the target object; values are looked up in batches.
+   - Encoding detection: a BOM means UTF-8. Otherwise the file is read as strict UTF-8 and falls back to Windows-1252.
+   - The delimiter (`,`, `;` or tab) is detected by frequency outside quotes on the first lines, the header row by heuristics (every cell filled, unique and no value). All three can be overridden.
+2. **Parsing:** csv-parse reads an iconv-lite decode stream. Options: decimal separator, an optional thousands separator, date and date-time formats (tokens such as `DD.MM.YYYY HH:mm:ss`; seconds may be missing), values for true, false and empty. Defaults come from the data where it is unambiguous (the format most dates fit, a decimal comma), otherwise from the user's format; true and false words are German and English (E25). Date-times without an offset are wall times in `APP_TIMEZONE`, written as wall times of the connection (§9.5). Text keeps its spaces; other cells are trimmed. Records name the line they start on, also across quoted line breaks.
+3. **Mapping:** columns are suggested by normalized name (case, separators, transliteration) and can be changed. Targets come from the resource model (§16): excluded, generated, auto-increment and lock columns cannot be mapped, column grants apply, required columns must be mapped. Upserts use the primary key or a unique key without nullable columns. Foreign keys resolve through a unique column of an exposed target or its display value, looked up in batches; no match is `foreign_key_violation`, several are `ambiguous_reference` (E26).
 4. **Preview:** the first 100 rows with type checks and errors marked per cell.
-5. **Dry run** over the whole file without writing. It counts new, updated and failed rows, and the error list can be downloaded as CSV.
-6. **Import:**
-   - One transaction on the write pool, in batches of 500.
-   - For upserts, existing keys are classified with a locked `SELECT … IN (…)` per batch.
-   - New rows use multi-row `INSERT`; existing rows use `UPDATE`.
-   - The default is all or nothing. Optionally, failed rows are skipped using savepoints per batch, with row-level retry.
-   - Afterwards the cache is invalidated and one audit event records the file hash, mode, counts and user.
-7. **New table** (admin only, schema user):
-   - Types are inferred from the whole file: `INT`/`BIGINT`, `DECIMAL(p,s)`, `DATE`, `DATETIME`, `BOOLEAN`, `VARCHAR(n)` with headroom, `TEXT`.
-   - Names are normalized to snake_case, avoiding reserved words.
-   - The primary key is either an existing column (checked for uniqueness and no empty values) or an added `id BIGINT AUTO_INCREMENT`.
-   - Unique keys and NOT NULL constraints are optional.
-   - The DDL is generated as `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`, recorded in the audit event, and run before the data transaction. DDL commits implicitly, and the schema user has no `DROP`, so the dry run must pass first.
-   - Afterwards the catalog is refreshed and table access is created with ceiling `read` and state `pending_grants`. Stashley then checks read and write access to the new table. If privileges are missing, it shows the `GRANT` statements to run, and the table stays locked until access works.
-8. **Cleanup:** uploads are deleted when the import finishes, or by the hourly job after 24 h.
+5. **Dry run** over the whole file without writing (E23): types, lengths and ranges, required values, duplicate keys in the file and in the table, missing referenced rows, all by `SELECT`. `CHECK` constraints and triggers stay unseen. It counts new, updated, unchanged and failed rows; up to 10,000 problems are kept and download as CSV.
+6. **Import:** only with the settings of a passed dry run (fingerprint of file hash, options and mapping or definition); failed rows in it need "skip failed rows".
+   - One transaction on the write pool, in batches of `STASHLEY_IMPORT_BATCH_SIZE` (500).
+   - For upserts, existing keys are classified with a locked `SELECT … WHERE (key) IN (…)` per batch; only changed columns are updated, unchanged rows write nothing.
+   - New rows use multi-row `INSERT`; an empty cell in a `NOT NULL` column with a default takes the default.
+   - The default is all or nothing: the first refused row stops the import and the transaction rolls back. With "skip failed rows" a refused batch rolls back to its savepoint and is written row by row, each with its own savepoint.
+   - Afterwards the cache is invalidated (cascades included) and one audit event `import.completed` records the file hash, mode, options, counts and user; a failed or cancelled import is audited as `import.failed` (E24).
+   - Dry runs and imports run in the background, at most `STASHLEY_IMPORT_CONCURRENCY` (2) per instance and `STASHLEY_IMPORT_PER_USER` (1) per user; the client polls the job for progress. Cancelling rolls back; a restart marks running jobs as failed (E27).
+7. **New table** (admins, schema user, E28):
+   - A definition is suggested from every value of the file: `INT` within 32 bits, otherwise `BIGINT`; `DECIMAL(p,s)` from the widest digits; `DATE` and `DATETIME` in the chosen formats; `BOOLEAN` only for yes/no words (plain 0/1 stays `INT`); values with leading zeros stay text; `VARCHAR(n)` with headroom (32, 64, 128 or 255 for 1.5 × the longest value), `TEXT` beyond 255 characters; `VARCHAR(255)` for empty columns. Names become snake_case (transliterated, no reserved words, unique), the table name comes from the file name. Every part can be changed; the table designer uses the same definition without a file.
+   - Checks shared with the client (`shared/values/new-table.ts`): names `^[a-z][a-z0-9_]*$` of at most 64 characters and no reserved word; types from a closed list with checked sizes; unique columns and keys not `TEXT` and at most 768 characters; rows within 65,535 bytes; defaults reduced to digits, ISO dates and date-times, `true`/`false` and text without backslashes or control characters (`CURRENT_TIMESTAMP` for date-times, none for `TEXT`). In the import, every column a row cannot do without needs a CSV column.
+   - The primary key is either a column (`NOT NULL`, checked for duplicates in the file) or an added `BIGINT AUTO_INCREMENT` column.
+   - `CREATE TABLE` is assembled from these fixed pieces only (`imports/ddl.ts`), checked again on the server, as `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4` with the schema's default collation. It runs through the schema user after the dry run passed and is audited as `table.created` with the statement. A name only the database knows fails with 1050 and answers `taken`.
+   - The data is written by the schema user, which has `INSERT` (the read and write users usually have no rights on the new table yet), in one transaction with strict SQL modes.
+   - Afterwards grants and catalog are read again and table access is created with ceiling read: `active` when the read user sees the table, otherwise `pending_grants` with the `GRANT SELECT` statement for the read user. Write grants follow from the write scope (§9.4) once an admin raises the ceiling; no schema-wide grants are suggested, since they would reach beyond table access. `POST /internal/admin/tables/:tableAccessId/check` checks again.
+   - Each finished step (table created, data written, access created) is kept with the job, so a failure after `CREATE TABLE` continues with the next step. The schema user has no `DROP`: a table created by mistake is removed by the database administrator.
+8. **Cleanup:** uploads are deleted when the import finishes, or by the hourly job after 24 h together with their job; stray files older than an hour go too.
 
 ## 18. MCP server and authorization server
 
@@ -1528,6 +1536,8 @@ These decisions go beyond what the requirements fix, or interpret them. D1–D12
 | D14 | When managers may not create roles, only admins create, rename or delete roles; managers still grant rights to existing roles. | The requirements let admins turn off role creation by managers, but managers still need the roles for page rights. |
 | D15 | Grants to deleted roles stop taking effect and show as an issue on the page; stored pages are not rewritten. | Published versions stay as they were published; the next publish removes the stale grants. |
 | D16 | The SQL lexer rejects locking clauses itself, and `INTO` and `PROCEDURE` too. | node-sql-parser's MariaDB grammar does not know `LOCK IN SHARE MODE`, and the error must name the rule. |
+
+M7 decisions E14–E29 (approved 2026-11-16) are recorded in `PROGRESS.md`. E29 adds the development dependency `@seriousme/openapi-schema-validator` (MIT) to the D8 list.
 
 ## 29. Resolved questions
 

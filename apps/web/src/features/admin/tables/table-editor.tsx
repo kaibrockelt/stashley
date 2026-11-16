@@ -99,7 +99,11 @@ export function TableDefinitionEditor(props: {
           .filter((entry) => entry.field.startsWith(props.prefix ?? ''))
           .map((entry) => ({ ...entry, field: entry.field.slice((props.prefix ?? '').length) }))
       : []
-  const problems: FieldError[] = [...local, ...server]
+  // An empty name is not a mistake yet; creating stays disabled until it is filled.
+  const problems: FieldError[] = [
+    ...local.filter((entry) => !(entry.field === 'name' && definition.name === '')),
+    ...server,
+  ]
   const problem = (field: string) => {
     const found = problems.find((entry) => entry.field === field)
     return found === undefined
@@ -251,6 +255,7 @@ export function TableDefinitionEditor(props: {
                   </td>
                   <td>
                     <CheckboxField
+                      isLabelHidden
                       label={t('tables.required.of', { column: column.name })}
                       isSelected={column.required || isKey}
                       isDisabled={isKey}
@@ -259,6 +264,7 @@ export function TableDefinitionEditor(props: {
                   </td>
                   <td>
                     <CheckboxField
+                      isLabelHidden
                       label={t('tables.unique.of', { column: column.name })}
                       isSelected={column.unique || isKey}
                       isDisabled={isKey || column.type === 'text'}

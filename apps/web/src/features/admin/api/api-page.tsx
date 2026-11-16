@@ -44,6 +44,13 @@ const blockerLabels: Record<ApiEndpointBlocker, MessageId> = {
   not_active: 'api.blocker.inactive',
 }
 
+/** Short labels for the table; the dialog explains them in full. */
+const blockerBadges: Record<ApiEndpointBlocker, MessageId> = {
+  alias_is_object_name: 'api.blocker.alias.short',
+  no_single_key: 'api.blocker.key.short',
+  not_active: 'api.blocker.inactive.short',
+}
+
 const iso = (time: number | null) => (time === null ? null : new Date(time).toISOString())
 
 function EndpointDialog(props: { state: ApiEndpointState; onClose: () => void }) {
@@ -287,6 +294,7 @@ function TokenDialog(props: {
                           <td key={operation}>
                             {state.enabled.includes(operation) && (
                               <CheckboxField
+                                isLabelHidden
                                 label={t('api.token.grant', {
                                   resource: state.apiResource,
                                   operation: t(apiOperationLabels[operation]),
@@ -409,7 +417,7 @@ export function ApiPage() {
                   <td>
                     {state.blockers.map((blocker) => (
                       <Badge key={blocker} tone="warning">
-                        {t(blockerLabels[blocker])}
+                        {t(blockerBadges[blocker])}
                       </Badge>
                     ))}
                     {state.withheld.length > 0 && (

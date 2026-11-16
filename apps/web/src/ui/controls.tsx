@@ -128,6 +128,8 @@ export function CheckboxField(props: {
   isSelected: boolean
   onChange: (value: boolean) => void
   isDisabled?: boolean
+  /** The label is read by screen readers only, e.g. in a table cell. */
+  isLabelHidden?: boolean
 }) {
   return (
     <Checkbox
@@ -141,7 +143,11 @@ export function CheckboxField(props: {
           <polyline points="3.5 8.5 6.5 11.5 12.5 4.5" />
         </svg>
       </span>
-      {props.label}
+      {props.isLabelHidden === true ? (
+        <span className={styles.visuallyHidden}>{props.label}</span>
+      ) : (
+        props.label
+      )}
     </Checkbox>
   )
 }

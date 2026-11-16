@@ -252,7 +252,7 @@ function OptionsForm(props: {
         onChange={(text) => set({ falseValues: words(text) })}
       />
       <TextField
-        label={t('imports.empty')}
+        label={t('imports.emptyValues')}
         value={options.emptyValues.filter((value) => value !== '').join(', ')}
         onChange={(text) => set({ emptyValues: ['', ...words(text)] })}
         description={t('imports.empty.hint')}
