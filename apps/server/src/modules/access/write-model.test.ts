@@ -328,4 +328,73 @@ describe('write models (§11)', () => {
     )
     expect(plain.issues.map((issue) => issue.code)).toEqual(['widget_unsuitable'])
   })
+
+  it('fill new rows from equality conditions of the base filter on own columns (E9)', () => {
+    const fields = payment.filter((field) => field.column !== 'anmeldung_id')
+    const baseFilter = [
+      {
+        column: { path: [], column: 'anmeldung_id' },
+        operator: 'eq' as const,
+        value: { kind: 'variable' as const, name: 'current' },
+      },
+    ]
+    // Without the condition the required column is missing; with it the server sets it.
+    expect(build(fields).issues.map((issue) => issue.code)).toEqual(['required_field_missing'])
+    const filled = build(fields, { baseFilter })
+    expect(filled.issues).toEqual([])
+    expect(filled.model?.filled).toEqual([{ column: 'anmeldung_id', index: 0 }])
+    // A field for the same column may then be left out of the payload.
+    const both = build(payment, { baseFilter })
+    expect(both.model?.payload.create.find((spec) => spec.column === 'anmeldung_id')?.required).toBe(
+      false,
+    )
+    // Conditions over linked tables or other operators fill nothing.
+    const linked = build(fields, {
+      baseFilter: [
+        {
+          column: { path: [{ column: 'anmeldung_id', target: 'anmeldung' }], column: 'person_id' },
+          operator: 'eq' as const,
+          value: { kind: 'constant' as const, value: 1 },
+        },
+        { ...(baseFilter[0] as (typeof baseFilter)[number]), operator: 'gte' as const },
+      ],
+    })
+    expect(linked.issues.map((issue) => issue.code)).toEqual(['required_field_missing'])
+    // A column grant missing on the filled column withholds create (E6).
+    const narrowed = facts({
+      zahlung: {
+        writable: {
+          create: new Set(['betrag', 'eingang_am', 'kommentar', 'updated_at']),
+          update: null,
+        },
+      },
+    })
+    const withheld = build(fields, { baseFilter, connection: narrowed })
+    expect(withheld.issues).toMatchObject([
+      { code: 'grant_missing', severity: 'warning', params: { columns: 'anmeldung_id' } },
+    ])
+  })
+
+  it('need a key the server can read back when the key is no auto-increment', () => {
+    const uuid = facts()
+    const catalog = uuid.catalog.get('person') as CatalogObject
+    const keyed: CatalogObject = {
+      ...catalog,
+      columns: [
+        col('id', 'string', { nullable: false, defaultValue: 'uuid()' }),
+        ...catalog.columns.slice(1),
+      ],
+    }
+    const connection = { ...uuid, catalog: new Map([...uuid.catalog, ['person', keyed]]) }
+    const fields = fieldList.parse([{ kind: 'input', id: 'email', column: 'email' }])
+    const { issues } = build(fields, { object: 'person', connection })
+    expect(issues.map((issue) => [issue.code, issue.params])).toEqual([
+      ['key_missing', { column: 'id' }],
+    ])
+    const withKey = build(
+      fieldList.parse([...fields, { kind: 'input', id: 'id', column: 'id' }]),
+      { object: 'person', connection },
+    )
+    expect(withKey.issues).toEqual([])
+  })
 })

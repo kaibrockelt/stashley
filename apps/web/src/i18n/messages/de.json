@@ -486,6 +486,7 @@
   "issue.mapping_unsuitable": "Die Spalte {column} passt nicht an ihre Stelle im Diagramm.",
   "issue.columns_unknown": "Die Ergebnisspalten der Abfrage sind noch nicht bekannt, die Zuordnung der Spalten ist deshalb ungeprüft. Ein Testlauf der Abfrage im Abfrage-Editor holt das nach.",
   "issue.required_field_missing": "Das Formular lässt die Pflichtspalte {column} aus und kann so nie speichern.",
+  "issue.key_missing": "Das Formular setzt die Schlüsselspalte {column} nicht; nimm sie als Feld auf, sonst lassen sich neue Datensätze nicht wiederfinden.",
   "issue.excluded_column": "Die Spalte ist von der Freigabe ausgeschlossen.",
   "issue.unknown_column": "Die Spalte gibt es (nicht mehr).",
   "issue.unknown_relation": "Die Spalte hat keine Beziehung zu dieser Tabelle.",

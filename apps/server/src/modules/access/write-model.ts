@@ -91,6 +91,11 @@ export interface WriteModel {
   /** Reads the record with the base filter: the fields' readable columns by field ID. */
   row: TableModel
   baseFilter: readonly BaseFilterCondition[]
+  /**
+   * Columns new rows take from equality conditions of the base filter, with the condition's
+   * index in `row.baseFilter`; the server sets them when the payload leaves them out.
+   */
+  filled: readonly { column: string; index: number }[]
 }
 
 export type WriteMode = 'create' | 'edit' | 'upsert' | 'table'
@@ -402,6 +407,29 @@ export function buildWriteModel(
   // The server writes the lock column where it has to (§11 lock strategy).
   const lock = object.lock
   if (lock.kind !== 'values') covered.add(lower(lock.column))
+  // Equality conditions of the base filter on the row's own columns fill new rows, so a form
+  // on the current event needs no event field (E9). Their values come from the server.
+  const filled: { column: string; index: number }[] = []
+  if (input.ops.create) {
+    input.baseFilter.forEach((condition, index) => {
+      if (condition.operator !== 'eq' || condition.value === undefined) return
+      if (condition.column.path.length > 0) return
+      const column = catalog.columns.find(
+        (entry) => lower(entry.name) === lower(condition.column.column),
+      )
+      if (
+        column === undefined ||
+        column.generated ||
+        column.autoIncrement ||
+        excluded.has(lower(column.name)) ||
+        filled.some((entry) => entry.column === column.name)
+      ) {
+        return
+      }
+      filled.push({ column: column.name, index })
+      covered.add(lower(column.name))
+    })
+  }
   // A form that can create must cover every required column (§ Pflichtfelder).
   if (input.ops.create) {
     for (const column of catalog.columns) {
@@ -412,6 +440,11 @@ export function buildWriteModel(
       ) {
         fail(input.fieldsPath, 'required_field_missing', { column: column.name })
       }
+    }
+    // A key the server cannot produce must come from the form; otherwise the new row could
+    // not be read back (e.g. a `DEFAULT uuid()` key).
+    if (!key.autoIncrement && !columnRequired(key) && !covered.has(lower(key.name))) {
+      fail(input.fieldsPath, 'key_missing', { column: key.name })
     }
   }
 
@@ -477,6 +510,7 @@ export function buildWriteModel(
         .filter((field) => field.generator?.kind !== 'auto_increment')
         .map((field) => field.column),
       ...(lockColumn !== undefined && lockColumn.defaultValue === null ? [lockColumn.name] : []),
+      ...filled.map((entry) => entry.column),
     ],
     update: [
       ...update.map((field) => field.column),
@@ -530,7 +564,9 @@ export function buildWriteModel(
   // On create, fields the server can fill itself may be left out: a default it sets (constant,
   // variable, user) or a generated date. Defaults from page filters come with the payload.
   const optional = (field: WriteField) =>
-    (field.default !== undefined && serverDefault(field.default)) || field.generator !== undefined
+    (field.default !== undefined && serverDefault(field.default)) ||
+    field.generator !== undefined ||
+    filled.some((entry) => entry.column === field.column)
       ? { ...field.spec, required: false }
       : field.spec
   return {
@@ -548,6 +584,7 @@ export function buildWriteModel(
       upsertKey,
       row,
       baseFilter: input.baseFilter,
+      filled,
     },
     withheld,
     queries,

@@ -30,6 +30,7 @@ const issueTexts: Record<string, MessageId> = {
   mapping_unsuitable: 'issue.mapping_unsuitable',
   columns_unknown: 'issue.columns_unknown',
   required_field_missing: 'issue.required_field_missing',
+  key_missing: 'issue.key_missing',
   excluded_column: 'issue.excluded_column',
   unknown_column: 'issue.unknown_column',
   unknown_relation: 'issue.unknown_relation',

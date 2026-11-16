@@ -486,6 +486,7 @@
   "issue.mapping_unsuitable": "The column {column} does not fit its place in the chart.",
   "issue.columns_unknown": "The query's result columns are not known yet, so the column mapping is unchecked. A test run of the query in the query editor catches up.",
   "issue.required_field_missing": "The form leaves out the required column {column}, so it can never save.",
+  "issue.key_missing": "The form cannot set the key column {column}; add it as a field, or new records could not be read back.",
   "issue.excluded_column": "The column is excluded from the table access.",
   "issue.unknown_column": "The column does not exist (any more).",
   "issue.unknown_relation": "The column has no relation to that table.",
