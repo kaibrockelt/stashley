@@ -10,12 +10,15 @@ import type {
   ImportPreview,
   ImportStatus,
   ImportTarget,
+  NewTableDefinition,
+  Connection,
 } from '@stashley/shared'
 import { importDelimiters, importEncodings } from '@stashley/shared'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
 import { api, downloadGet, uploadFile } from '../../../api/client.ts'
+import { useUser } from '../../../api/session.ts'
 import { useErrorText } from '../../../i18n/errors.ts'
 import { useFormatDateTime } from '../../../i18n/format.ts'
 import type { MessageId } from '../../../i18n/locale.ts'
@@ -33,8 +36,10 @@ import {
 } from '../../../ui/controls.tsx'
 import table from '../../../ui/table.module.css'
 import styles from '../../admin/connections/connections.module.css'
+import { NewTableOutcomeView, TableDefinitionEditor } from '../../admin/tables/table-editor.tsx'
 
 const jobsKey = ['design', 'imports'] as const
+const newTableChoice = '__new'
 const jobKey = (id: string) => ['design', 'imports', id] as const
 
 const statusLabels: Record<ImportStatus, MessageId> = {
@@ -213,8 +218,7 @@ function OptionsForm(props: {
         value={options.thousandsSeparator === '' ? 'none' : options.thousandsSeparator}
         onChange={(value) =>
           set({
-            thousandsSeparator:
-              value === 'none' ? '' : (value),
+            thousandsSeparator: value === 'none' ? '' : value,
           })
         }
         options={[
@@ -301,7 +305,23 @@ function ImportEditor(props: { job: ImportJob }) {
   const [tableAccessId, setTableAccessId] = useState(saved?.tableAccessId ?? '')
   const [mode, setMode] = useState<ImportMode>(saved?.mode ?? 'insert')
   const [upsertKey, setUpsertKey] = useState((saved?.upsertKey ?? []).join(','))
-  const [skipFailed, setSkipFailed] = useState(saved?.skipFailed ?? false)
+  const newTable = props.job.newTable
+  const isAdmin = useUser().systemRole === 'admin'
+  const [skipFailed, setSkipFailed] = useState(saved?.skipFailed ?? newTable?.skipFailed ?? false)
+  // A table to create from the file (E28), admins only.
+  const [definition, setDefinition] = useState<NewTableDefinition | null>(
+    newTable?.definition ?? null,
+  )
+  const [suggesting, setSuggesting] = useState<unknown>(null)
+  const connections = useQuery({
+    queryKey: ['admin', 'connections'],
+    queryFn: () => api<{ data: Connection[] }>('GET', '/internal/admin/connections'),
+    enabled: isAdmin,
+  })
+  const schemaConnections = (connections.data?.data ?? []).filter((connection) =>
+    connection.credentials.some((credential) => credential.purpose === 'schema'),
+  )
+  const created = newTable !== null && newTable.createdAt !== null
   const [mapping, setMapping] = useState<Record<number, MappingRow>>(
     Object.fromEntries(
       (saved?.columns ?? []).map((entry) => [
@@ -312,7 +332,32 @@ function ImportEditor(props: { job: ImportJob }) {
   )
 
   const target = targets.data?.data.find((entry) => entry.tableAccessId === tableAccessId)
+  const [choosingNew, setChoosingNew] = useState(newTable !== null)
+  const newMode = choosingNew || definition !== null
+  const suggest = async (connectionId: string) => {
+    setSuggesting(null)
+    try {
+      setDefinition(
+        await api<NewTableDefinition>(
+          'GET',
+          `/internal/imports/${importId}/new-table?connectionId=${connectionId}`,
+        ),
+      )
+    } catch (failure) {
+      setSuggesting(failure)
+    }
+  }
   const choose = async (id: string) => {
+    if (id === newTableChoice) {
+      setTableAccessId('')
+      const [first] = schemaConnections
+      if (first !== undefined) await suggest(first.id)
+      else setDefinition(null)
+      setChoosingNew(true)
+      return
+    }
+    setChoosingNew(false)
+    setDefinition(null)
     setTableAccessId(id)
     const chosen = await api<ImportTarget & { suggestedMapping: ImportColumnMapping[] }>(
       'GET',
@@ -330,10 +375,15 @@ function ImportEditor(props: { job: ImportJob }) {
     )
   }
 
-  const settings = (): { options: ImportParseOptions; mapping: ImportMapping | null } => ({
+  const settings = (): {
+    options: ImportParseOptions
+    mapping: ImportMapping | null
+    newTable: { definition: NewTableDefinition; skipFailed: boolean } | null
+  } => ({
     options: options,
+    newTable: newMode && definition !== null ? { definition, skipFailed } : null,
     mapping:
-      tableAccessId === ''
+      newMode || tableAccessId === ''
         ? null
         : {
             tableAccessId,
@@ -407,6 +457,11 @@ function ImportEditor(props: { job: ImportJob }) {
           })}
         </Notice>
       )}
+      {done && newTable?.outcome !== null && newTable?.outcome !== undefined && (
+        <Section title={t('imports.newTable.outcome')}>
+          <NewTableOutcomeView outcome={newTable.outcome} />
+        </Section>
+      )}
       {done && data.result !== null && (
         <Notice tone="success">
           {t('imports.done', {
@@ -426,7 +481,7 @@ function ImportEditor(props: { job: ImportJob }) {
             <div className={styles.grid}>
               <SelectField
                 label={t('imports.table')}
-                value={tableAccessId}
+                value={newMode ? newTableChoice : tableAccessId}
                 onChange={(id) => void choose(id)}
                 options={[
                   { id: '', label: t('imports.table.choose') },
@@ -434,8 +489,24 @@ function ImportEditor(props: { job: ImportJob }) {
                     id: entry.tableAccessId,
                     label: entry.objectName,
                   })),
+                  ...(isAdmin ? [{ id: newTableChoice, label: t('imports.table.new') }] : []),
                 ]}
               />
+              {newMode && (
+                <SelectField
+                  label={t('imports.connection')}
+                  value={definition?.connectionId ?? ''}
+                  onChange={(id) => void suggest(id)}
+                  description={t('imports.connection.hint')}
+                  options={[
+                    { id: '', label: t('imports.connection.choose') },
+                    ...schemaConnections.map((connection) => ({
+                      id: connection.id,
+                      label: connection.name,
+                    })),
+                  ]}
+                />
+              )}
               {target !== undefined && (
                 <SelectField
                   label={t('imports.mode')}
@@ -467,7 +538,35 @@ function ImportEditor(props: { job: ImportJob }) {
               />
             </div>
           </Section>
-          {target !== undefined && (
+          {newMode && (
+            <Section title={t('imports.step.newTable')}>
+              {schemaConnections.length === 0 && (
+                <Notice tone="info">{t('imports.newTable.noSchemaUser')}</Notice>
+              )}
+              {suggesting !== null && <Notice tone="error">{errors.message(suggesting)}</Notice>}
+              {created && <Notice tone="info">{t('imports.newTable.created')}</Notice>}
+              {definition !== null && (
+                <TableDefinitionEditor
+                  definition={definition}
+                  onChange={(next) => {
+                    if (!created) setDefinition(next)
+                  }}
+                  sources={columns}
+                  error={save.error ?? step.error}
+                  prefix="newTable.definition."
+                />
+              )}
+              <Actions>
+                <Button
+                  onPress={() => save.mutate()}
+                  isDisabled={save.isPending || running || definition === null}
+                >
+                  {t('imports.check')}
+                </Button>
+              </Actions>
+            </Section>
+          )}
+          {target !== undefined && !newMode && (
             <Section title={t('imports.step.mapping')}>
               <div className={table.wrap}>
                 <table className={table.table}>
@@ -646,7 +745,7 @@ function ImportEditor(props: { job: ImportJob }) {
                 <>
                   <Button
                     onPress={() => step.mutate('dry-run')}
-                    isDisabled={step.isPending || tableAccessId === ''}
+                    isDisabled={step.isPending || (tableAccessId === '' && definition === null)}
                   >
                     {t('imports.dryRun')}
                   </Button>

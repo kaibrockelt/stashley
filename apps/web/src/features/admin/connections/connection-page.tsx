@@ -17,6 +17,7 @@ import { useErrorText } from '../../../i18n/errors.ts'
 import { useFormatDateTime } from '../../../i18n/format.ts'
 import { useT } from '../../../i18n/use-t.ts'
 import { Badge, Button, Notice, PageHeader } from '../../../ui/controls.tsx'
+import { NewTableDialog } from '../tables/table-editor.tsx'
 import table from '../../../ui/table.module.css'
 import { AccessDialog } from './access-dialog.tsx'
 import { ConnectionDialog } from './connection-dialog.tsx'
@@ -94,6 +95,7 @@ export function ConnectionPage() {
   const [editing, setEditing] = useState(false)
   const [sharing, setSharing] = useState<CatalogObject>()
   const [addingRelation, setAddingRelation] = useState(false)
+  const [designing, setDesigning] = useState(false)
   const [refreshResult, setRefreshResult] = useState<SchemaRefreshResult>()
   const invalidate = async () => {
     await client.invalidateQueries({ queryKey: data.key })
@@ -158,6 +160,9 @@ export function ConnectionPage() {
             <Button onPress={() => refresh.mutate()} isDisabled={refresh.isPending}>
               {t('connections.refresh')}
             </Button>
+            {connection.credentials.some((credential) => credential.purpose === 'schema') && (
+              <Button onPress={() => setDesigning(true)}>{t('tables.new')}</Button>
+            )}
             <Button variant="danger" onPress={() => remove.mutate()} isDisabled={remove.isPending}>
               {t('action.delete')}
             </Button>
@@ -405,6 +410,9 @@ export function ConnectionPage() {
           objects={objects}
           onClose={() => setAddingRelation(false)}
         />
+      )}
+      {designing && (
+        <NewTableDialog connectionId={connection.id} onClose={() => setDesigning(false)} />
       )}
     </>
   )

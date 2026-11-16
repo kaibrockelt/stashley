@@ -58,6 +58,8 @@ export function TextField(props: {
   isRequired?: boolean
   isReadOnly?: boolean
   inputMode?: 'numeric' | 'text'
+  /** The label is read by screen readers only, e.g. in a table row. */
+  isLabelHidden?: boolean
 }) {
   return (
     <AriaTextField
@@ -73,7 +75,9 @@ export function TextField(props: {
       {...(props.autoComplete !== undefined && { autoComplete: props.autoComplete })}
       {...(props.inputMode !== undefined && { inputMode: props.inputMode })}
     >
-      <Label className={styles.label}>{props.label}</Label>
+      <Label className={props.isLabelHidden === true ? styles.visuallyHidden : styles.label}>
+        {props.label}
+      </Label>
       <Input className={styles.input} />
       {props.description !== undefined && (
         <Text slot="description" className={styles.description}>
