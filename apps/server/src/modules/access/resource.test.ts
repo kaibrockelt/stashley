@@ -203,8 +203,10 @@ describe('resource models', () => {
     ])
   })
 
-  it('serve nothing for inactive or unreadable objects', () => {
+  it('serve nothing for inactive objects, and only create for create-only tables', () => {
     expect(model('zahlung', { zahlung: { active: false } })).toBeUndefined()
-    expect(model('zahlung', { zahlung: { ceiling: toMask(['create']) } })).toBeUndefined()
+    expect(model('zahlung', { zahlung: { ceiling: toMask(['create']) } })?.available).toEqual([
+      'create',
+    ])
   })
 })

@@ -84,8 +84,8 @@ function readableColumns(catalog: CatalogObject, object: ObjectFacts): CatalogCo
 }
 
 /**
- * Builds the resource model of an exposed object, or undefined when it cannot serve reads
- * (inactive, gone from the catalog, without read in the ceiling).
+ * Builds the resource model of an exposed object, or undefined when it cannot serve
+ * (inactive, gone from the catalog, a table without a single-column key).
  */
 export function buildResourceModel(
   connection: ConnectionFacts,
@@ -93,13 +93,24 @@ export function buildResourceModel(
   alias: string,
 ): ResourceModel | undefined {
   const catalog = connection.catalog.get(object.objectName)
-  if (catalog === undefined || !object.active || !hasOp(object.ceiling, 'read')) return undefined
+  if (catalog === undefined || !object.active) return undefined
   if (object.objectType === 'table' && object.keyColumn === null) return undefined
   const columns = readableColumns(catalog, object)
   if (columns.length === 0) return undefined
   const keyless = object.keyColumn === null
   // A view without a key column pages by position; its first column stands in for the key.
   const keyColumn = object.keyColumn ?? (columns[0] as CatalogColumn).name
+  // The write path reads its rows back even where the ceiling has no read (create-only
+  // tables); `available` below still leaves out every read operation then.
+  const readable: ConnectionFacts = {
+    ...connection,
+    access: (name) => {
+      const found = connection.access(name)
+      return found === undefined || name !== object.objectName
+        ? found
+        : { ...found, keyColumn, ceiling: found.ceiling | opBits.read }
+    },
+  }
   let read: TableModel
   try {
     read = buildTableModel(
@@ -118,17 +129,7 @@ export function buildResourceModel(
         editing: null,
         csvExport: false,
       },
-      keyless
-        ? {
-            ...connection,
-            access: (name) => {
-              const found = connection.access(name)
-              return found === undefined || name !== object.objectName
-                ? found
-                : { ...found, keyColumn }
-            },
-          }
-        : connection,
+      readable,
       'resource',
     )
   } catch (error) {
@@ -190,8 +191,8 @@ export function buildResourceModel(
     ]) {
       let failed = false
       const built = buildWriteModel(
-        connection,
-        object,
+        readable,
+        { ...object, ceiling: object.ceiling | opBits.read },
         {
           path: 'resource',
           fieldsPath: 'resource.fields',

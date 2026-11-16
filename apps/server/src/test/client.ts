@@ -56,6 +56,28 @@ export class TestClient {
     return response
   }
 
+  /** Posts a raw body, e.g. a CSV upload (D1), with a fresh CSRF token. */
+  async upload(
+    url: string,
+    payload: string | Buffer,
+    contentType = 'text/csv',
+  ): Promise<LightMyRequestResponse> {
+    await this.session()
+    const response = await this.app.inject({
+      method: 'POST',
+      url,
+      headers: {
+        cookie: this.cookieHeader(),
+        'x-csrf-token': this.csrf,
+        'sec-fetch-site': 'same-origin',
+        'content-type': contentType,
+      },
+      payload,
+    })
+    this.store(response)
+    return response
+  }
+
   /** Sends a state-changing request with a fresh CSRF token. */
   async send(
     method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',

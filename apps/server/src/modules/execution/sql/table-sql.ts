@@ -592,3 +592,27 @@ export function rowStatement(
     reversed: false,
   }
 }
+
+/**
+ * Rows of a model whose column `match` equals one of `values` (CSV import, E26): the key
+ * `value` and the matched text, e.g. a person by e-mail or by display value.
+ */
+export function matchStatement(
+  model: TableModel,
+  values: readonly unknown[],
+  valueId = 'value',
+  matchId = 'match',
+): Statement {
+  const value = model.columns.find((column) => column.id === valueId)
+  const match = model.columns.find((column) => column.id === matchId)
+  if (value === undefined || match === undefined || values.length === 0) {
+    throw new TableRequestError([{ field: 'match', code: 'invalid' }])
+  }
+  const expr = outputSql(match.expr)
+  const compiled =
+    sql`SELECT ${outputSql(value.expr)} AS ${sql.id('v')}, ${expr} AS ${sql.id('m')} FROM ${from(
+      model,
+      model.joins,
+    )} WHERE ${expr} IN (${sql.join(values.map((item) => sql`${item}`))})`.compile(compiler)
+  return { sql: compiled.sql, values: [...compiled.parameters] }
+}

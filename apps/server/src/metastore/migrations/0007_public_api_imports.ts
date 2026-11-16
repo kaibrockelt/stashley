@@ -52,8 +52,9 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   await db.schema
     .createTable('import_jobs')
     .addColumn('id', 'text', (col) => col.primaryKey())
+    // Both are chosen after the upload.
     .addColumn('connection_id', 'text', (col) =>
-      col.notNull().references('connections.id').onDelete('cascade'),
+      col.references('connections.id').onDelete('cascade'),
     )
     .addColumn('table_access_id', 'text', (col) =>
       col.references('table_access.id').onDelete('set null'),
@@ -64,6 +65,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn('file_name', 'text', (col) => col.notNull())
     .addColumn('file_sha256', 'text', (col) => col.notNull())
     .addColumn('file_size', 'integer', (col) => col.notNull())
+    .addColumn('encoding_detected', 'text', (col) => col.notNull())
     .addColumn('parse_options', 'text', (col) => col.notNull())
     .addColumn('mapping', 'text')
     .addColumn('status', 'text', (col) => col.notNull())

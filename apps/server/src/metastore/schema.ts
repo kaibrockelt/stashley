@@ -379,7 +379,7 @@ export interface ApiTokenGrantsTable {
 
 export interface ImportJobsTable {
   id: string
-  connection_id: string
+  connection_id: string | null
   table_access_id: string | null
   /** JSON: the definition of a table to create (E28). */
   new_table: string | null
@@ -389,6 +389,8 @@ export interface ImportJobsTable {
   file_name: string
   file_sha256: string
   file_size: number
+  /** What the upload looked like, kept for the reset of options. */
+  encoding_detected: string
   parse_options: string
   mapping: string | null
   status: string

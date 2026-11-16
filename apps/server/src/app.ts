@@ -19,6 +19,7 @@ import { registerRoleRoutes } from './modules/roles/routes.ts'
 import { registerAdminRoutes } from './modules/users/routes.ts'
 import { registerApiAdminRoutes } from './modules/public-api/admin-routes.ts'
 import { registerPublicApi } from './modules/public-api/routes.ts'
+import { registerImportRoutes } from './modules/imports/routes.ts'
 import { createServices, type ServiceOverrides, type Services } from './services.ts'
 import { registerSecurity } from './platform/http/security.ts'
 import {
@@ -133,6 +134,7 @@ export async function createServer(
     tokens: services.apiTokens,
     docs: services.apiDocs,
   })
+  registerImportRoutes(app, { imports: services.imports, maxBytes: config.imports.maxBytes })
   if (config.publicApi) {
     registerPublicApi(app, {
       access: services.access,
@@ -178,6 +180,14 @@ export async function createServer(
       run: () => services.catalog.checkAll(),
     },
     {
+      name: 'imports.cleanup',
+      intervalMs: day / 24,
+      async run() {
+        const removed = await services.imports.cleanup()
+        if (removed > 0) app.log.info({ removed }, 'expired imports removed')
+      },
+    },
+    {
       name: 'sessions.cleanup',
       intervalMs: day / 24,
       async run() {
@@ -211,6 +221,7 @@ export async function createServer(
         )
       }
       await verifyKey(settings, keys)
+      await services.imports.recover()
       const admin = await services.usersService.bootstrapAdmin(systemActor, config.initialAdmin)
       if (admin !== undefined) app.log.info('initial admin created')
       await heartbeat.start()
@@ -225,6 +236,8 @@ export async function createServer(
         await app.close()
         await services.auth.idle()
         await scheduler.stop()
+        // A running import rolls back when its connection closes; the job is marked failed.
+        await services.imports.recover()
         await services.apiTokens.flush().catch((error: unknown) => {
           app.log.error({ err: error }, 'API usage counters not written')
         })

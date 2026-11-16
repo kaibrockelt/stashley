@@ -22,6 +22,7 @@ import { ResourceReader } from './modules/execution/resource-reader.ts'
 import { ApiEndpoints } from './modules/public-api/endpoints.ts'
 import { ApiTokens } from './modules/public-api/tokens.ts'
 import { ApiDocs } from './modules/public-api/docs.ts'
+import { ImportService } from './modules/imports/service.ts'
 import { TargetPools, type HostResolver } from './target/pools.ts'
 import { sessionCookieName } from './modules/auth/sessions.ts'
 import { createOidcClient, OidcService, type OidcClient } from './modules/auth/oidc.ts'
@@ -147,6 +148,19 @@ export function createServices(
   catalog.addImpactProvider((connectionId, diff) => apiEndpoints.impact(connectionId, diff))
   const apiTokens = new ApiTokens({ db, audit, events, clock })
   const apiDocs = new ApiDocs({ access, endpoints: apiEndpoints, baseUrl: base, events })
+  const imports = new ImportService({
+    db,
+    access,
+    connections,
+    pools,
+    audit,
+    events,
+    dataDir: config.dataDir,
+    limits: config.imports,
+    timeZone: config.timeZone,
+    log,
+    clock,
+  })
   const writer = new RowWriter({
     connections,
     pools,
@@ -167,6 +181,7 @@ export function createServices(
     apiEndpoints,
     apiTokens,
     apiDocs,
+    imports,
     facts,
     pages,
     reader,
