@@ -95,6 +95,7 @@ const impactLabels: Record<ImpactItem['kind'], MessageId> = {
   relation: 'drift.impact.relation',
   query: 'drift.impact.query',
   component: 'drift.impact.component',
+  api_endpoint: 'drift.impact.apiEndpoint',
 }
 
 const reasonLabels: Record<ImpactItem['reason'], MessageId> = {
@@ -103,6 +104,7 @@ const reasonLabels: Record<ImpactItem['reason'], MessageId> = {
   column_changed: 'drift.reason.columnChanged',
   key_changed: 'drift.reason.keyChanged',
   type_changed: 'drift.reason.typeChanged',
+  column_added: 'drift.reason.columnAdded',
 }
 
 export function GrantSummary(props: { report: GrantReport | null }) {

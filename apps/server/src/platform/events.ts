@@ -20,6 +20,8 @@ export interface EventMap {
   'roles.changed': Record<string, never>
   'user.changed': { userId: string }
   'variable.changed': { name: string }
+  /** Endpoints, tokens or token grants of the public API changed. */
+  'api.changed': Record<string, never>
   /** Rows of these objects were written through the UI, the public API or an import. */
   'rows.written': { connectionId: string; objects: string[] }
 }

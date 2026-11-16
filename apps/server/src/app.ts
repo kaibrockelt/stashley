@@ -17,6 +17,7 @@ import { registerQueryRoutes } from './modules/queries/routes.ts'
 import { registerRuntimeRoutes } from './modules/runtime/routes.ts'
 import { registerRoleRoutes } from './modules/roles/routes.ts'
 import { registerAdminRoutes } from './modules/users/routes.ts'
+import { registerApiAdminRoutes } from './modules/public-api/admin-routes.ts'
 import { createServices, type ServiceOverrides, type Services } from './services.ts'
 import { registerSecurity } from './platform/http/security.ts'
 import {
@@ -126,6 +127,7 @@ export async function createServer(
   registerRoleRoutes(app, { roles: services.roles, variables: services.variables })
   registerQueryRoutes(app, { queries: services.queries })
   registerPageRoutes(app, { pages: services.pages, access: services.access })
+  registerApiAdminRoutes(app, { endpoints: services.apiEndpoints, tokens: services.apiTokens })
   registerRuntimeRoutes(app, {
     access: services.access,
     reader: services.reader,
@@ -208,6 +210,9 @@ export async function createServer(
         await app.close()
         await services.auth.idle()
         await scheduler.stop()
+        await services.apiTokens.flush().catch((error: unknown) => {
+          app.log.error({ err: error }, 'API usage counters not written')
+        })
         await services.pools.closeAll()
         await heartbeat.stop().catch(() => undefined)
         await store.close()

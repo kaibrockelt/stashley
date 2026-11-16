@@ -243,10 +243,23 @@ export interface SchemaDiff {
 
 export interface ImpactItem {
   kind:
-    'table_access' | 'column_exclusion' | 'display_template' | 'relation' | 'query' | 'component'
+    | 'table_access'
+    | 'column_exclusion'
+    | 'display_template'
+    | 'relation'
+    | 'query'
+    | 'component'
+    | 'api_endpoint'
   id: string
   label: string
-  reason: 'object_removed' | 'column_removed' | 'column_changed' | 'key_changed' | 'type_changed'
+  reason:
+    | 'object_removed'
+    | 'column_removed'
+    | 'column_changed'
+    | 'key_changed'
+    | 'type_changed'
+    /** API endpoints only: a new column changes the resource's contract. */
+    | 'column_added'
 }
 
 export interface SchemaRefreshResult {

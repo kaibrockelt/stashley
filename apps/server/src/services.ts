@@ -18,6 +18,8 @@ import { RolesService } from './modules/roles/service.ts'
 import { TableAccessService } from './modules/table-access/service.ts'
 import { VariablesService } from './modules/variables/service.ts'
 import { RowWriter } from './modules/execution/writer.ts'
+import { ApiEndpoints } from './modules/public-api/endpoints.ts'
+import { ApiTokens } from './modules/public-api/tokens.ts'
 import { TargetPools, type HostResolver } from './target/pools.ts'
 import { sessionCookieName } from './modules/auth/sessions.ts'
 import { createOidcClient, OidcService, type OidcClient } from './modules/auth/oidc.ts'
@@ -133,6 +135,10 @@ export function createServices(
     displayTimeZone: config.timeZone,
     clock,
   })
+  const apiEndpoints = new ApiEndpoints({ db, tableAccess, connections, audit, events, clock })
+  tableAccess.addDependent(apiEndpoints)
+  catalog.addImpactProvider((connectionId, diff) => apiEndpoints.impact(connectionId, diff))
+  const apiTokens = new ApiTokens({ db, audit, events, clock })
   const writer = new RowWriter({
     connections,
     pools,
@@ -150,6 +156,8 @@ export function createServices(
   })
   return {
     access,
+    apiEndpoints,
+    apiTokens,
     facts,
     pages,
     reader,

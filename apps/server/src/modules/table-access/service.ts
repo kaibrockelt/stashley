@@ -3,6 +3,7 @@
 import type {
   AccessWarning,
   CatalogObject,
+  ChangeConsequence,
   CatalogSnapshot,
   GrantReport,
   Relation,
@@ -55,6 +56,25 @@ export interface TableAccessDeps {
   audit: AuditLog
   clock?: Clock
   events?: EventBus
+}
+
+/** A change of a table access, as modules built on it see it (E15). */
+export interface AccessChange {
+  ops: TableOp[]
+  objectType: 'table' | 'view'
+  keyColumn: string | null
+  apiResource: string
+  removed: boolean
+}
+
+/**
+ * A module built on table access (the public API): it lists what a change takes away, so
+ * the admin confirms it first, and applies it in the same transaction (E15).
+ */
+export interface TableAccessDependent {
+  /** What the change takes away; throws a field error to refuse it. */
+  consequences(before: TableAccess, change: AccessChange): Promise<ChangeConsequence[]>
+  apply(trx: Kysely<Database>, before: TableAccess, change: AccessChange): Promise<void>
 }
 
 /** A relation usable in display templates and linked columns. */
@@ -110,10 +130,31 @@ function defaultResource(objectName: string): string {
 export class TableAccessService {
   private readonly deps: TableAccessDeps
   private readonly clock: Clock
+  private readonly dependents: TableAccessDependent[] = []
 
   constructor(deps: TableAccessDeps) {
     this.deps = deps
     this.clock = deps.clock ?? systemClock
+  }
+
+  addDependent(dependent: TableAccessDependent): void {
+    this.dependents.push(dependent)
+  }
+
+  /** Consequences of a change; without `confirm` a change with any is refused (E15). */
+  private async consequences(
+    before: TableAccess,
+    change: AccessChange,
+    confirm: boolean | undefined,
+  ): Promise<ChangeConsequence[]> {
+    const all: ChangeConsequence[] = []
+    for (const dependent of this.dependents) {
+      all.push(...(await dependent.consequences(before, change)))
+    }
+    if (all.length > 0 && confirm !== true) {
+      throw new AppError('confirmation_required', { consequences: all })
+    }
+    return all
   }
 
   private async snapshot(connectionId: string): Promise<CatalogSnapshot> {
@@ -621,6 +662,14 @@ export class TableAccessService {
         .executeTakeFirst()
       if (used !== undefined) throw fieldError('keyColumn', 'used_by_relation')
     }
+    const change: AccessChange = {
+      ops: values.ops,
+      objectType: values.object.type,
+      keyColumn: values.keyColumn,
+      apiResource: values.apiResource,
+      removed: false,
+    }
+    const consequences = await this.consequences(before, change, input.confirm)
     await writeTransaction(this.deps.db, async (trx) => {
       await trx
         .updateTable('table_access')
@@ -636,6 +685,7 @@ export class TableAccessService {
         .where('id', '=', id)
         .execute()
       await this.saveExclusions(trx, id, values.exclusions)
+      for (const dependent of this.dependents) await dependent.apply(trx, before, change)
     })
     const after = await this.get(id)
     const changes: Record<string, [unknown, unknown]> = {}
@@ -659,20 +709,33 @@ export class TableAccessService {
         connectionId: before.connectionId,
         objectName: before.objectName,
         changes,
+        ...(consequences.length > 0 && { details: { consequences } }),
       })
     }
     this.changed(before.connectionId)
     return after
   }
 
-  async remove(actor: Actor, id: string): Promise<void> {
+  async remove(actor: Actor, id: string, options: { confirm?: boolean } = {}): Promise<void> {
     const access = await this.get(id)
-    await this.deps.db.deleteFrom('table_access').where('id', '=', id).execute()
+    const change: AccessChange = {
+      ops: access.ops,
+      objectType: access.objectType,
+      keyColumn: access.keyColumn,
+      apiResource: access.apiResource,
+      removed: true,
+    }
+    const consequences = await this.consequences(access, change, options.confirm)
+    await writeTransaction(this.deps.db, async (trx) => {
+      for (const dependent of this.dependents) await dependent.apply(trx, access, change)
+      await trx.deleteFrom('table_access').where('id', '=', id).execute()
+    })
     await this.deps.audit.record(actor, {
       action: 'table_access.deleted',
       subject: { kind: 'table_access', id, label: access.objectName },
       connectionId: access.connectionId,
       objectName: access.objectName,
+      ...(consequences.length > 0 && { details: { consequences } }),
     })
     this.changed(access.connectionId)
   }
