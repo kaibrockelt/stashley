@@ -18,6 +18,7 @@ import { registerRuntimeRoutes } from './modules/runtime/routes.ts'
 import { registerRoleRoutes } from './modules/roles/routes.ts'
 import { registerAdminRoutes } from './modules/users/routes.ts'
 import { registerApiAdminRoutes } from './modules/public-api/admin-routes.ts'
+import { registerPublicApi } from './modules/public-api/routes.ts'
 import { createServices, type ServiceOverrides, type Services } from './services.ts'
 import { registerSecurity } from './platform/http/security.ts'
 import {
@@ -128,6 +129,15 @@ export async function createServer(
   registerQueryRoutes(app, { queries: services.queries })
   registerPageRoutes(app, { pages: services.pages, access: services.access })
   registerApiAdminRoutes(app, { endpoints: services.apiEndpoints, tokens: services.apiTokens })
+  if (config.publicApi) {
+    registerPublicApi(app, {
+      access: services.access,
+      endpoints: services.apiEndpoints,
+      tokens: services.apiTokens,
+      reader: services.resourceReader,
+      writer: services.writer,
+    })
+  }
   registerRuntimeRoutes(app, {
     access: services.access,
     reader: services.reader,

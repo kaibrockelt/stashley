@@ -34,6 +34,8 @@ export const columnFilterOperators = [
   'gte',
   'in',
   'contains',
+  /** The client's own pattern with `%` and `_`, `\\` escaping (public API, E19). */
+  'like',
   'null',
   'not_null',
 ] as const
@@ -57,6 +59,11 @@ export interface TableRequest {
   search?: string | undefined
   filters: readonly ColumnFilter[]
   cursor?: CursorPosition | undefined
+  /**
+   * Pages by position instead of keyset, for views without a key column (public API): the
+   * rows are ordered by every selected column so the order is deterministic.
+   */
+  offset?: number | undefined
   limit: number
 }
 
@@ -253,6 +260,14 @@ function conditions(
       out.push(sql`${expr} LIKE ${like(filter.value)}`)
       return
     }
+    if (filter.operator === 'like') {
+      if (typeof filter.value !== 'string' || filter.value.length > 1000) {
+        return void errors.push({ field: `${field}.value`, code: 'invalid' })
+      }
+      // Backslash is the default escape character of LIKE, as for `contains`.
+      out.push(sql`${expr} LIKE ${filter.value}`)
+      return
+    }
     if (column.expr.type === 'template') {
       return void errors.push({ field: `${field}.operator`, code: 'not_allowed' })
     }
@@ -410,6 +425,29 @@ export function selectStatement(
   const order = descending ? sql`DESC` : sql`ASC`
 
   const parts = [...filter.sql]
+  if (request.offset !== undefined) {
+    const selected = model.columns.map(
+      (column, index) => sql`${outputSql(column.expr)} AS ${sql.id(`c${index}`)}`,
+    )
+    const ascending = sortSpec?.direction !== 'desc'
+    const orderBy = [
+      ...(sortColumn === undefined
+        ? []
+        : [sql`${outputSql(sortColumn.expr)} ${ascending ? sql`ASC` : sql`DESC`}`]),
+      ...model.columns.map((column) => sql`${outputSql(column.expr)} ASC`),
+    ]
+    const compiled =
+      sql`SELECT ${sql.join(selected)}, ${key} AS ${sql.id('k')} FROM ${from(model, model.joins)}${where(parts)} ORDER BY ${sql.join(orderBy)} LIMIT ${request.limit + 1} OFFSET ${request.offset}`.compile(
+        compiler,
+      )
+    return {
+      sql: compiled.sql,
+      values: [...compiled.parameters],
+      outputs: model.columns,
+      sortIsKey: true,
+      reversed: false,
+    }
+  }
   if (request.cursor !== undefined) {
     parts.push(
       sortIsKey

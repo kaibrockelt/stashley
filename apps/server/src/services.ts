@@ -18,6 +18,7 @@ import { RolesService } from './modules/roles/service.ts'
 import { TableAccessService } from './modules/table-access/service.ts'
 import { VariablesService } from './modules/variables/service.ts'
 import { RowWriter } from './modules/execution/writer.ts'
+import { ResourceReader } from './modules/execution/resource-reader.ts'
 import { ApiEndpoints } from './modules/public-api/endpoints.ts'
 import { ApiTokens } from './modules/public-api/tokens.ts'
 import { TargetPools, type HostResolver } from './target/pools.ts'
@@ -135,6 +136,11 @@ export function createServices(
     displayTimeZone: config.timeZone,
     clock,
   })
+  const resourceReader = new ResourceReader({
+    executor,
+    cursorKey: keys.key('cursor'),
+    displayTimeZone: config.timeZone,
+  })
   const apiEndpoints = new ApiEndpoints({ db, tableAccess, connections, audit, events, clock })
   tableAccess.addDependent(apiEndpoints)
   catalog.addImpactProvider((connectionId, diff) => apiEndpoints.impact(connectionId, diff))
@@ -161,6 +167,7 @@ export function createServices(
     facts,
     pages,
     reader,
+    resourceReader,
     writer,
     cache,
     executor,

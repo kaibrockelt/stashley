@@ -71,10 +71,43 @@ export class ApiEndpoints implements TableAccessDependent {
     events: EventBus
   }
   private readonly clock: Clock
+  /** Enabled endpoints by table access, for requests; dropped on every change. */
+  private enabledCache: Promise<Map<string, ReadonlySet<ApiOperation>>> | undefined
 
   constructor(deps: ApiEndpoints['deps'] & { clock?: Clock }) {
     this.deps = deps
     this.clock = deps.clock ?? systemClock
+    const drop = () => {
+      this.enabledCache = undefined
+    }
+    deps.events.on('api.changed', drop)
+    deps.events.on('table-access.changed', drop)
+  }
+
+  /** The enabled endpoints of a table access, cached for requests. */
+  async enabled(tableAccessId: string): Promise<ReadonlySet<ApiOperation>> {
+    let cache = this.enabledCache
+    if (cache === undefined) {
+      cache = this.deps.db
+        .selectFrom('api_endpoints')
+        .select(['table_access_id', 'operation'])
+        .execute()
+        .then((rows) => {
+          const map = new Map<string, Set<ApiOperation>>()
+          for (const row of rows) {
+            if (!isApiOperation(row.operation)) continue
+            const set = map.get(row.table_access_id) ?? new Set<ApiOperation>()
+            set.add(row.operation)
+            map.set(row.table_access_id, set)
+          }
+          return map
+        })
+      cache.catch(() => {
+        this.enabledCache = undefined
+      })
+      this.enabledCache = cache
+    }
+    return (await cache).get(tableAccessId) ?? new Set()
   }
 
   private async enabledOf(
