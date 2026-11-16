@@ -48,6 +48,18 @@ const widgetLabels: Record<string, MessageId> = {
 
 const dateKinds = new Set(['date', 'datetime', 'timestamp'])
 
+const operatorLabels: Record<(typeof baseFilterOperators)[number], MessageId> = {
+  eq: 'editor.operator.eq',
+  ne: 'editor.operator.ne',
+  lt: 'editor.operator.lt',
+  lte: 'editor.operator.lte',
+  gt: 'editor.operator.gt',
+  gte: 'editor.operator.gte',
+  in: 'editor.operator.in',
+  null: 'editor.operator.null',
+  not_null: 'editor.operator.not_null',
+}
+
 function nextId(used: readonly string[], base: string): string {
   const clean =
     base
@@ -430,7 +442,7 @@ export function BaseFilterEditor(props: {
               }}
               options={baseFilterOperators.map((operator) => ({
                 id: operator,
-                label: t(`editor.operator.${operator}` as MessageId),
+                label: t(operatorLabels[operator]),
               }))}
             />
             {!valueless && (
