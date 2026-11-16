@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { ApiTokenCreated, ProblemDocument, TableAccess } from '@stashley/shared'
+import { Validator } from '@seriousme/openapi-schema-validator'
 import { describe, expect, it } from 'vitest'
 import { setupDemo } from '../../test/demo.ts'
 import { setupServer, type TestSetup } from '../../test/setup.ts'
@@ -256,5 +257,57 @@ describe('public API requests', () => {
     expect(text.statusCode).toBe(415)
     const large = await post({ kommentar: 'x'.repeat(1024 * 1024) })
     expect(large.statusCode).toBe(413)
+  })
+})
+
+describe('OpenAPI document (§16, E21)', () => {
+  async function valid(document: unknown) {
+    const result = await new Validator().validate(document as Record<string, unknown>)
+    expect(result.errors ?? []).toEqual([])
+    expect(result.valid).toBe(true)
+  }
+
+  it('needs a token and lists only what the token can use', async () => {
+    const f = await setup()
+    const anonymous = await call(f, 'GET', '/api/docs')
+    expect(anonymous.statusCode).toBe(401)
+    expect(anonymous.headers['www-authenticate']).toBe('Bearer realm="stashley"')
+
+    const secret = await token(f, [{ tableAccessId: f.zahlung.id, operation: 'create' }])
+    const response = await call(f, 'GET', '/api/docs', { token: secret })
+    expect(response.statusCode).toBe(200)
+    const document = response.json<{
+      openapi: string
+      paths: Record<string, Record<string, unknown>>
+      components: { schemas: Record<string, { properties?: Record<string, unknown> }> }
+    }>()
+    expect(document.openapi).toBe('3.1.0')
+    expect(Object.keys(document.paths)).toEqual(['/payments'])
+    expect(Object.keys(document.paths['/payments'] ?? {})).toEqual(['post'])
+    expect(Object.keys(document.components.schemas.PaymentsCreate?.properties ?? {})).toEqual([
+      'anmeldung_id',
+      'betrag',
+      'eingang_am',
+    ])
+    expect(response.body).not.toContain('zahlung')
+    expect(response.body).not.toContain('hotel')
+    await valid(document)
+  })
+
+  it('lists every enabled endpoint for admins, without excluded columns', async () => {
+    const f = await setup()
+    const response = await f.s.admin.request('GET', '/internal/admin/api/openapi')
+    expect(response.statusCode).toBe(200)
+    const document = response.json<{ paths: Record<string, Record<string, unknown>> }>()
+    expect(Object.keys(document.paths).sort()).toEqual([
+      '/hotels',
+      '/hotels/count',
+      '/hotels/schema',
+      '/payments',
+      '/payments/{id}',
+    ])
+    expect(response.body).not.toContain('kontakt_email')
+    expect(response.body).not.toContain('"zahlung')
+    await valid(document)
   })
 })

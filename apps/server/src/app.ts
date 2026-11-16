@@ -128,7 +128,11 @@ export async function createServer(
   registerRoleRoutes(app, { roles: services.roles, variables: services.variables })
   registerQueryRoutes(app, { queries: services.queries })
   registerPageRoutes(app, { pages: services.pages, access: services.access })
-  registerApiAdminRoutes(app, { endpoints: services.apiEndpoints, tokens: services.apiTokens })
+  registerApiAdminRoutes(app, {
+    endpoints: services.apiEndpoints,
+    tokens: services.apiTokens,
+    docs: services.apiDocs,
+  })
   if (config.publicApi) {
     registerPublicApi(app, {
       access: services.access,
@@ -136,6 +140,7 @@ export async function createServer(
       tokens: services.apiTokens,
       reader: services.resourceReader,
       writer: services.writer,
+      docs: services.apiDocs,
     })
   }
   registerRuntimeRoutes(app, {

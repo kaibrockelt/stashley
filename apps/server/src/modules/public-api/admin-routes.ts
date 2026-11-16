@@ -5,12 +5,14 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { parse } from '../../platform/http/validation.ts'
 import { actorOf, requireRole } from '../auth/context.ts'
+import type { ApiDocs } from './docs.ts'
 import type { ApiEndpoints } from './endpoints.ts'
 import type { ApiTokens } from './tokens.ts'
 
 export interface ApiAdminRouteDeps {
   endpoints: ApiEndpoints
   tokens: ApiTokens
+  docs: ApiDocs
 }
 
 const tableAccessParams = z.object({ tableAccessId: z.uuid() })
@@ -33,6 +35,11 @@ export function registerApiAdminRoutes(app: FastifyInstance, deps: ApiAdminRoute
       tableAccessId,
       parse(apiEndpointsUpdate.strict(), request.body),
     )
+  })
+
+  app.get('/internal/admin/api/openapi', async (request) => {
+    admin(request)
+    return deps.docs.full()
   })
 
   app.get('/internal/admin/api/tokens', async (request) => {

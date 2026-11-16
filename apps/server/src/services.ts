@@ -21,6 +21,7 @@ import { RowWriter } from './modules/execution/writer.ts'
 import { ResourceReader } from './modules/execution/resource-reader.ts'
 import { ApiEndpoints } from './modules/public-api/endpoints.ts'
 import { ApiTokens } from './modules/public-api/tokens.ts'
+import { ApiDocs } from './modules/public-api/docs.ts'
 import { TargetPools, type HostResolver } from './target/pools.ts'
 import { sessionCookieName } from './modules/auth/sessions.ts'
 import { createOidcClient, OidcService, type OidcClient } from './modules/auth/oidc.ts'
@@ -145,6 +146,7 @@ export function createServices(
   tableAccess.addDependent(apiEndpoints)
   catalog.addImpactProvider((connectionId, diff) => apiEndpoints.impact(connectionId, diff))
   const apiTokens = new ApiTokens({ db, audit, events, clock })
+  const apiDocs = new ApiDocs({ access, endpoints: apiEndpoints, baseUrl: base, events })
   const writer = new RowWriter({
     connections,
     pools,
@@ -164,6 +166,7 @@ export function createServices(
     access,
     apiEndpoints,
     apiTokens,
+    apiDocs,
     facts,
     pages,
     reader,

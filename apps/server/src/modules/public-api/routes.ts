@@ -10,6 +10,7 @@ import { FailureLimiter } from '../auth/failure-limiter.ts'
 import type { AccessService, AuthorizedResource } from '../access/service.ts'
 import type { ResourceReader } from '../execution/resource-reader.ts'
 import type { RowWriter, WrittenRow } from '../execution/writer.ts'
+import type { ApiDocs } from './docs.ts'
 import type { ApiEndpoints } from './endpoints.ts'
 import { checkBody, onlyParameters, parseCountQuery, parseListQuery } from './query.ts'
 import type { ApiPrincipal, ApiTokens } from './tokens.ts'
@@ -20,6 +21,7 @@ export interface PublicApiDeps {
   tokens: ApiTokens
   reader: ResourceReader
   writer: RowWriter
+  docs: ApiDocs
 }
 
 declare module 'fastify' {
@@ -145,6 +147,12 @@ export function registerPublicApi(app: FastifyInstance, deps: PublicApiDeps): vo
         if (written.version !== undefined) void reply.header('etag', `"${written.version}"`)
         return written.values ?? { [handle.resource.keyColumn]: written.key }
       }
+
+      // Without a token this answers 401 like every other route (E21).
+      api.get('/docs', async (request) => {
+        onlyParameters(request.query, [])
+        return deps.docs.forToken(request.apiPrincipal as ApiPrincipal)
+      })
 
       api.get('/v1/:resource', async (request) => {
         const handle = await authorize(request, 'list')
