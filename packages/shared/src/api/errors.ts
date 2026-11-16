@@ -13,6 +13,9 @@ export const errorCodes = {
   not_found: { status: 404, title: 'Not found' },
   method_not_allowed: { status: 405, title: 'Method not allowed' },
   conflict: { status: 409, title: 'Conflict' },
+  /** A change with consequences (E15) runs only when it is sent again with `confirm`. */
+  confirmation_required: { status: 409, title: 'Confirmation required' },
+  precondition_failed: { status: 412, title: 'Precondition failed' },
   payload_too_large: { status: 413, title: 'Payload too large' },
   unsupported_media_type: { status: 415, title: 'Unsupported media type' },
   rate_limited: { status: 429, title: 'Too many requests' },
@@ -74,6 +77,8 @@ export interface ProblemDocument {
   errorId?: string
   /** `version_conflict`: the record as it is now, or null when it is gone. */
   current?: unknown
+  /** `confirmation_required`: what the change would take away. */
+  consequences?: unknown[]
 }
 
 export const problemTypePrefix = 'urn:stashley:problem:'

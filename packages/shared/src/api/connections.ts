@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { z } from 'zod'
 import type { ValueKind } from '../values/column-kinds.ts'
+import { apiResourcePattern } from './public-api.ts'
 import {
   lockSetting,
   type LockProblem,
@@ -276,10 +277,7 @@ const tableAccessFields = {
   ops: z.array(z.enum(tableOps)).min(1).max(4),
   keyColumn: identifier.nullable(),
   displayTemplate: z.string().trim().max(500).nullable(),
-  apiResource: z
-    .string()
-    .regex(/^[a-z][a-z0-9_]{0,62}$/)
-    .nullable(),
+  apiResource: z.string().regex(apiResourcePattern).nullable(),
   mcpEnabled: z.boolean(),
   exclusions: z.array(z.object({ column: identifier, scope: z.enum(exclusionScopes) })).max(500),
   /** Optimistic locking (E7); absent on an update: unchanged. New table access starts with `auto`. */
@@ -291,7 +289,11 @@ export const tableAccessCreate = z.object({
   objectName: identifier,
   ...tableAccessFields,
 })
-export const tableAccessUpdate = z.object(tableAccessFields)
+export const tableAccessUpdate = z.object({
+  ...tableAccessFields,
+  /** Confirms the consequences of a previous `confirmation_required` answer (E15). */
+  confirm: z.boolean().optional(),
+})
 
 export interface AccessWarning {
   code:
