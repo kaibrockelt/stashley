@@ -121,6 +121,8 @@ export const tableSettings = z
     rowLink: rowLink.optional(),
     searchable: z.boolean().optional(),
     pageSize: z.number().int().min(1).max(500).optional(),
+    /** Query sources: CSV export, on unless turned off (table sources use `csvExport`). */
+    csvExport: z.boolean().optional(),
   })
   .strict()
 export type TableSettings = z.infer<typeof tableSettings>

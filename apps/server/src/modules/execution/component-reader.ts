@@ -14,7 +14,12 @@ import type {
   TableRow,
   ValueKind,
 } from '@stashley/shared'
-import { checkParamList, checkParamValue } from '@stashley/shared'
+import {
+  checkParamList,
+  checkParamValue,
+  parseSettings,
+  type TableSettings,
+} from '@stashley/shared'
 import type { Clock } from '../../platform/clock.ts'
 import { systemClock } from '../../platform/clock.ts'
 import { AppError } from '../../platform/http/problem.ts'
@@ -24,7 +29,7 @@ import { AccessFacts } from '../access/facts.ts'
 import type { CompiledReference, WriteField } from '../access/write-model.ts'
 import type { CompiledQuerySource, CompiledTableSource } from '../access/compile.ts'
 import type { QueryCache } from '../cache/query-cache.ts'
-import { buildStatement } from '../queries/sql-guard/executable.ts'
+import { buildStatement, type Statement } from '../queries/sql-guard/executable.ts'
 import type { VariablesService } from '../variables/service.ts'
 import { resolveBaseValues } from './base-values.ts'
 import { bindWrite, exists } from './sql/write-sql.ts'
@@ -39,6 +44,7 @@ import {
   TableRequestError,
   type ColumnFilter,
   type CursorPosition,
+  type SelectStatement,
   type ResolvedValues,
   type ValueOptions,
 } from './sql/table-sql.ts'
@@ -57,6 +63,9 @@ export interface ComponentInput {
 
 /** Stored queries run up to this many rows (§10.7). */
 export const queryRowLimit = 10_000
+/** At most this many rows per CSV export (E12). */
+export const exportRowLimit = 100_000
+const exportPageSize = 500
 /** Rows per page of query tables and filter options. */
 const defaultPageSize = 50
 const optionPageSize = 50
@@ -549,6 +558,118 @@ export class ComponentReader {
     const [row] = this.encodeRows(model.columns, raw.rows, raw.timeZone, model.key.kind).rows
     if (row === undefined) throw new AppError('not_found')
     return row
+  }
+
+  /**
+   * The rows of a table for CSV export (§ Tabellenseiten, E12): every row of the current
+   * filters, search and sort, at most `exportRowLimit`. Table sources page through the
+   * database by keyset without the cache; stored queries export their (cached) result.
+   */
+  async exportRows(
+    handle: AuthorizedComponent,
+    input: ComponentInput,
+  ): Promise<{
+    columns: { label: string; kind: ValueKind }[]
+    rows: AsyncIterable<unknown[]> | Iterable<unknown[]>
+  }> {
+    this.inputs(handle.page.document, input)
+    const block = handle.component.block
+    const source = handle.component.source
+    if (block.type !== 'table' || source === undefined) throw new AppError('not_found')
+    if (source.kind === 'table') {
+      if (block.table?.csvExport === false) throw new AppError('export_disabled')
+      const { model, options, values } = await this.tableContext(handle, source, input)
+      const request = { sort: input.sort, search: input.search, filters: input.columnFilters ?? [] }
+      let counted: Statement
+      let first: SelectStatement
+      try {
+        counted = countStatement(model, values, request, options)
+        first = selectStatement(model, values, { ...request, limit: exportPageSize }, options)
+      } catch (error) {
+        if (error instanceof TableRequestError) throw invalid(error.errors)
+        throw error
+      }
+      const count = await this.executor.execute(source.connection.connectionId, counted)
+      if (Number(count.rows[0]?.[0] ?? 0) > exportRowLimit) {
+        throw new AppError('export_too_large', {
+          errors: [{ field: '_', code: 'export_too_large', params: { max: exportRowLimit } }],
+        })
+      }
+      const executor = this.executor
+      const connectionId = source.connection.connectionId
+      const encode = (rows: unknown[][], timeZone: string) =>
+        this.encodeRows(model.columns, rows, timeZone, model.key.kind).rows
+      async function* rows(): AsyncGenerator<unknown[]> {
+        let statement = first
+        for (;;) {
+          const raw = await executor.execute(connectionId, statement)
+          const page = raw.rows.slice(0, exportPageSize)
+          for (const row of encode(page, raw.timeZone)) {
+            yield model.columns.map((column) => row.values[column.id] ?? null)
+          }
+          const last = page.at(-1)
+          if (raw.rows.length <= exportPageSize || last === undefined) return
+          statement = selectStatement(
+            model,
+            values,
+            {
+              ...request,
+              limit: exportPageSize,
+              cursor: {
+                direction: 'next',
+                key: last[model.columns.length],
+                sort: statement.sortIsKey ? null : last[model.columns.length + 1],
+              },
+            },
+            options,
+          )
+        }
+      }
+      return {
+        columns: model.columns.map((column) => ({
+          label: column.label ?? column.id,
+          kind: column.kind,
+        })),
+        rows: rows(),
+      }
+    }
+    const parsed = parseSettings('table', block.settings)
+    const settings: TableSettings | undefined = parsed.ok ? parsed.value : undefined
+    if (settings?.csvExport === false) throw new AppError('export_disabled')
+    const values: Record<string, unknown> = {}
+    for (const binding of source.bindings) {
+      const value = this.bound(binding.from, input)
+      if (value !== undefined && value !== null && value !== '') values[binding.parameter] = value
+    }
+    const { result } = await this.loadQuery(
+      await this.prepareQuery(source, handle.user, values),
+      false,
+    )
+    const filtered = filterRows(result, input)
+    const shown =
+      settings?.columns?.map((entry) => entry.column) ?? result.columns.map((column) => column.name)
+    const columns = shown.flatMap((name) => {
+      const column = result.columns.find((entry) => entry.name === name)
+      return column === undefined
+        ? []
+        : [
+            {
+              name,
+              label:
+                settings?.columns?.find((entry) => entry.column === name)?.label ??
+                settings?.labels?.[name] ??
+                name,
+              kind: column.kind,
+            },
+          ]
+    })
+    // A generator like the table path, so the route streams both the same way.
+    function* rows(): Generator<unknown[]> {
+      for (const row of filtered.slice(0, exportRowLimit)) {
+        yield columns.map((column) => row[column.name] ?? null)
+      }
+    }
+    return { columns: columns.map(({ label, kind }) => ({ label, kind })), rows: rows() }
   }
 
   /** A foreign key field of the component's write model, with its options. */

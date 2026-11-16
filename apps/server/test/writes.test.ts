@@ -385,7 +385,8 @@ describe.skipIf(targets.length === 0).each(targets)('writes on $name', ({ url })
       "SELECT betrag, kommentar, DATE_FORMAT(eingang_am, '%Y-%m-%d') AS eingang FROM zahlung WHERE id = ?",
       [written.key],
     )) as unknown as [{ betrag: string; kommentar: string; eingang: string }[]]
-    const today = Temporal.Now.plainDateISO('Europe/Berlin').toString()
+    // `today` is evaluated in APP_TIMEZONE, UTC on the test server.
+    const today = Temporal.Now.plainDateISO('UTC').toString()
     expect(stored[0]).toEqual({ betrag: '50.00', kommentar: 'Kasse', eingang: today })
 
     // The view over the payments shows the change without waiting for the cache (§12).
@@ -604,6 +605,29 @@ describe.skipIf(targets.length === 0).each(targets)('writes on $name', ({ url })
     })
     // The reception may change but not delete.
     expect((await users.lindenhof?.send('DELETE', `${base}/1`, {}))?.statusCode).toBe(403)
+  })
+
+  it('exports the filtered table as CSV in the user format and audits it', async () => {
+    const reception = users.lindenhof as TestClient
+    expect(
+      (await reception.send('PATCH', '/internal/profile', { formatLocale: 'de-DE' })).statusCode,
+    ).toBe(204)
+    const exported = await reception.send(
+      'POST',
+      `/internal/pages/${pages.lindenhof?.id}/components/gaeste/export`,
+      {},
+    )
+    expect(exported.statusCode, exported.body).toBe(200)
+    expect(exported.headers['content-type']).toBe('text/csv; charset=utf-8')
+    // Only the hotel's own bookings of the current event; date-times as wall times of
+    // APP_TIMEZONE, which is UTC on the test server.
+    expect(exported.body.split('\r\n'), JSON.stringify(exported.body)).toEqual([
+      '\uFEFFanreise;eingecheckt',
+      '2026-05-08;2026-05-08 16:45:00',
+      '',
+    ])
+    const audit = await auditOf('table.exported')
+    expect(audit.at(0)).toMatchObject({ action: 'table.exported' })
   })
 
   // Runs last: it narrows the write user to column grants (E6).

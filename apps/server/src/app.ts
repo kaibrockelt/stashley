@@ -130,6 +130,8 @@ export async function createServer(
     access: services.access,
     reader: services.reader,
     writer: services.writer,
+    audit: services.audit,
+    timeZone: config.timeZone,
   })
 
   const jobs: JobDefinition[] = [

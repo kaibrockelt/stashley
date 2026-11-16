@@ -12,13 +12,16 @@ import {
   type TableOp,
 } from '@stashley/shared'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { Readable } from 'node:stream'
 import { z } from 'zod'
+import { exportCell, exportFormat, exportRow } from '../../platform/csv.ts'
 import { AppError } from '../../platform/http/problem.ts'
 import { parse } from '../../platform/http/validation.ts'
 import type { AccessService, Viewer } from '../access/service.ts'
 import { actorOf, requireActive } from '../auth/context.ts'
 import type { ComponentInput, ComponentReader } from '../execution/component-reader.ts'
 import type { RowWriter } from '../execution/writer.ts'
+import type { AuditLog } from '../audit/audit-log.ts'
 
 const componentParams = z.object({ pageId: z.uuid(), componentId }).strict()
 const rowParams = componentParams.extend({ key: z.string().min(1).max(200) }).strict()
@@ -67,7 +70,15 @@ function inputOf(body: z.infer<typeof componentQuery>, refresh = false): Compone
  */
 export function registerRuntimeRoutes(
   app: FastifyInstance,
-  deps: { access: AccessService; reader: ComponentReader; writer: RowWriter; clock?: () => number },
+  deps: {
+    access: AccessService
+    reader: ComponentReader
+    writer: RowWriter
+    audit: AuditLog
+    /** `APP_TIMEZONE`, for date-times in exports. */
+    timeZone: string
+    clock?: () => number
+  },
 ): void {
   const { access, reader, writer } = deps
   const clock = deps.clock ?? Date.now
@@ -107,6 +118,59 @@ export function registerRuntimeRoutes(
       body.roles ?? [],
     )
   }
+
+  /**
+   * CSV export of a table with the current filters (§ Tabellenseiten, E12), while the user may
+   * read it. Every export is audited with user, page and row count.
+   */
+  app.post(
+    '/internal/pages/:pageId/components/:componentId/export',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const body = parse(componentQuery, request.body ?? {})
+      const handle = await authorize(request, body)
+      const { columns, rows } = await reader.exportRows(handle, inputOf(body))
+      const auth = requireActive(request)
+      const format = exportFormat(
+        auth.user.format_locale ?? auth.user.locale ?? 'en-US',
+        deps.timeZone,
+      )
+      const actor = actorOf(request)
+      const audit = deps.audit
+      const page = handle.page
+      async function* csv(): AsyncGenerator<string> {
+        // A byte order mark, so spreadsheets read UTF-8.
+        yield `\uFEFF${exportRow(
+          columns.map((column) => exportCell(column.label, 'string', format)),
+          format,
+        )}`
+        let count = 0
+        for await (const row of rows) {
+          count++
+          yield exportRow(
+            row.map((value, index) => exportCell(value, columns[index]?.kind ?? 'string', format)),
+            format,
+          )
+        }
+        await audit.record(actor, {
+          action: 'table.exported',
+          subject: {
+            kind: 'component',
+            id: handle.component.id,
+            label: handle.component.block.title,
+          },
+          pageId: page.pageId,
+          componentId: handle.component.id,
+          details: { rows: count, page: page.document.title },
+        })
+      }
+      const name = `${page.slug}-${handle.component.id}.csv`
+      void reply
+        .header('content-type', 'text/csv; charset=utf-8')
+        .header('content-disposition', `attachment; filename="${name}"`)
+      return reply.send(Readable.from(csv()))
+    },
+  )
 
   // Writes (§11). Forms create, update or upsert by their mode; tables by their editing.
   app.post(

@@ -49,6 +49,8 @@ export const errorCodes = {
   invalid_value: { status: 422, title: 'Invalid value' },
   check_violation: { status: 422, title: 'Check failed' },
   write_failed: { status: 422, title: 'Write failed' },
+  export_too_large: { status: 422, title: 'Too many rows to export' },
+  export_disabled: { status: 403, title: 'Export turned off' },
   internal_error: { status: 500, title: 'Internal error' },
   service_unavailable: { status: 503, title: 'Service unavailable' },
 } as const satisfies Record<string, { status: number; title: string }>
