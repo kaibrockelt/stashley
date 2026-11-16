@@ -336,3 +336,19 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
     - Stand's `anmeldung` display template falls back to `ticket_typ` (first text-like column); a template such as `{startnummer} – {person.nachname}` would make the payment selection readable. Configuration, not code.
     - The `Datenstand in 3 Sekunden` line shows a future time when the server clock runs ahead of the browser (from M5).
     - Required fields are marked with a plain `*` in the label text.
+- 2026-11-16: M6 reviewed: 1 blocking finding, 4 should-fix, 9 nice-to-have. The write path held the base filter; reads were open in two places. The operator approved all fixes, the option list base filter (S1 variant a) and refusing access over withholding data (B1), and asked to take every nice-to-have along. General priority from now on: security and bugs, then quality and usability, then new features.
+  - B1: upsert forms have no `read`, yet `GET …/rows/:key/edit` and the `version_conflict` answer of `PATCH` returned whole records. Updates by key and the record behind them now exist only for forms in edit mode and tables (others 404); conflicts carry the record only for readers; deletes only on tables.
+  - S1: foreign key selections from a table listed and saved every record of the target, e.g. the kontingents of every hotel. A field now takes a base filter on its target (`reference.baseFilter`), applied to the list (cached per resolved value) and to `value_not_allowed`; the field editor offers it. Query lists reject it.
+  - S2: equality conditions of the base filter now fill `NOT NULL` columns: they count as covered, make a field for the column optional on create and take part in the grant check.
+  - S3: the export audit entry is written in `finally`, with the rows sent and `complete`, so cancelled or failed downloads are audited.
+  - S4: write and export rate limits count per user, not per address.
+  - N1: simulated writes read the row as the change or the new row would leave it (a derived table through the model and its base filter) and report `base_filter_violation`; simulated deletes report `still_referenced` for `RESTRICT`/`NO ACTION` keys; simulated updates answer with the new values.
+  - N2: an upsert key found outside the base filter answers `unique_violation`, like a duplicate on create.
+  - N3/N4: saving checks query option lists against a fresh result and validates page filter and URL values like reads. A value beyond the 10,000-row limit is refused.
+  - N5: the keyset export stops at 100,000 rows even when rows arrive after the count.
+  - N6: the catalog reads `ON DELETE`/`ON UPDATE` actions (snapshots without them compare as before); writes evict the cache of tables that cascades or `SET NULL` change too. Triggers stay invisible.
+  - N7: the field editor says that visible server defaults only prefill.
+  - N8: delete conflicts carry the new version token (readers only).
+  - N9: a key the server cannot produce must be a field (`key_missing`).
+  - Verified: typecheck, lint, SPDX, i18n (1028 keys); 580 server, 86 shared and 67 web unit tests; 216 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7, among them an upsert form refused `/edit` and `PATCH`, a hotel's kontingent selection without other hotels, a registration without event field, and simulated base filter violations and blocked deletes in edit mode.
+  - Not covered by tests: a cancelled export (Fastify `inject` cannot abort a stream) and the per-user rate limit key.

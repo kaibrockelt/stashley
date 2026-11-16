@@ -457,6 +457,7 @@ effective(u, k)  = ( ⋃ over r ∈ principals(u) of compOps(r, k) )
 - **Delivery rule:** a component is delivered when `effective ∩ {read} ≠ ∅`, or when it is a form whose effective set contains its write operation. A form in edit mode needs both `read` and `update`.
 - **Secondary sources** are lookup columns, display templates, foreign key option lists and page filter options. They are authorized through their primary:
   - Lookup columns, display templates and foreign key option lists use the right of the component they belong to.
+  - A foreign key option list from a table shows every record of the target unless the field narrows it with its own base filter (`reference.baseFilter`, same value kinds as §13.1 base filters), e.g. to the kontingents of one hotel. Saving checks the value against the same conditions. Query option lists narrow themselves; only conditions on the user context or instance variables restrict, because page filter and URL values come from the client (E10).
   - Page filter options use the view right of the page.
 
   In every case each object involved must have `read` in its ceiling and none of the columns used may be excluded.
@@ -547,7 +548,7 @@ The admin overview is computed with the same algebra over every published page. 
 
 - **Introspection** runs with the read user, so the catalog contains exactly the objects that user can see. It reads these `information_schema` tables:
   - `TABLES`, `COLUMNS`, `STATISTICS` (primary and unique keys).
-  - `KEY_COLUMN_USAGE` and `REFERENTIAL_CONSTRAINTS` (foreign keys).
+  - `KEY_COLUMN_USAGE` and `REFERENTIAL_CONSTRAINTS` (foreign keys with their `ON DELETE` and `ON UPDATE` actions; snapshots from before the actions were read compare without them).
   - `VIEWS` (definitions, which need `SHOW VIEW`).
   - On MySQL, also `VIEW_TABLE_USAGE`.
 - **View dependencies:** on MariaDB, base tables are found by parsing view definitions with node-sql-parser, recursively through nested views. MariaDB stores definitions with nested parentheses the parser does not always accept; then the schema-qualified table names in the definition are used, which MariaDB always writes.
@@ -790,7 +791,8 @@ sequenceDiagram
   R->>X: update(authorized, key, payload)
   X->>X: validate payload (shared row schema, strict)
   X->>T: START TRANSACTION
-  X->>T: SELECT … WHERE pk = ? AND base filter FOR UPDATE
+  X->>T: SELECT … WHERE pk = ? FOR UPDATE (own table)
+  X->>T: SELECT … through the model WHERE pk = ? AND base filter
   X->>X: compare version token, else 409 with current row
   X->>T: UPDATE … WHERE pk = ?
   X->>T: re-select with base filter, else rollback
@@ -804,16 +806,17 @@ sequenceDiagram
 3. **Apply server values** (new rows only; updates never re-apply them):
    - Hidden default values from instance variables, the user context or constants, and visible ones the payload left out. Defaults from page filters and URL parameters come from the client (E10).
    - Generated date fields (`now`, `today`, `now ± <n><unit>` with `min`, `h`, `d`, `w`, `mo`, `y`), evaluated in `APP_TIMEZONE` (`shared/values/date-expression.ts`, with `Intl`, so the client shows the same suggestion). An editable one is an ordinary input on updates.
-   - Equality conditions of the base filter on the row's own columns, so new rows meet it without a field for them.
+   - Equality conditions of the base filter on the row's own columns, so new rows meet it without a field for them. Such a column counts as covered for required columns, a field for it becomes optional on create, and it takes part in the column grant check. A key the server cannot produce (no auto-increment, e.g. a `DEFAULT uuid()` key) must be a field (`key_missing`).
    - The lock column where it has no default: version 1, or now.
    - Auto-increment columns are never written.
-4. **Check foreign key fields** against their option source, which is the referenced object or a stored query. The check runs `SELECT 1 … WHERE key = ? LIMIT 1` with the same parameters as the option list. A value outside that list is rejected (`value_not_allowed`).
+4. **Check foreign key fields** against their option source, which is the referenced object (with the field's base filter) or a stored query. The check runs `SELECT 1 … WHERE key = ? LIMIT 1` with the same parameters as the option list; a stored query runs fresh, never from the cache, so an option that went away meanwhile is not saved, and a value beyond its row limit is refused. A value outside that list is rejected (`value_not_allowed`). Page filter and URL values are checked against the page's definitions first.
 5. **Write inside one transaction on the write pool:**
-   - **Update and delete:** lock the row with `SELECT … FROM <table> WHERE pk = ? FOR UPDATE` on its own table only, then read it through the base filter (with its joins) in the same transaction. `FOR UPDATE` over the joins would lock the joined tables as well and, on MySQL, need write privileges on them. If either finds nothing, return `404`. If the version token differs, return `409 version_conflict` with the current row (`current` in the problem document).
+   - **Update and delete:** lock the row with `SELECT … FROM <table> WHERE pk = ? FOR UPDATE` on its own table only, then read it through the base filter (with its joins) in the same transaction. `FOR UPDATE` over the joins would lock the joined tables as well and, on MySQL, need write privileges on them. If either finds nothing, return `404`. If the version token differs, return `409 version_conflict` with the current row and its token (`current` in the problem document), but only to callers that may read the component.
+   - **Updates by key** and `GET …/rows/:key/edit` exist only for forms in edit mode and for tables, which read their rows; create and upsert forms answer `404`. Deletes exist only for tables.
    - **Insert:** a generated `INSERT` of the writable fields and server values.
-   - **Upsert:** a locked lookup by the configured unique key decides between the update path and the insert path (§28, D2). The key is the primary key only when it is not auto-increment, otherwise a unique key without nullable columns (E8). A concurrent duplicate-key error on insert is retried once as an update. An existing row outside the base filter answers `403 base_filter_violation`.
+   - **Upsert:** a locked lookup by the configured unique key decides between the update path and the insert path (§28, D2). The key is the primary key only when it is not auto-increment, otherwise a unique key without nullable columns (E8). A concurrent duplicate-key error on insert is retried once as an update. An existing row outside the base filter answers `unique_violation`, as an insert of the same key would.
    - **Post-write check:** re-select the row by primary key with the base filter. If it is no longer visible, roll back with `403 base_filter_violation`. This covers base filters on lookup columns.
-6. **Commit**, then invalidate the cache for the object (§12), then append the audit event (`row.created`, `row.updated`, `row.deleted`) with the old and new values of the changed fields.
+6. **Commit**, then invalidate the cache for the object and the tables its foreign key actions change as well (cascades, `SET NULL`, `SET DEFAULT`; §12), then append the audit event (`row.created`, `row.updated`, `row.deleted`) with the old and new values of the changed fields.
    - **Answer:** the key, and the record with its new version token only when the caller may read the component. Create and upsert forms have no `read` (§8.2), so they answer with the key only and never reveal an existing row.
    - **Deadlocks** (1213) roll the transaction back; it runs once more. Write sessions wait at most 10 s for a row lock (`innodb_lock_wait_timeout`), then `row_locked`.
    - If the audit insert fails after the commit, the error is logged with IDs only and shown as an admin notice.
@@ -855,10 +858,11 @@ An update whose values equal the current row changes nothing. No `UPDATE` is sen
 In `edit` and `preview` mode, write requests run as a simulation and never change data:
 
 - **Normal steps:** authorization (the ceiling in `edit` mode, the previewed roles' rights in `preview`), payload validation, server values and foreign key checks run as usual.
-- **Checks instead of writes:** where a real write would send DML, the server uses `SELECT` to find what the database would reject: duplicate primary or unique keys, missing referenced rows, rows outside the base filter, version conflicts.
-- **Response:** the resulting row and any field errors, marked `simulated: true`. Nothing is audited and the cache is not touched.
+- **Checks instead of writes:** where a real write would send DML, the server uses `SELECT` to find what the database would reject: duplicate primary or unique keys, missing referenced rows, rows outside the base filter, version conflicts, and deletes blocked by `RESTRICT`/`NO ACTION` keys (`still_referenced`).
+- **The row after the write:** an update reads the stored row with the changed columns replaced, a new row only its values, as a derived table through the model and its base filter (also over linked tables). A new row is checked only where its values decide the base filter; columns left to database defaults are unknown before the insert.
+- **Response:** the resulting row (the values the write would leave) and any field errors, marked `simulated: true`. Nothing is audited and the cache is not touched.
 - **No rollback trick:** the simulation never runs DML inside a transaction that is rolled back afterwards. Non-transactional tables, triggers and auto-increment counters would leak side effects.
-- **Limits:** checks only the database performs, such as `CHECK` constraints and triggers, are not covered. A new row's base filter conditions over linked tables and `still_referenced` on deletes are not simulated either.
+- **Limits:** checks only the database performs, such as `CHECK` constraints, `NOT NULL` without a default, column privileges and triggers, are not covered; neither is a new row's base filter where it depends on database defaults.
 - **Sessions:** a simulation runs in `START TRANSACTION READ ONLY` on the write pool and ends with `ROLLBACK`. In `edit` mode the operations are those of the ceiling and grants (`staticMask`), in `preview` those of the chosen roles.
 
 ## 12. Query cache
@@ -884,7 +888,8 @@ In `edit` and `preview` mode, write requests run as a simulation and never chang
   - Entries on a view with unknown base tables (no SHOW VIEW) depend on every table of their connection; any write to it evicts them.
   - Changes of table access, catalog or connection settings drop all entries of the connection.
   - A load that overlapped an invalidation of one of its dependencies is returned but not stored.
-  - A write through the UI, public API or CSV import evicts every entry that depends on the table. View dependencies are already expanded to base tables, so a new payment also invalidates queries on a payment-status view.
+  - A write through the UI, public API or CSV import evicts every entry that depends on the table. View dependencies are already expanded to base tables, so a new payment also invalidates queries on a payment-status view. Tables a foreign key action changes too (`ON DELETE CASCADE`, `SET NULL`, …, followed through further cascades; unknown actions count) are evicted with it. Changes by triggers are not visible to Stashley; their tables keep their entries until they expire.
+  - Foreign key option lists are cached for display only. Saving checks table lists live and query lists with a fresh run (§11 step 4).
   - Changing an instance variable evicts every entry that uses it.
 - **Stale fallback:** expired entries stay until LRU evicts them. If the target database is unreachable (`target_unavailable`, §10.5), they are served with `stale: true` and their age. Entries evicted by writes are deleted and never served as stale. A read the server refuses (`target_permission_denied`) deletes the expired entry and is never answered from the cache, so revoked grants take effect at once.
 - **Authorization first:** authorization always runs before the cache lookup, and entries never contain authorization decisions.
@@ -1016,7 +1021,7 @@ Errors follow RFC 9457, with the stable code catalog from `packages/shared/src/a
 
 - **`title`** is a fixed English summary. The web client renders a localized message from `code` and its parameters.
 - **`5xx` responses** carry `errorId`, which equals the request ID in the logs. Users see a neutral message with that ID.
-- **Conflict responses** (`409 version_conflict`) include `current`, the current row filtered to readable fields.
+- **Conflict responses** (`409 version_conflict`) include `current`, the current row with its version token, only for callers that may read the component.
 
 ### 14.4 Status codes
 
@@ -1056,6 +1061,8 @@ Errors follow RFC 9457, with the stable code catalog from `packages/shared/src/a
 | Public API | Per token; configurable, default 60 per minute |
 | MCP | 30 calls per minute per user, 100,000 rows per day |
 | Manual refresh | Once per 10 s per user and component |
+| Writes of components | 300 per minute per user (not per address: stations of an event often share one NAT) |
+| CSV export | 10 per minute per user |
 
 ### 14.7 Security headers
 
@@ -1098,8 +1105,8 @@ These are the resource groups of the internal API. The exact contracts are Zod s
   - Only admins can call `admin` routes. They have the manager capabilities as well, except MCP access.
   - Whether managers can create roles is an instance setting.
 - **Component reads use `POST`,** because parameters and filters are structured. They are reads, they never change data, and they still send the CSRF header.
-- **Foreign key options** (`…/fields/:fieldId/options`) use the right of their component: whoever may create or update through it. They search the display value and any configured search columns (from one character, 50 per page, cached 15 min), mark a single exact match of the search columns as `exact`, and return the chosen record's extra columns. A saved key must be in the same list (`value_not_allowed`).
-- **CSV export** (E12): every row of the current filters, search and sort while the user may read; UTF-8 with BOM; delimiter and decimal separator from the user's format (`;` and `,` for a decimal comma); ISO dates, date-times as wall times of `APP_TIMEZONE`; text cells starting with `=`, `+`, `-`, `@`, tab or CR prefixed with `'`, numbers left alone. Table sources page through the database by keyset without the cache, at most 100,000 rows (`export_too_large`). It can be turned off per table (`csvExport`, or `settings.csvExport` for query tables) and is audited as `table.exported` with the row count.
+- **Foreign key options** (`…/fields/:fieldId/options`) use the right of their component: whoever may create or update through it. Table lists apply the field's base filter (§8.3) and are cached per resolved value. They search the display value and any configured search columns (from one character, 50 per page, cached 15 min), mark a single exact match of the search columns as `exact`, and return the chosen record's extra columns. A saved key must be in the same list (`value_not_allowed`).
+- **CSV export** (E12): every row of the current filters, search and sort while the user may read; UTF-8 with BOM; delimiter and decimal separator from the user's format (`;` and `,` for a decimal comma); ISO dates, date-times as wall times of `APP_TIMEZONE`; text cells starting with `=`, `+`, `-`, `@`, tab or CR prefixed with `'`, numbers left alone. Table sources page through the database by keyset without the cache, at most 100,000 rows (`export_too_large`). The limit also holds when rows arrive after the count. It can be turned off per table (`csvExport`, or `settings.csvExport` for query tables) and is audited as `table.exported` with the rows sent and whether the export completed, also when the download is cancelled or fails.
 
 ## 16. Public REST API
 
