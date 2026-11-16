@@ -116,6 +116,8 @@ export interface RenderField {
   input: 'input' | 'generated'
   widget: FieldWidget | null
   kind: ValueKind
+  /** The column type, for ranges such as `int unsigned`. */
+  columnType: string
   /** Must be filled when creating. */
   required: boolean
   nullable: boolean

@@ -571,6 +571,7 @@ function renderField(write: WriteModel, field: WriteField, context: RenderContex
     input: field.kind,
     widget: field.widget,
     kind: spec.kind,
+    columnType: spec.columnType,
     required: write.payload.create.some((entry) => entry.column === field.column && entry.required),
     nullable: spec.nullable,
     maxLength: spec.maxLength,

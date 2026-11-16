@@ -1,0 +1,95 @@
+/* SPDX-FileCopyrightText: 2026 Stashley contributors */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.reference {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.extras {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  font-size: var(--font-size-sm);
+}
+
+.extras dt {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.extras dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.set {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.set legend {
+  width: 100%;
+  margin-bottom: var(--space-1);
+}
+
+.generated {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.generated span {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.conflict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+}
+
+.conflict p {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+/* Large touch targets on phones, e.g. stamping at a station (375 px). */
+@media (max-width: 480px) {
+  .form :is(input, button) {
+    min-height: 2.75rem;
+    font-size: 1rem;
+  }
+}
