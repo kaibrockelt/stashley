@@ -191,6 +191,44 @@ describe('resource models', () => {
     expect(resource?.available).toEqual(['list', 'get', 'count', 'schema', 'create'])
   })
 
+  it('check column grants per operation: each needs only the columns it writes (E6)', () => {
+    // UPDATE on fewer columns than INSERT: updates stay, limited to those columns.
+    const narrowUpdate = model('zahlung', {
+      zahlung: { writable: { create: null, update: new Set(['beleg', 'version']) } },
+    })
+    expect(narrowUpdate?.available).toEqual([
+      'list',
+      'get',
+      'count',
+      'schema',
+      'create',
+      'update',
+      'replace',
+      'upsert',
+      'delete',
+    ])
+    expect(narrowUpdate?.write?.payload.update.map((spec) => spec.column)).toEqual(['beleg'])
+    expect(narrowUpdate?.write?.payload.create.map((spec) => spec.column)).toEqual([
+      'anmeldung_id',
+      'betrag',
+      'beleg',
+    ])
+    // INSERT on fewer columns than UPDATE: creates stay while every required column is in.
+    const narrowInsert = model('zahlung', {
+      zahlung: { writable: { create: new Set(['anmeldung_id', 'betrag']), update: null } },
+    })
+    expect(narrowInsert?.available).toContain('create')
+    expect(narrowInsert?.write?.payload.create.map((spec) => spec.column)).toEqual([
+      'anmeldung_id',
+      'betrag',
+    ])
+    // Without the grant for the lock column, which updates increment, updates are withheld.
+    const noLock = model('zahlung', {
+      zahlung: { writable: { create: null, update: new Set(['beleg']) } },
+    })
+    expect(noLock?.available).not.toContain('update')
+  })
+
   it('read views, with position paging where they have no key', () => {
     const resource = model('v_medaille')
     expect(resource).toMatchObject({ keyless: true, keyColumn: 'person', write: null })

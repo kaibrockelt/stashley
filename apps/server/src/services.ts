@@ -144,7 +144,15 @@ export function createServices(
     cursorKey: keys.key('cursor'),
     displayTimeZone: config.timeZone,
   })
-  const apiEndpoints = new ApiEndpoints({ db, tableAccess, connections, audit, events, clock })
+  const apiEndpoints = new ApiEndpoints({
+    db,
+    tableAccess,
+    connections,
+    audit,
+    events,
+    clock,
+    available: async (id) => (await access.resourceModel(id))?.available,
+  })
   tableAccess.addDependent(apiEndpoints)
   catalog.addImpactProvider((connectionId, diff) => apiEndpoints.impact(connectionId, diff))
   const apiTokens = new ApiTokens({ db, audit, events, clock })

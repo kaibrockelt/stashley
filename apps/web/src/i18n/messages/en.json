@@ -124,7 +124,7 @@
   "api.token.secret": "Token",
   "api.tokens": "Tokens",
   "api.tokens.empty": "No tokens yet.",
-  "api.withheld": "Database grants missing: {operations}",
+  "api.withheld": "Withheld ({operations}): database grants are missing, or a required column cannot be written.",
   "app.skipToContent": "Skip to content",
   "audit.action": "Action",
   "audit.actor": "Actor",

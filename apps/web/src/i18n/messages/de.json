@@ -124,7 +124,7 @@
   "api.token.secret": "Token",
   "api.tokens": "Tokens",
   "api.tokens.empty": "Noch keine Tokens.",
-  "api.withheld": "Datenbankrechte fehlen: {operations}",
+  "api.withheld": "Gesperrt ({operations}): Es fehlen Datenbankrechte, oder eine Pflichtspalte ist nicht beschreibbar.",
   "app.skipToContent": "Zum Inhalt springen",
   "audit.action": "Aktion",
   "audit.actor": "Akteur",

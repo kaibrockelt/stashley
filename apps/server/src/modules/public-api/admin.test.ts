@@ -8,7 +8,8 @@ import type {
   TableAccess,
 } from '@stashley/shared'
 import { describe, expect, it } from 'vitest'
-import { setupDemo } from '../../test/demo.ts'
+import { storeSnapshot } from '../../test/connections.ts'
+import { demoObjects, setupDemo } from '../../test/demo.ts'
 import { createUser, problem, setupServer, type TestSetup } from '../../test/setup.ts'
 import { addressAllowed, generateToken, hashToken, tokenPrefix, wellFormed } from './tokens.ts'
 
@@ -225,6 +226,36 @@ describe('API endpoints', () => {
       `/internal/admin/table-access/${zahlung.id}?confirm=true`,
     )
     expect(removed.statusCode).toBe(204)
+  })
+
+  it('show enabled endpoints the resource cannot serve, not only missing grants', async () => {
+    const { s, zahlung } = await setup()
+    await enablePayments(s, zahlung)
+    // `betrag` becomes required and is excluded: no row can be created through the API.
+    await storeSnapshot(
+      s.server,
+      demoObjects.map((object) =>
+        object.name !== 'zahlung'
+          ? object
+          : {
+              ...object,
+              columns: object.columns.map((column) =>
+                column.name === 'betrag' ? { ...column, nullable: false } : column,
+              ),
+            },
+      ),
+      Date.now() + 1000,
+    )
+    const excluded = await s.admin.send(
+      'PUT',
+      `/internal/admin/table-access/${zahlung.id}`,
+      accessBody(zahlung, {
+        apiResource: 'payments',
+        exclusions: [{ column: 'betrag', scope: 'all' }],
+      }),
+    )
+    expect(excluded.statusCode, excluded.body).toBe(200)
+    expect((await endpoints(s, zahlung.id)).withheld).toEqual(['create'])
   })
 })
 

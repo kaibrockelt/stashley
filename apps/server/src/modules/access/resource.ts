@@ -170,6 +170,26 @@ export function buildResourceModel(
   let write: WriteModel | null = null
   // Deletes need no write model, only the key.
   let writeOps: OpMask = isTable && hasOp(object.ceiling, 'delete') ? opBits.delete : 0
+  const insertableNames = new Set(
+    resourceColumns.filter((column) => column.insertable).map((column) => lower(column.name)),
+  )
+  const updatableNames = new Set(
+    resourceColumns.filter((column) => column.updatable).map((column) => lower(column.name)),
+  )
+  const lockCatalog =
+    lockColumn === undefined
+      ? undefined
+      : catalog.columns.find((column) => lower(column.name) === lockColumn)
+  // The server writes the lock column itself: on create where it has no default, on update
+  // where it counts versions or sets the time; the write user needs the grant for it.
+  const lockGranted = (op: 'create' | 'update') => {
+    if (lockCatalog === undefined || lock.kind === 'values') return true
+    const written =
+      op === 'create'
+        ? lockCatalog.defaultValue === null
+        : lock.kind === 'version' || lock.setByServer
+    return !written || grantedFor(op, lockCatalog.name)
+  }
   if (isTable) {
     const fields: FormField[] = resourceColumns
       .filter((column) => column.insertable || column.updatable)
@@ -209,21 +229,31 @@ export function buildResourceModel(
         },
       )
       if (failed || built.model === undefined) continue
-      write = { ...built.model, row: read }
-      writeOps |= ((ops.create ? opBits.create : 0) | opBits.update) & ~built.withheld
+      // Each operation writes only its own columns (E6): payloads keep to them, so a column
+      // the write user may insert but not update neither takes updates away nor ends up in
+      // the `SET` of `PUT /:id` or an upsert.
+      const model = built.model
+      write = {
+        ...model,
+        row: read,
+        payload: {
+          create: model.payload.create.filter((spec) => insertableNames.has(lower(spec.column))),
+          update: model.payload.update.filter((spec) => updatableNames.has(lower(spec.column))),
+        },
+      }
+      writeOps |=
+        (ops.create && lockGranted('create') ? opBits.create : 0) |
+        (updatableNames.size > 0 && lockGranted('update') ? opBits.update : 0)
       break
     }
     // A required column the client cannot write, excluded ones included, rules out create;
     // the server fills only the lock column.
-    const insertable = new Set(
-      resourceColumns.filter((column) => column.insertable).map((column) => lower(column.name)),
-    )
     if (
       catalog.columns.some(
         (column) =>
           columnRequired(column) &&
           lower(column.name) !== lockColumn &&
-          !insertable.has(lower(column.name)),
+          !insertableNames.has(lower(column.name)),
       )
     ) {
       writeOps &= ~opBits.create
@@ -242,13 +272,12 @@ export function buildResourceModel(
 
   // Upserts find their row by the primary key unless it is auto-increment, or by a
   // single-column unique key (E18); the column must be writable on create.
-  const insertable = new Set(
-    resourceColumns.filter((column) => column.insertable).map((column) => lower(column.name)),
-  )
   const upsertColumns = [catalog.primaryKey, ...catalog.uniqueKeys]
     .filter((columns) => columns.length === 1)
     .map((columns) => columns[0] as string)
-    .filter((column, index, all) => all.indexOf(column) === index && insertable.has(lower(column)))
+    .filter(
+      (column, index, all) => all.indexOf(column) === index && insertableNames.has(lower(column)),
+    )
 
   const dependencies = AccessFacts.dependencies(connection, [object.objectName])
   return {

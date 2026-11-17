@@ -69,6 +69,8 @@ export class ApiEndpoints implements TableAccessDependent {
     connections: ConnectionsService
     audit: AuditLog
     events: EventBus
+    /** Operations the resource model can serve (column grants, required columns, lock). */
+    available: (tableAccessId: string) => Promise<readonly ApiOperation[] | undefined>
   }
   private readonly clock: Clock
   /** Enabled endpoints by table access, for requests; dropped on every change. */
@@ -175,6 +177,20 @@ export class ApiEndpoints implements TableAccessDependent {
     }
   }
 
+  /**
+   * Enabled operations the object cannot serve: the resource model knows column grants,
+   * required columns and the lock column; without one (inactive, blocked) the ceiling and
+   * the database grants decide.
+   */
+  private async withheld(state: ApiEndpointState): Promise<ApiEndpointState> {
+    const available = await this.deps.available(state.tableAccessId)
+    if (available === undefined) return state
+    return {
+      ...state,
+      withheld: state.enabled.filter((operation) => !available.includes(operation)),
+    }
+  }
+
   /** Every table access with its endpoints, by connection and object name. */
   async list(): Promise<ApiEndpointState[]> {
     const rows = await this.deps.db
@@ -189,7 +205,11 @@ export class ApiEndpoints implements TableAccessDependent {
     const states: ApiEndpointState[] = []
     for (const connection of await this.deps.connections.list()) {
       for (const access of await this.deps.tableAccess.list(connection.id)) {
-        states.push(this.state(access, connection.name, order(enabled.get(access.id) ?? [])))
+        states.push(
+          await this.withheld(
+            this.state(access, connection.name, order(enabled.get(access.id) ?? [])),
+          ),
+        )
       }
     }
     return states
@@ -198,7 +218,7 @@ export class ApiEndpoints implements TableAccessDependent {
   async get(tableAccessId: string): Promise<ApiEndpointState> {
     const access = await this.deps.tableAccess.get(tableAccessId)
     const connection = await this.deps.connections.get(access.connectionId)
-    return this.state(access, connection.name, await this.enabledOf(tableAccessId))
+    return this.withheld(this.state(access, connection.name, await this.enabledOf(tableAccessId)))
   }
 
   async update(
