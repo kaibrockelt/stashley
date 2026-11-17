@@ -295,7 +295,9 @@ function paths(entry: DocumentedResource): Record<string, Schema> {
     item.put = {
       operationId: `replace${name}`,
       tags: [tag],
-      summary: `Replace every writable column of one existing row of ${resource.alias}; left-out columns return to their default`,
+      summary: `Replace every writable column of one existing row of ${resource.alias}`,
+      description:
+        'A left-out column with a literal default returns to it, one without a default becomes null, and one with an expression default (such as CURRENT_TIMESTAMP) keeps its value. An unchanged repeat writes nothing.',
       parameters: [idParameter, ifMatch],
       requestBody: { required: true, content: json(ref(`${name}Update`)) },
       responses: updateResponses,

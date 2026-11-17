@@ -180,6 +180,11 @@ export interface CatalogColumn {
   kind: ValueKind
   nullable: boolean
   defaultValue: string | null
+  /**
+   * The default is an expression (`CURRENT_TIMESTAMP`, `uuid()`), not a literal; absent in
+   * snapshots before it existed.
+   */
+  defaultExpression?: boolean
   autoIncrement: boolean
   /** A virtual or stored generated column; expression defaults do not count. */
   generated: boolean

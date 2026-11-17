@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { CatalogColumn, CatalogObject, ReferentialAction } from '@stashley/shared'
+import type { CatalogColumn, CatalogObject, Engine, ReferentialAction } from '@stashley/shared'
 import { enumValues, valueKind } from '@stashley/shared'
 import type { TargetSession } from '../../target/pools.ts'
 import { viewTables } from './view-deps.ts'
@@ -83,7 +83,18 @@ function normalizeDefault(value: string | null, nullable: boolean): string | nul
   return quoted === null ? value : (quoted[1] ?? '').replace(/''/g, "'")
 }
 
-function column(row: ColumnRow): CatalogColumn {
+/**
+ * Whether a default is an expression: MySQL marks them `DEFAULT_GENERATED`; MariaDB quotes
+ * string literals and leaves numbers bare, so anything else is an expression.
+ */
+function expressionDefault(row: ColumnRow, engine: Engine): boolean {
+  const value = row.defaultValue
+  if (value === null || value === 'NULL') return false
+  if (engine === 'mysql') return (row.extra ?? '').toLowerCase().includes('default_generated')
+  return !/^'.*'$/s.test(value) && !/^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(value)
+}
+
+function column(row: ColumnRow, engine: Engine): CatalogColumn {
   const extra = (row.extra ?? '').toLowerCase()
   const nullable = row.nullable === 'YES'
   const kind = valueKind(row.dataType, row.columnType)
@@ -95,6 +106,7 @@ function column(row: ColumnRow): CatalogColumn {
     kind,
     nullable,
     defaultValue: normalizeDefault(row.defaultValue, nullable),
+    defaultExpression: expressionDefault(row, engine),
     autoIncrement: extra.includes('auto_increment'),
     // `VIRTUAL GENERATED`, `STORED GENERATED`, `PERSISTENT`. MySQL marks expression
     // defaults such as `DEFAULT CURRENT_TIMESTAMP` as `DEFAULT_GENERATED`; those stay writable.
@@ -181,7 +193,7 @@ export async function introspect(
       foreignKeys: [],
     })
   }
-  for (const row of columns) objects.get(row.object)?.columns.push(column(row))
+  for (const row of columns) objects.get(row.object)?.columns.push(column(row, session.engine))
 
   const keys = new Map<string, { object: string; unique: boolean; columns: string[] }>()
   for (const row of indexes) {

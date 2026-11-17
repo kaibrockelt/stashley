@@ -764,6 +764,7 @@ export class RowWriter {
     action: 'row.created' | 'row.updated' | 'row.deleted',
     key: unknown,
     changes: Record<string, [unknown, unknown]>,
+    record = true,
   ): Promise<void> {
     const object = context.source.object.objectName
     this.deps.events.emit('rows.written', {
@@ -775,6 +776,7 @@ export class RowWriter {
         Object.keys(changes),
       ),
     })
+    if (!record) return Promise.resolve()
     const refs = context.subject.audit
     return this.deps.audit
       .record(actor, {
@@ -1047,8 +1049,12 @@ export class RowWriter {
     if ('unchanged' in result) {
       return this.outcome(context, result.key, result.visible, result.state, { unchanged: true })
     }
-    if (!context.simulate)
-      await this.notifyAndAudit(context, actor, 'row.updated', result.key, result.changes)
+    if (!context.simulate) {
+      // A column set back to a DEFAULT it already had changes nothing worth an audit entry;
+      // the lock may still have moved, so caches drop all the same.
+      const changed = Object.keys(result.changes).length > 0
+      await this.notifyAndAudit(context, actor, 'row.updated', result.key, result.changes, changed)
+    }
     return this.outcome(context, result.key, result.visible, result.state)
   }
 
@@ -1232,8 +1238,21 @@ export class RowWriter {
       for (const spec of write.payload.update) {
         if (Object.hasOwn(values, spec.column)) continue
         const column = this.catalog(context)?.columns.find((entry) => entry.name === spec.column)
-        if (column?.defaultValue !== null && column?.defaultValue !== undefined) {
-          defaults.push(spec.column)
+        const fallback = column?.defaultValue
+        if (fallback !== null && fallback !== undefined) {
+          // An expression default (`CURRENT_TIMESTAMP`, `uuid()`) keeps the stored value: a
+          // replace would otherwise reset e.g. `created_at` on every call.
+          if (column?.defaultExpression ?? /\(|^current_timestamp/i.test(fallback)) continue
+          // A literal default is written as its value, so an unchanged repeat writes nothing.
+          const raw =
+            spec.kind === 'boolean' && (fallback === '0' || fallback === '1')
+              ? fallback === '1'
+              : spec.kind === 'float' && Number.isFinite(Number(fallback))
+                ? Number(fallback)
+                : fallback
+          const literal = checkFieldValue({ ...spec, required: false, nullable: true }, raw)
+          if (literal.ok) values[spec.column] = literal.value
+          else defaults.push(spec.column)
         } else if (column?.nullable === true) values[spec.column] = null
         else missing.push({ field: spec.column, code: 'required' })
       }

@@ -104,6 +104,7 @@ describe.skipIf(targets.length === 0).each(targets)('public API on $name', ({ ur
       'upsert',
     ])
     await expose('hotel', 'hotels', ['list', 'get'])
+    await expose('anmeldung', 'registrations', ['get', 'replace'])
     await expose('hotelbuchung', 'bookings', ['get', 'delete'])
     await expose('v_zahlungsstatus', 'payment-status', ['list', 'get', 'count'])
     await expose('v_medaille', 'medals', ['list'])
@@ -111,6 +112,7 @@ describe.skipIf(targets.length === 0).each(targets)('public API on $name', ({ ur
     await token('sync', [
       ['person', ['list', 'get', 'count', 'schema', 'create', 'update', 'replace', 'upsert']],
       ['hotel', ['list', 'get']],
+      ['anmeldung', ['get', 'replace']],
       ['hotelbuchung', ['get', 'delete']],
       ['v_zahlungsstatus', ['list', 'get', 'count']],
       ['v_medaille', ['list']],
@@ -283,16 +285,44 @@ describe.skipIf(targets.length === 0).each(targets)('public API on $name', ({ ur
         .sort(),
     ).toEqual(['email', 'land'])
 
-    const replaced = await call(sync, 'PUT', 'people/3', {
-      vorname: 'Chloé',
-      nachname: 'Dubois',
-      email: 'chloe@example.com',
-      land: 'BE',
+    const createdAt = async () =>
+      ((await root.query('SELECT created_at FROM person WHERE id = 3')) as unknown as [
+        { created_at: Date }[],
+      ])[0][0]?.created_at
+    const created = await createdAt()
+    const body = { vorname: 'Chloé', nachname: 'Dubois', email: 'chloe@example.com', land: 'BE' }
+    const replaced = await call(sync, 'PUT', 'people/3', body)
+    expect(replaced.statusCode, replaced.body).toBe(200)
+    // `telefon` was left out: it has no default, so it is now NULL. `created_at` has an
+    // expression default and keeps its value.
+    expect(replaced.json()).toMatchObject({ land: 'BE', telefon: null })
+    expect(await createdAt()).toEqual(created)
+    // An unchanged repeat writes nothing: same ETag, no audit entry.
+    const updates = (await audit('row.updated')).length
+    const repeated = await call(sync, 'PUT', 'people/3', body)
+    expect(repeated.statusCode).toBe(200)
+    expect(repeated.headers.etag).toBe(replaced.headers.etag)
+    expect((await audit('row.updated')).length).toBe(updates)
+    expect((await call(sync, 'PUT', 'people/99', { vorname: 'x' })).statusCode).toBe(422)
+  })
+
+  it('writes literal defaults as values on PUT /:id, so a repeat stays unchanged', async () => {
+    const sync = secrets.sync as string
+    const before = await call(sync, 'GET', 'registrations/1')
+    expect(before.statusCode, before.body).toBe(200)
+    const updates = (await audit('row.updated')).length
+    // `ticket_typ` and `status` are left out and already hold their literal defaults;
+    // `angemeldet_am` has an expression default and keeps its value.
+    const replaced = await call(sync, 'PUT', 'registrations/1', {
+      person_id: '1',
+      event_id: '1',
+      startnummer: 101,
+      betrag_soll: '25.00',
     })
     expect(replaced.statusCode, replaced.body).toBe(200)
-    // `telefon` was left out: it has no default, so it is now NULL.
-    expect(replaced.json()).toMatchObject({ land: 'BE', telefon: null })
-    expect((await call(sync, 'PUT', 'people/99', { vorname: 'x' })).statusCode).toBe(422)
+    expect(replaced.json()).toEqual(before.json())
+    expect(replaced.headers.etag).toBe(before.headers.etag)
+    expect((await audit('row.updated')).length).toBe(updates)
   })
 
   it('upserts idempotently on a unique key and writes nothing on unchanged repeats', async () => {
