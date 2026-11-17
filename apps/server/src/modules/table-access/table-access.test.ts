@@ -203,7 +203,7 @@ describe('table access', () => {
     expect((await s.list()).get('person')?.warnings).toEqual([{ code: 'key_mismatch' }])
   })
 
-  it('grants update and delete only with SELECT for the write user', async () => {
+  it('grants writes only with SELECT for the write user', async () => {
     const s = await setup()
     const report = buildGrantReport({
       purpose: 'write',
@@ -216,9 +216,10 @@ describe('table access', () => {
       .where('purpose', '=', 'write')
       .execute()
     const created = await s.expose('hotel', { ops: ['read', 'create', 'update', 'delete'] })
+    // A create reads its row back as well, so INSERT alone is not enough either.
     expect(created.json<TableAccess>()).toMatchObject({
-      grantedOps: ['read', 'create'],
-      warnings: [{ code: 'ops_without_grant', ops: ['update', 'delete'] }],
+      grantedOps: ['read'],
+      warnings: [{ code: 'ops_without_grant', ops: ['create', 'update', 'delete'] }],
     })
   })
 

@@ -340,9 +340,10 @@ export class TableAccessService {
     }
     if (row.object_type === 'table' && reports.write !== undefined) {
       const privileges = objectPrivileges(reports.write, row.object_name)
-      if (privileges.has('INSERT')) granted.add('create')
-      // Updates and deletes find their row by key, which needs SELECT as well.
+      // Every write needs SELECT as well: creates read their row back (base filter, answer,
+      // dry run), updates and deletes find their row by key.
       const select = privileges.has('SELECT')
+      if (privileges.has('INSERT') && select) granted.add('create')
       if (privileges.has('UPDATE') && select) granted.add('update')
       if (privileges.has('DELETE') && select) granted.add('delete')
     }
