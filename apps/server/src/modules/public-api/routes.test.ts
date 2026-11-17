@@ -129,6 +129,9 @@ describe('public API authentication', () => {
     const blocked = await call(f, 'GET', '/api/v1/payments', { token: generateToken() })
     expect(blocked.statusCode).toBe(429)
     expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0)
+    // A valid token from the same address still passes.
+    const valid = await token(f, [{ tableAccessId: f.hotel.id, operation: 'schema' }])
+    expect((await call(f, 'GET', '/api/v1/hotels/schema', { token: valid })).statusCode).toBe(200)
 
     const g = await setup()
     const secret = await token(g, [{ tableAccessId: g.hotel.id, operation: 'schema' }], {

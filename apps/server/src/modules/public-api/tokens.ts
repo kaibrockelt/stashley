@@ -152,9 +152,19 @@ export class ApiTokens {
     const hash = hashToken(token)
     let entry = this.cache.get(hash)
     if (entry === undefined) {
-      entry = this.load(hash)
-      entry.catch(() => this.cache.delete(hash))
-      this.cache.set(hash, entry)
+      const cache = this.cache
+      const loading = this.load(hash)
+      // Unknown tokens are not kept: random well-formed ones would fill the cache.
+      loading.then(
+        (found) => {
+          if (found === undefined && cache.get(hash) === loading) cache.delete(hash)
+        },
+        () => {
+          if (cache.get(hash) === loading) cache.delete(hash)
+        },
+      )
+      cache.set(hash, loading)
+      entry = loading
     }
     const cached = await entry
     if (cached === undefined || cached.row.revoked_at !== null) {

@@ -100,20 +100,23 @@ export function registerPublicApi(app: FastifyInstance, deps: PublicApiDeps): vo
       api.setErrorHandler(apiErrorHandler)
 
       api.addHook('onRequest', async (request, reply) => {
-        const wait = failures.retryAfter(request.ip)
-        if (wait > 0) {
-          void reply.header('retry-after', String(Math.ceil(wait / 1000)))
-          throw new AppError('rate_limited')
-        }
         const header = request.headers.authorization
         const token = /^Bearer ([^\s]+)$/i.exec(header ?? '')?.[1]
         if (token === undefined) {
           challenge(reply, header !== undefined)
           throw new AppError('unauthenticated')
         }
+        // Only failed attempts are limited per address: a valid token always passes, so
+        // invalid ones from the same address (a shared egress, a proxy without TRUST_PROXY)
+        // cannot lock integrations out.
         const checked = await deps.tokens.authenticate(token, request.ip)
         if (!checked.ok) {
           if (checked.code === 'unauthenticated') {
+            const wait = failures.retryAfter(request.ip)
+            if (wait > 0) {
+              void reply.header('retry-after', String(Math.ceil(wait / 1000)))
+              throw new AppError('rate_limited')
+            }
             failures.fail(request.ip)
             challenge(reply, true)
           }

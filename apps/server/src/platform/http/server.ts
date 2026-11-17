@@ -58,6 +58,19 @@ export async function createHttpServer(options: HttpOptions): Promise<FastifyIns
   // JSON is the only accepted request body type; everything else is answered with 415.
   app.removeContentTypeParser('text/plain')
 
+  // Behind a proxy without TRUST_PROXY every client has the proxy's address: limits per
+  // address and IP allowlists of API tokens then see only the proxy. Said once in the log.
+  if (options.trustProxy === undefined) {
+    let warned = false
+    app.addHook('onRequest', async (request) => {
+      if (warned || request.headers['x-forwarded-for'] === undefined) return
+      warned = true
+      request.log.warn(
+        'requests carry X-Forwarded-For, but TRUST_PROXY is not set: limits per address and API allowlists see the proxy address',
+      )
+    })
+  }
+
   await app.register(helmet, {
     enableCSPNonces: true,
     contentSecurityPolicy: {
