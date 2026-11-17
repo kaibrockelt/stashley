@@ -594,8 +594,37 @@ export function rowStatement(
 }
 
 /**
+ * The indexes of the keys a row matches, comma-separated, compared by the database with the
+ * columns' own collation: `ANNA@example.com` finds `anna@example.com` in a `_ci` column
+ * exactly as the unique index would, and several keys may find the same row.
+ */
+export function matchedKeys(
+  columns: readonly RawBuilder<unknown>[],
+  keys: readonly (readonly unknown[])[],
+): RawBuilder<unknown> {
+  const matches = keys.map(
+    (key, index) =>
+      sql`IF(${sql.join(
+        columns.map((column, position) => sql`${column} = ${key[position]}`),
+        sql` AND `,
+      )}, ${String(index)}, NULL)`,
+  )
+  return sql`CONCAT_WS(',', ${sql.join(matches)})`
+}
+
+/** The key indexes of a `matchedKeys` column. */
+export function keyIndexes(value: unknown): number[] {
+  return String(value ?? '')
+    .split(',')
+    .filter((entry) => entry !== '')
+    .map(Number)
+}
+
+/**
  * Rows of a model whose column `match` equals one of `values` (CSV import, E26): the key
- * `value` and the matched text, e.g. a person by e-mail or by display value.
+ * `value`, the matched text, and the indexes of the values each row matches, compared by
+ * the database (its collation decides case and accents), e.g. a person by e-mail or by
+ * display value.
  */
 export function matchStatement(
   model: TableModel,
@@ -610,7 +639,10 @@ export function matchStatement(
   }
   const expr = outputSql(match.expr)
   const compiled =
-    sql`SELECT ${outputSql(value.expr)} AS ${sql.id('v')}, ${expr} AS ${sql.id('m')} FROM ${from(
+    sql`SELECT ${outputSql(value.expr)} AS ${sql.id('v')}, ${expr} AS ${sql.id('m')}, ${matchedKeys(
+      [expr],
+      values.map((item) => [item]),
+    )} AS ${sql.id('i')} FROM ${from(
       model,
       model.joins,
     )} WHERE ${expr} IN (${sql.join(values.map((item) => sql`${item}`))})`.compile(compiler)

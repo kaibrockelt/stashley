@@ -9,6 +9,7 @@ import {
   sql,
   type RawBuilder,
 } from 'kysely'
+import { matchedKeys } from '../execution/sql/table-sql.ts'
 import type { Statement } from '../queries/sql-guard/executable.ts'
 
 /**
@@ -64,7 +65,10 @@ function keyMatch(columns: readonly string[], keys: readonly (readonly unknown[]
   )})`
 }
 
-/** Rows whose key columns equal one of `keys`: the key columns first, then `columns`. */
+/**
+ * Rows whose key columns equal one of `keys`: the key columns first, then `columns`, then the
+ * indexes of the keys each row matches (`matchedKeys`).
+ */
 export function rowsByKeys(
   object: string,
   keyColumns: readonly string[],
@@ -75,9 +79,33 @@ export function rowsByKeys(
   const selected = [...keyColumns, ...columns].map(
     (column, index) => sql`${sql.ref(column)} AS ${sql.id(`c${index}`)}`,
   )
+  const matched = matchedKeys(
+    keyColumns.map((column) => sql.ref(column)),
+    keys,
+  )
   return compile(
-    sql`SELECT ${sql.join(selected)} FROM ${sql.table(object)} WHERE ${keyMatch(keyColumns, keys)}${
+    sql`SELECT ${sql.join(selected)}, ${matched} AS ${sql.id('m')} FROM ${sql.table(object)} WHERE ${keyMatch(keyColumns, keys)}${
       lock ? sql` FOR UPDATE` : sql``
     }`,
   )
+}
+
+const collationName = /^[a-z0-9]+_[a-z0-9_]+$|^binary$/
+
+/**
+ * The weight strings of texts in a collation, as hex: equal weights mean the database
+ * compares the texts as equal (case, accents as the collation says). PAD SPACE collations
+ * ignore trailing spaces, which weight strings keep, so those are cut first.
+ */
+export function weightStatement(collation: string, texts: readonly string[]): Statement {
+  if (!collationName.test(collation) || texts.length === 0) {
+    throw new Error(`Unusable collation or no texts: ${collation}`)
+  }
+  const charset = collation === 'binary' ? 'binary' : (collation.split('_')[0] as string)
+  const padded = !/_0900_|_nopad_|^binary$/.test(collation)
+  const items = texts.map(
+    (text) =>
+      sql`HEX(WEIGHT_STRING(CONVERT(${padded ? text.replace(/ +$/, '') : text} USING ${sql.raw(charset)}) COLLATE ${sql.raw(collation)}))`,
+  )
+  return compile(sql`SELECT ${sql.join(items)}`)
 }

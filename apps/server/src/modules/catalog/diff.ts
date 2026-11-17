@@ -10,6 +10,7 @@ const columnFields = [
   'autoIncrement',
   'generated',
   'onUpdate',
+  'collation',
 ] as const satisfies readonly (keyof CatalogColumn)[]
 
 /**

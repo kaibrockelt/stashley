@@ -13,12 +13,18 @@ import { checkFieldValue, isEmptyCell, readCell } from '@stashley/shared'
 import { encodeValue } from '../../target/encoding.ts'
 import type { TargetSession } from '../../target/pools.ts'
 import type { ResourceColumn } from '../access/service.ts'
-import { matchStatement } from '../execution/sql/table-sql.ts'
+import { keyIndexes, matchStatement } from '../execution/sql/table-sql.ts'
 import type { TableModel } from '../execution/sql/table-model.ts'
 import { bindWrite, updateRow, type WriteValue } from '../execution/sql/write-sql.ts'
 import { translateWriteError, writeErrno } from '../execution/write-errors.ts'
 import type { CsvRecord } from './files.ts'
-import { insertRows, rowsByKeys, useDefault, type CellValue } from './import-sql.ts'
+import {
+  insertRows,
+  rowsByKeys,
+  useDefault,
+  weightStatement,
+  type CellValue,
+} from './import-sql.ts'
 
 /**
  * The import engine (§17 steps 4–6): reads cells into the JSON forms of their columns,
@@ -100,14 +106,6 @@ export class ImportAbort extends Error {
 
 const lower = (name: string) => name.toLowerCase()
 const keyOf = (values: readonly unknown[]) => JSON.stringify(values)
-/** Database values and bound values compare as text: numbers come back as either. */
-const textOf = (value: unknown) =>
-  typeof value === 'string'
-    ? value
-    : typeof value === 'number' || typeof value === 'bigint'
-      ? String(value)
-      : JSON.stringify(value)
-
 function emptyCounts(): ImportCounts {
   return { rows: 0, created: 0, updated: 0, unchanged: 0, failed: 0, skipped: 0 }
 }
@@ -210,20 +208,25 @@ export class Importer {
         texts.set(text, match)
       }
       const wanted = [...new Set([...texts.values()].filter((value) => value !== undefined))]
-      const found = new Map<string, unknown[]>()
+      // The database says which wanted value each row matches, with its own collation, so
+      // `ANNA@example.com` finds `anna@example.com` and equal display values are ambiguous.
+      const found = new Map<unknown, unknown[]>()
       for (let start = 0; start < wanted.length; start += 500) {
-        const statement = matchStatement(reference.model, wanted.slice(start, start + 500))
+        const chunk = wanted.slice(start, start + 500)
+        const statement = matchStatement(reference.model, chunk)
         const result = await session.execute(statement.sql, statement.values)
-        for (const [value, matched] of result.rows) {
-          const keyText = textOf(matched)
-          found.set(keyText, [...(found.get(keyText) ?? []), value])
+        for (const [value, , matched] of result.rows) {
+          for (const index of keyIndexes(matched)) {
+            const probe = chunk[index]
+            found.set(probe, [...(found.get(probe) ?? []), value])
+          }
         }
       }
       for (const row of rows) {
         const text = row.values.get(name)
         if (typeof text !== 'string') continue
         const match = texts.get(text)
-        const values = match === undefined ? [] : (found.get(textOf(match)) ?? [])
+        const values = match === undefined ? [] : (found.get(match) ?? [])
         if (values.length === 1) {
           const encoded = encodeValue(
             planned.column.kind,
@@ -258,14 +261,61 @@ export class Importer {
     }
   }
 
-  /** The same unique key twice in the file is an error on the later row. */
-  private duplicates(row: Row, errors: ImportCellError[]): void {
+  /** Unique keys and the upsert key, each once. */
+  private fileKeys(): string[][] {
     const all = [...this.plan.uniqueKeys, ...(this.plan.key === null ? [] : [this.plan.key])]
-    const keys = all.filter(
+    return all.filter(
       (key, index) => all.findIndex((other) => other.join(',') === key.join(',')) === index,
     )
-    for (const key of keys) {
-      const values = key.map((column) => row.values.get(column))
+  }
+
+  /**
+   * Text key values as the database compares them (case, accents and trailing spaces as the
+   * column's collation says): their weight strings, by column and text. Columns without a
+   * known collation compare exactly.
+   */
+  private async weights(
+    session: TargetSession | null,
+    rows: Row[],
+  ): Promise<Map<string, Map<string, string>>> {
+    const out = new Map<string, Map<string, string>>()
+    if (session === null) return out
+    const columns = new Set(this.fileKeys().flat())
+    for (const name of columns) {
+      const column = this.plan.table.columns.find((entry) => entry.name === name)
+      const collation = column?.collation
+      if (column?.kind !== 'string' || collation === null || collation === undefined) continue
+      const texts = [
+        ...new Set(
+          rows
+            .filter((row) => !row.failed)
+            .map((row) => row.values.get(name))
+            .filter((value): value is string => typeof value === 'string'),
+        ),
+      ]
+      const weights = new Map<string, string>()
+      for (let start = 0; start < texts.length; start += 500) {
+        const chunk = texts.slice(start, start + 500)
+        const statement = weightStatement(collation, chunk)
+        const [result] = (await session.execute(statement.sql, statement.values)).rows
+        chunk.forEach((text, index) => weights.set(text, String(result?.[index] ?? text)))
+      }
+      out.set(name, weights)
+    }
+    return out
+  }
+
+  /** The same unique key twice in the file is an error on the later row. */
+  private duplicates(
+    row: Row,
+    errors: ImportCellError[],
+    weights: ReadonlyMap<string, ReadonlyMap<string, string>>,
+  ): void {
+    for (const key of this.fileKeys()) {
+      const values = key.map((column) => {
+        const value = row.values.get(column)
+        return typeof value === 'string' ? (weights.get(column)?.get(value) ?? value) : value
+      })
       if (values.some((value) => value === null || value === undefined || value === useDefault))
         continue
       const name = key.join(',')
@@ -281,14 +331,17 @@ export class Importer {
 
   // Classification
 
-  /** Existing rows by the upsert key, with their key and the mapped updatable columns. */
+  /**
+   * Existing rows by the upsert key, with their key and the mapped updatable columns. The
+   * database matches the file's keys to rows with its own collation (`rowsByKeys`).
+   */
   private async existing(
     session: TargetSession,
     rows: Row[],
     lock: boolean,
-  ): Promise<Map<string, { key: unknown; values: Map<string, unknown> }>> {
+  ): Promise<Map<Row, { key: unknown; values: Map<string, unknown> }>> {
     const keyColumns = this.plan.key
-    const found = new Map<string, { key: unknown; values: Map<string, unknown> }>()
+    const found = new Map<Row, { key: unknown; values: Map<string, unknown> }>()
     if (keyColumns === null || rows.length === 0) return found
     const primary = this.plan.table.keyColumn
     const compared = this.updatable().map((planned) => planned.column.name)
@@ -297,13 +350,17 @@ export class Importer {
     )
     const statement = rowsByKeys(this.object(), keyColumns, [primary, ...compared], tuples, lock)
     const result = await session.execute(statement.sql, statement.values)
+    const matched = keyColumns.length + 1 + compared.length
     for (const raw of result.rows) {
-      const keyValues = keyColumns.map((column, index) => this.canonical(column, raw[index]))
       const values = new Map<string, unknown>()
       compared.forEach((column, index) => {
         values.set(column, this.canonical(column, raw[keyColumns.length + 1 + index]))
       })
-      found.set(keyOf(keyValues), { key: raw[keyColumns.length], values })
+      const entry = { key: raw[keyColumns.length], values }
+      for (const index of keyIndexes(raw[matched])) {
+        const row = rows[index]
+        if (row !== undefined) found.set(row, entry)
+      }
     }
     return found
   }
@@ -322,10 +379,6 @@ export class Importer {
     return this.plan.columns.filter(
       (planned) => planned.column.updatable && !key.has(lower(planned.column.name)),
     )
-  }
-
-  private keyValues(row: Row): string {
-    return keyOf((this.plan.key ?? []).map((column) => row.values.get(column)))
   }
 
   // Checks against the table (dry run)
@@ -354,13 +407,15 @@ export class Importer {
           false,
         )
         const result = await session.execute(statement.sql, statement.values)
-        const owners = new Map<string, string>()
+        // By the database's comparison: the row a key would collide with in the index.
+        const owners = new Map<number, string>()
         for (const raw of result.rows) {
-          const values = key.map((column, index) => this.canonical(column, raw[index]))
-          owners.set(keyOf(values), String(raw[key.length]))
+          for (const index of keyIndexes(raw[key.length + 1])) {
+            owners.set(index, String(raw[key.length]))
+          }
         }
-        for (const { row, except } of chunk) {
-          const owner = owners.get(keyOf(key.map((column) => row.values.get(column))))
+        for (const [index, { row, except }] of chunk.entries()) {
+          const owner = owners.get(index)
           if (owner !== undefined && owner !== String(except)) {
             row.failed = true
             for (const column of key) {
@@ -391,20 +446,25 @@ export class Importer {
         const values = foreign.columns.map((column) => this.bind(column, row.values.get(column)))
         tuples.set(keyOf(values), values)
       }
+      // The database matches the values with the target's collation, as the foreign key does.
       const present = new Set<string>()
-      const all = [...tuples.values()]
+      const all = [...tuples.entries()]
       try {
         for (let start = 0; start < all.length; start += 500) {
+          const chunk = all.slice(start, start + 500)
           const statement = rowsByKeys(
             foreign.target,
             foreign.targetColumns,
             [],
-            all.slice(start, start + 500),
+            chunk.map(([, values]) => values),
             false,
           )
           const result = await session.execute(statement.sql, statement.values)
           for (const raw of result.rows) {
-            present.add(keyOf(foreign.targetColumns.map((_, index) => String(raw[index]))))
+            for (const index of keyIndexes(raw[foreign.targetColumns.length])) {
+              const entry = chunk[index]
+              if (entry !== undefined) present.add(entry[0])
+            }
           }
         }
       } catch (error) {
@@ -415,8 +475,7 @@ export class Importer {
       }
       for (const row of candidates) {
         const values = foreign.columns.map((column) => this.bind(column, row.values.get(column)))
-        // Numbers come back as numbers or text depending on the type; both compare as text.
-        if (!present.has(keyOf(values.map(String)))) {
+        if (!present.has(keyOf(values))) {
           row.failed = true
           for (const column of foreign.columns) {
             errors.push({ line: row.line, column, code: 'foreign_key_violation' })
@@ -498,15 +557,16 @@ export class Importer {
             rows.filter((row) => !row.failed),
             write,
           )
-        : new Map<string, { key: unknown; values: Map<string, unknown> }>()
+        : new Map<Row, { key: unknown; values: Map<string, unknown> }>()
+    const weights = await this.weights(session, rows)
     const inserts: Row[] = []
     const updates: { row: Row; key: unknown; changes: Map<string, unknown> }[] = []
     for (const row of rows) {
       if (row.failed) continue
-      const existing = upsert ? found.get(this.keyValues(row)) : undefined
+      const existing = upsert ? found.get(row) : undefined
       this.required(row, existing === undefined, errors)
       if (row.failed) continue
-      this.duplicates(row, errors)
+      this.duplicates(row, errors, weights)
       if (row.failed) continue
       if (existing === undefined) {
         inserts.push(row)

@@ -23,6 +23,7 @@ interface ColumnRow {
   numericPrecision: number | string | null
   numericScale: number | string | null
   datetimePrecision: number | string | null
+  collation: string | null
 }
 interface IndexRow {
   object: string
@@ -102,6 +103,7 @@ function column(row: ColumnRow): CatalogColumn {
     maxLength: num(row.maxLength),
     precision: num(row.numericPrecision) ?? num(row.datetimePrecision),
     scale: num(row.numericScale),
+    collation: row.collation ?? null,
     ...((kind === 'enum' || kind === 'set') && { enumValues: enumValues(row.columnType) }),
   }
 }
@@ -124,7 +126,8 @@ export async function introspect(
             DATA_TYPE AS dataType, COLUMN_TYPE AS columnType, IS_NULLABLE AS nullable,
             COLUMN_DEFAULT AS defaultValue, EXTRA AS extra,
             CHARACTER_MAXIMUM_LENGTH AS maxLength, NUMERIC_PRECISION AS numericPrecision,
-            NUMERIC_SCALE AS numericScale, DATETIME_PRECISION AS datetimePrecision
+            NUMERIC_SCALE AS numericScale, DATETIME_PRECISION AS datetimePrecision,
+            COLLATION_NAME AS collation
        FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ?
       ORDER BY TABLE_NAME, ORDINAL_POSITION`,
     [database],

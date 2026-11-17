@@ -268,6 +268,69 @@ describe.skipIf(targets.length === 0).each(targets)('CSV import on $name', ({ ur
     expect(failed[0]?.subjectId).toBe(job.id)
   })
 
+  it('compares keys as the database does, so the dry run predicts the import', async () => {
+    const columns = ['vorname', 'nachname', 'email', 'land'].map((target, source) => ({
+      source,
+      target,
+    }))
+    const mapping = {
+      table: 'person',
+      mode: 'upsert' as const,
+      upsertKey: ['email'],
+      columns,
+      skipFailed: true,
+    }
+    let job = await upload(
+      [
+        'vorname;nachname;email;land',
+        'Eva;Berg;EVA@example.com;AT',
+        'Neu;Eins;neu@example.com;DE',
+        'Neu;Zwei;NEU@example.com;DE',
+        '',
+      ].join('\n'),
+      'schreibweisen.csv',
+    )
+    job = await configure(job, mapping)
+    job = await step(job, 'dry-run')
+    // The default collations ignore case: EVA@ is Eva, NEU@ the same address twice.
+    expect(job.dryRun?.counts).toEqual({
+      rows: 3,
+      created: 1,
+      updated: 1,
+      unchanged: 0,
+      failed: 1,
+      skipped: 0,
+    })
+    expect(job.dryRun?.errors).toEqual([{ line: 4, column: 'email', code: 'duplicate_in_file' }])
+    job = await step(job, 'run')
+    expect(job.status, JSON.stringify(job.failure)).toBe('completed')
+    expect(await rows("SELECT land FROM person WHERE email = 'eva@example.com'")).toEqual([
+      { land: 'AT' },
+    ])
+    expect(await rows("SELECT COUNT(*) AS n FROM person WHERE email = 'neu@example.com'")).toEqual([
+      { n: 1 },
+    ])
+
+    // A foreign key by unique column finds the person in another letter case, too.
+    let honour = await upload(
+      ['email;jahr;art', 'EVA@example.com;2026;medaille_10', ''].join('\n'),
+      'ehrung-schreibweise.csv',
+    )
+    honour = await configure(honour, {
+      table: 'ehrung',
+      mode: 'insert',
+      upsertKey: null,
+      skipFailed: false,
+      columns: [
+        { source: 0, target: 'person_id', reference: { via: 'unique', column: 'email' } },
+        { source: 1, target: 'event_id', reference: { via: 'unique', column: 'jahr' } },
+        { source: 2, target: 'art' },
+      ],
+    })
+    honour = await step(honour, 'dry-run')
+    expect(honour.dryRun?.counts).toMatchObject({ rows: 1, created: 1, failed: 0 })
+  })
+
   it('starts an import once when its owner and an admin start it at the same time', async () => {
     const invited = await admin.send('POST', '/internal/admin/users', {
       email: 'import-manager@example.com',

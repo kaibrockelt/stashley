@@ -11,6 +11,7 @@ import { buildTableModel, ModelError, type ModelAccess, type ModelContext } from
 import {
   bindForColumn,
   countStatement,
+  keyIndexes,
   matchStatement,
   rowStatement,
   selectStatement,
@@ -1075,10 +1076,20 @@ describe('public API and import statements', () => {
       ctx,
     )
     const statement = matchStatement(byEmail, ['a@example.com', 'b@example.com'])
+    // The database also says which value each row matches, with the column's collation.
     expect(statement.sql).toBe(
-      'SELECT `t0`.`id` AS `v`, `t0`.`email` AS `m` FROM `person` AS `t0` WHERE `t0`.`email` IN (?, ?)',
+      "SELECT `t0`.`id` AS `v`, `t0`.`email` AS `m`, CONCAT_WS(',', IF(`t0`.`email` = ?, ?, NULL), IF(`t0`.`email` = ?, ?, NULL)) AS `i` FROM `person` AS `t0` WHERE `t0`.`email` IN (?, ?)",
     )
-    expect(statement.values).toEqual(['a@example.com', 'b@example.com'])
+    expect(statement.values).toEqual([
+      'a@example.com',
+      '0',
+      'b@example.com',
+      '1',
+      'a@example.com',
+      'b@example.com',
+    ])
+    expect(keyIndexes('0,1')).toEqual([0, 1])
+    expect(keyIndexes(null)).toEqual([])
     // The import builds this model itself; the display value of the row's own object.
     const byName = buildTableModel(
       'person',

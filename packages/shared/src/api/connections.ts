@@ -185,6 +185,11 @@ export interface CatalogColumn {
   generated: boolean
   /** `ON UPDATE` expression, e.g. `CURRENT_TIMESTAMP`; absent in snapshots before it existed. */
   onUpdate?: string | null
+  /**
+   * Collation of text columns (`utf8mb4_unicode_ci`), which decides how values compare; null
+   * for other columns, absent in snapshots before it existed.
+   */
+  collation?: string | null
   maxLength: number | null
   precision: number | null
   scale: number | null
