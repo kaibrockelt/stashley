@@ -1144,7 +1144,7 @@ These are the resource groups of the internal API. The exact contracts are Zod s
 
 ## 17. CSV import
 
-The module is `modules/imports`. Managers and admins import into existing tables within the ceiling; admins also create tables (E22, E28). Jobs are visible to the user who uploaded them and to admins.
+The module is `modules/imports`. Managers and admins import into existing tables within the ceiling: inserts need `create`, upserts `create`, `update` and `read`, because a dry run that counts unchanged rows would otherwise reveal stored values; admins also create tables (E22, E28). Jobs are visible to the user who uploaded them and to admins.
 
 1. **Upload:** `POST /internal/imports?fileName=` with a raw `text/csv` body (D1) of at most `STASHLEY_IMPORT_MAX_MB` (50).
    - The body is streamed to `/data/uploads/<id>.csv`, and its SHA-256 is computed while streaming.

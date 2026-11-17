@@ -164,6 +164,37 @@ describe('CSV import routes', () => {
     ])
   })
 
+  it('upsert only into tables the importer may also read', async () => {
+    const { s, person } = await setup()
+    const changed = await s.admin.send('PUT', `/internal/admin/table-access/${person.id}`, {
+      ops: ['create', 'update'],
+      keyColumn: person.keyColumn,
+      displayTemplate: person.displayTemplate,
+      apiResource: person.apiResource,
+      mcpEnabled: false,
+      exclusions: person.exclusions,
+    })
+    expect(changed.statusCode, changed.body).toBe(200)
+    const job = (await upload(s.admin, germanCsv)).json<ImportJob>()
+    const target = (
+      await s.admin.request('GET', `/internal/imports/${job.id}/targets/${person.id}`)
+    ).json<ImportTarget>()
+    // A dry run would compare stored values: without read, inserting is all that is left.
+    expect(target.modes).toEqual(['insert'])
+    const refused = await s.admin.send('PUT', `/internal/imports/${job.id}`, {
+      options: job.options,
+      mapping: {
+        tableAccessId: person.id,
+        mode: 'upsert',
+        upsertKey: ['id'],
+        skipFailed: false,
+        columns: [{ source: 2, target: 'email' }],
+      },
+    })
+    expect(refused.statusCode).toBe(403)
+    expect(problem(refused).errors).toEqual([{ field: 'mode', code: 'not_allowed' }])
+  })
+
   it('check a mapping against the table before saving it', async () => {
     const { s, person, demo } = await setup()
     const job = (await upload(s.admin, germanCsv)).json<ImportJob>()

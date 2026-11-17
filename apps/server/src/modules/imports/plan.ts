@@ -30,11 +30,16 @@ function invalid(errors: FieldError[]): AppError {
   return new AppError('validation_failed', { errors })
 }
 
-/** The modes a table allows: insert needs create, upsert create and update (E22). */
+/**
+ * The modes a table allows: insert needs create; upsert create, update and read (E22). An
+ * upsert compares stored values and counts unchanged rows, which would let anyone guess the
+ * values of a table they may not read, so without read only insert is left.
+ */
 export function importModes(resource: ResourceModel): ImportTarget['modes'] {
   const create = resource.available.includes('create')
   const update = resource.available.includes('update')
-  return create ? (update ? ['insert', 'upsert'] : ['insert']) : []
+  const read = hasOp(resource.object.ceiling & resource.object.dbGrants, 'read')
+  return create ? (update && read ? ['insert', 'upsert'] : ['insert']) : []
 }
 
 function required(resource: ResourceModel, column: CatalogColumn): boolean {
