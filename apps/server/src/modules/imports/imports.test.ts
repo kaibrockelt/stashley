@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import { writeFileSync } from 'node:fs'
+import { readdirSync, readlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { ImportJob, ImportPreview, ImportTarget, TableAccess } from '@stashley/shared'
 import iconv from 'iconv-lite'
@@ -51,6 +51,28 @@ describe('CSV files', () => {
     expect(detectHeader([['1', '2']])).toBe(false)
     expect(detectHeader([['a', 'a']])).toBe(false)
   })
+
+  it.skipIf(process.platform !== 'linux')(
+    'close the file when the reader stops early',
+    async () => {
+      const target = file(
+        'a;b\n' + Array.from({ length: 100_000 }, (_, index) => `${index};x`).join('\n'),
+      )
+      const open = () =>
+        readdirSync('/proc/self/fd').filter((fd) => {
+          try {
+            return readlinkSync(`/proc/self/fd/${fd}`) === target
+          } catch {
+            return false
+          }
+        }).length
+      for (let round = 0; round < 3; round++) {
+        await firstRecords(target, { encoding: 'utf-8', delimiter: ';' }, 2)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(open()).toBe(0)
+    },
+  )
 
   it('read quoted fields, line breaks and line numbers', async () => {
     const records = await firstRecords(

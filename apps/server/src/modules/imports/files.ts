@@ -6,7 +6,7 @@ import { mkdir, open, rm } from 'node:fs/promises'
 import path from 'node:path'
 import type { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { Transform } from 'node:stream'
+import { pipeline as connect, Transform } from 'node:stream'
 import type { ImportParseOptions } from '@stashley/shared'
 import { importDelimiters } from '@stashley/shared'
 import { parse } from 'csv-parse'
@@ -176,7 +176,14 @@ export async function* records(
     raw: true,
     max_record_size: 1024 * 1024,
   })
-  const source = createReadStream(file).pipe(iconv.decodeStream(options.encoding)).pipe(parser)
+  // `pipeline` destroys every stream when one fails or the reader stops early (a preview,
+  // a cancelled import), so the file is closed then too; `.pipe()` would leave it open.
+  const source = connect(
+    createReadStream(file),
+    iconv.decodeStream(options.encoding),
+    parser,
+    () => undefined,
+  )
   // Lines are counted from the raw text, so a record names the line it starts on even when
   // a quoted field spans lines; empty lines are skipped but counted.
   let line = 1
