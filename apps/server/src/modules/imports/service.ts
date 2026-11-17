@@ -721,12 +721,20 @@ export class ImportService {
       .execute()
   }
 
-  private start(
+  /**
+   * Starts a dry run or an import, once per job even when requests race (two users on one
+   * job): the slot is reserved before the first await, and the job is claimed in the store
+   * only from the statuses it may start from.
+   */
+  private async start(
     user: ImportUser,
     row: ImportJobsTable,
+    claim: { from: readonly ImportStatus[]; set: Partial<ImportJobsTable> },
     phase: Running['phase'],
     work: (running: Running) => Promise<void>,
-  ): void {
+  ): Promise<void> {
+    if (this.running.has(row.id)) throw new AppError('conflict')
+    this.startable(user)
     const running: Running = {
       userId: user.id,
       cancel: false,
@@ -735,6 +743,18 @@ export class ImportService {
       done: Promise.resolve(),
     }
     this.running.set(row.id, running)
+    try {
+      const claimed = await this.deps.db
+        .updateTable('import_jobs')
+        .set({ ...claim.set, updated_at: this.clock() })
+        .where('id', '=', row.id)
+        .where('status', 'in', [...claim.from])
+        .executeTakeFirst()
+      if (Number(claimed.numUpdatedRows) !== 1) throw new AppError('conflict')
+    } catch (error) {
+      this.running.delete(row.id)
+      throw error
+    }
     running.done = work(running)
       .catch((error: unknown) => {
         this.deps.log.error({ err: error, importId: row.id }, 'import job failed')
@@ -760,9 +780,11 @@ export class ImportService {
     const row = await this.row(user, id)
     if (this.running.has(id) || row.status === 'completed') throw new AppError('conflict')
     await this.validate(user, row)
-    this.startable(user)
-    await this.update(id, { status: 'checking', dry_run: null, result: null })
-    this.start(user, row, 'checking', async (running) => {
+    const claim = {
+      from: ['uploaded', 'checked', 'failed', 'cancelled'] as const,
+      set: { status: 'checking', dry_run: null, result: null },
+    }
+    await this.start(user, row, claim, 'checking', async (running) => {
       try {
         const result = await this.process(row, false, running)
         const dryRun: ImportDryRun = {
@@ -802,11 +824,10 @@ export class ImportService {
     if (dryRun.counts.failed > 0 && !mapping.skipFailed) {
       throw new AppError('validation_failed', { errors: [{ field: '_', code: 'dry_run_failed' }] })
     }
-    this.startable(user)
-    await this.update(id, { status: 'importing' })
     const object = resource.object.objectName
     const connectionId = resource.connection.connectionId
-    this.start(user, row, 'importing', async (running) => {
+    const claim = { from: ['checked'] as const, set: { status: 'importing' } }
+    await this.start(user, row, claim, 'importing', async (running) => {
       const details = {
         fileName: row.file_name,
         fileSha256: row.file_sha256,
@@ -885,16 +906,15 @@ export class ImportService {
     if (dryRun.counts.failed > 0 && !state.skipFailed) {
       throw new AppError('validation_failed', { errors: [{ field: '_', code: 'dry_run_failed' }] })
     }
-    this.startable(user)
     const id = row.id
-    await this.update(id, { status: 'importing' })
     const definition = state.definition
     const connectionId = definition.connectionId
     const save = async (patch: Partial<NewTableState>) => {
       state = { ...state, ...patch }
       await this.update(id, { new_table: JSON.stringify(state) })
     }
-    this.start(user, row, 'importing', async (running) => {
+    const claim = { from: ['checked'] as const, set: { status: 'importing' } }
+    await this.start(user, row, claim, 'importing', async (running) => {
       const details = {
         fileName: row.file_name,
         fileSha256: row.file_sha256,

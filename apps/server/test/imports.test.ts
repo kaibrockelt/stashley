@@ -268,6 +268,48 @@ describe.skipIf(targets.length === 0).each(targets)('CSV import on $name', ({ ur
     expect(failed[0]?.subjectId).toBe(job.id)
   })
 
+  it('starts an import once when its owner and an admin start it at the same time', async () => {
+    const invited = await admin.send('POST', '/internal/admin/users', {
+      email: 'import-manager@example.com',
+      displayName: 'Import',
+      systemRole: 'manager',
+    })
+    const { link } = invited.json<{ link: string }>()
+    const manager = new (admin.constructor as new (app: Server['app']) => TestClient)(server.app)
+    await manager.send('POST', '/internal/invitations/accept', {
+      token: link.split('#').at(-1),
+      password: 'import-manager long passphrase',
+    })
+    const uploaded = await manager.upload(
+      '/internal/imports?fileName=zahlungen.csv',
+      ['anmeldung_id;betrag;eingang_am;verwendungszweck', '1;10;2026-04-01;einmal', ''].join('\n'),
+    )
+    const job = uploaded.json<ImportJob>()
+    await manager.send('PUT', `/internal/imports/${job.id}`, {
+      options: job.options,
+      mapping: {
+        tableAccessId: table('zahlung').id,
+        mode: 'insert',
+        upsertKey: null,
+        skipFailed: false,
+        columns: ['anmeldung_id', 'betrag', 'eingang_am', 'verwendungszweck'].map(
+          (target, source) => ({ source, target }),
+        ),
+      },
+    })
+    await manager.send('POST', `/internal/imports/${job.id}/dry-run`)
+    await server.services.imports.settled()
+    const started = await Promise.all([
+      manager.send('POST', `/internal/imports/${job.id}/run`),
+      admin.send('POST', `/internal/imports/${job.id}/run`),
+    ])
+    await server.services.imports.settled()
+    expect(started.map((response) => response.statusCode).sort()).toEqual([200, 409])
+    expect(
+      await rows("SELECT COUNT(*) AS n FROM zahlung WHERE verwendungszweck = 'einmal'"),
+    ).toEqual([{ n: 1 }])
+  })
+
   it('creates a table from Windows-1252 with semicolons and German dates, adding an id (§ Abnahme)', async () => {
     const csv = iconv.encode(
       [
