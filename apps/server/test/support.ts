@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
+import { type DemoFacts, generateDemo, schemaSql, usersSql } from '@stashley/demo'
 import type { Connection, TableAccess, TableOp } from '@stashley/shared'
 import mysql from 'mysql2/promise'
 import { expect } from 'vitest'
@@ -19,7 +18,6 @@ export const targets = (process.env.STASHLEY_TEST_TARGETS ?? '')
     return { name, url: new URL(url) }
   })
 export const allowLoopback = process.env.STASHLEY_TEST_ALLOW_LOOPBACK === '1'
-const fixtures = path.join(import.meta.dirname, 'fixtures', 'wanderverein')
 export const adminEmail = 'admin@example.com'
 export const adminPassword = 'correct horse battery staple'
 
@@ -46,8 +44,16 @@ export async function prepareDatabase(root: mysql.Connection): Promise<void> {
   await root.query('DROP DATABASE IF EXISTS wanderverein')
   await root.query('CREATE DATABASE wanderverein CHARACTER SET utf8mb4')
   await root.query('USE wanderverein')
-  await root.query(readFileSync(path.join(fixtures, 'schema.sql'), 'utf8'))
-  await root.query(readFileSync(path.join(fixtures, 'users.sql'), 'utf8'))
+  await root.query(schemaSql())
+  await root.query(usersSql())
+}
+
+/** Loads the full demo data into the demo schema and returns what it promises. */
+export async function loadDemoData(root: mysql.Connection, now = new Date()): Promise<DemoFacts> {
+  const demo = generateDemo({ now })
+  await root.query('USE wanderverein')
+  for (const statement of demo.statements) await root.query(statement)
+  return demo.facts
 }
 
 export async function startServer(): Promise<{ server: Server; admin: TestClient }> {

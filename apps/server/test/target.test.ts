@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
+import { schemaSql, usersSql } from '@stashley/demo'
 import type {
   CatalogSnapshot,
   Connection,
@@ -34,7 +33,6 @@ const targets = (process.env.STASHLEY_TEST_TARGETS ?? '')
     return { name, url: new URL(url) }
   })
 const allowLoopback = process.env.STASHLEY_TEST_ALLOW_LOOPBACK === '1'
-const fixtures = path.join(import.meta.dirname, 'fixtures', 'wanderverein')
 const adminEmail = 'admin@example.com'
 const adminPassword = 'correct horse battery staple'
 
@@ -117,8 +115,8 @@ describe.skipIf(targets.length === 0).each(targets)('target database $name', ({ 
     await root.query('DROP DATABASE IF EXISTS wanderverein')
     await root.query('CREATE DATABASE wanderverein CHARACTER SET utf8mb4')
     await root.query('USE wanderverein')
-    await root.query(readFileSync(path.join(fixtures, 'schema.sql'), 'utf8'))
-    await root.query(readFileSync(path.join(fixtures, 'users.sql'), 'utf8'))
+    await root.query(schemaSql())
+    await root.query(usersSql())
     server = await createServer(
       testConfig({ INITIAL_ADMIN_EMAIL: adminEmail, INITIAL_ADMIN_PASSWORD: adminPassword }),
       {

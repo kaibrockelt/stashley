@@ -26,6 +26,7 @@ export default tseslint.config(
         project: [
           './apps/server/tsconfig.test.json',
           './packages/shared/tsconfig.test.json',
+          './packages/demo/tsconfig.test.json',
           './apps/web/tsconfig.json',
         ],
         tsconfigRootDir: import.meta.dirname,

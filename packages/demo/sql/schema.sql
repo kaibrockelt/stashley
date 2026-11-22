@@ -2,7 +2,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 --
 -- Schema of the demo scenario "Wanderverein" (hiking club). Runs on MariaDB and MySQL.
--- Test data follows with the demo seed in M9.
+-- The demo data comes from `@stashley/demo` (`scripts/seed-demo.sh`).
 
 CREATE TABLE person (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,

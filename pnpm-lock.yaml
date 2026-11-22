@@ -275,6 +275,9 @@ importers:
       '@seriousme/openapi-schema-validator':
         specifier: 2.11.0
         version: 2.11.0
+      '@stashley/demo':
+        specifier: workspace:*
+        version: link:../../packages/demo
       '@types/better-sqlite3':
         specifier: 9.6.0
         version: 9.6.0
@@ -357,6 +360,8 @@ importers:
       vite:
         specifier: 8.3.7
         version: 8.3.7(@types/node@26.6.6)(yaml@2.9.1)
+
+  packages/demo: {}
 
   packages/shared:
     dependencies:
