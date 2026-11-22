@@ -1,8 +1,8 @@
 # Progress
 
-**Current milestone:** M9 – Demo scenario and acceptance (open); M8 moved after the MVP (D17)
+**Current milestone:** M9 – Demo scenario and acceptance (in progress); M8 moved after the MVP (D17)
 
-**Next step:** Plan M9 in a fresh session and present it to the operator for approval.
+**Next step:** Implement M9 along the approved plan (log 2026-11-22).
 
 **Recommended model strength:** M9: medium (final review: high).
 
@@ -21,7 +21,7 @@ The SQL validation of M4 is tested externally; that does not block M6.
 | M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | Done |
 | M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High (new tables, review: extra high) | Done |
 | M8 | MCP server: authorization server, metadata, tools, MCP exposure, privacy notice, call log | High (authorization server and its review: extra high) | After the MVP (D17) |
-| M9 | Demo scenario and acceptance: seed script, configuration export and import, end-to-end suite, accessibility, performance, documentation, release pipeline; MCP controls hidden until M8 (D17) | Medium (final review: high) | Open |
+| M9 | Demo scenario and acceptance: seed script, configuration export and import, end-to-end suite, accessibility, performance, documentation, release pipeline; MCP controls hidden until M8 (D17) | Medium (final review: high) | In progress |
 
 Status values: open, in progress, in review, done, after the MVP.
 
@@ -410,3 +410,10 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
 - 2026-11-22: Noted for after the MVP: case-insensitive search and sorting on case-sensitive text columns (`utf8mb4_bin`) at the query level, e.g. with an explicit collation for `contains` and the sort.
 - 2026-11-22: M7 accepted by the operator. Asked whether M8 (MCP) is a large milestone; if it is large, complicated and brings new security implications, the operator prefers to move it after the MVP.
 - 2026-11-22: M8 moved after the MVP (D17), as the operator decided: it is as large as M7, and its authorization server, client metadata fetched from foreign addresses and data leaving to AI providers bring new security questions. A slim variant with personal tokens only was offered and not chosen. Next is M9, which also hides the MCP controls until M8.
+- 2026-11-22: M9 plan approved. Steps: MCP controls hidden (D17); demo data and `scripts/seed-demo.sh`; configuration export and import; the permission overview UI (§8.7, so far API only); app icon; Playwright end-to-end suite with axe; accessibility and performance; documentation site; release and docs workflows; verification.
+  - Configuration export and import is for admins only. Conflicts (missing table access or columns on the target, a name that exists with a different ID) block the import and are listed; they are resolved by hand. Instance variables are exported with their values, home pages with their roles.
+  - The end-to-end suite builds every demo page through the UI in one spec; its export becomes the fixture the other specs and the second instance import.
+  - The test stand's database keeps the demo data for further testing.
+  - Tools that run in containers (Playwright, mock OIDC provider, k6) are fine as long as they are removed completely afterwards. Load tests run on demand only.
+  - The MVP is released as `0.1.0`; the operator tags and pushes.
+  - The provisional icon (`stashley-icon.svg`) is used as delivered; smaller variants may follow from the operator.
