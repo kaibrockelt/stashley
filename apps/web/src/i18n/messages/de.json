@@ -1294,5 +1294,14 @@
   "config.conflict.relationInvalid": "Beziehung passt nicht zum Schema",
   "config.conflict.relationDiffers": "Beziehung weicht hier ab",
   "config.conflict.templateInvalid": "Anzeigewert passt nicht",
-  "config.conflict.referenceMissing": "Verweis fehlt"
+  "config.conflict.referenceMissing": "Verweis fehlt",
+  "permissions.title": "Rechteübersicht",
+  "permissions.table": "Tabelle",
+  "permissions.role": "Fachrolle",
+  "permissions.page": "Seite",
+  "permissions.component": "Komponente",
+  "permissions.ops": "Operationen",
+  "permissions.all": "Alle",
+  "permissions.deletedRole": "Gelöschte Fachrolle",
+  "permissions.empty": "Noch keine veröffentlichte Seite gewährt Zugriff."
 }

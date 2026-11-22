@@ -360,6 +360,7 @@ export interface PermissionEntry {
   pageId: string
   pageTitle: string
   componentId: string
+  componentTitle: string
   ops: TableOp[]
 }
 

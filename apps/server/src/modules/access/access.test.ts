@@ -834,6 +834,7 @@ describe('page and component rights', () => {
         pageId: page.id,
         pageTitle: 'Lindenhof',
         componentId: 'gaeste',
+        componentTitle: 'Gäste',
         ops: ['read'],
       },
     ])

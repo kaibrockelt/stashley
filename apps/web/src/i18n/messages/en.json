@@ -1294,5 +1294,14 @@
   "config.conflict.relationInvalid": "Relation does not fit the schema",
   "config.conflict.relationDiffers": "Relation differs here",
   "config.conflict.templateInvalid": "Display template does not fit",
-  "config.conflict.referenceMissing": "Reference missing"
+  "config.conflict.referenceMissing": "Reference missing",
+  "permissions.title": "Permissions",
+  "permissions.table": "Table",
+  "permissions.role": "Role",
+  "permissions.page": "Page",
+  "permissions.component": "Component",
+  "permissions.ops": "Operations",
+  "permissions.all": "All",
+  "permissions.deletedRole": "Deleted role",
+  "permissions.empty": "No published page grants access yet."
 }

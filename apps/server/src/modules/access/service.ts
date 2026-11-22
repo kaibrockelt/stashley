@@ -621,6 +621,7 @@ export class AccessService {
               pageId: row.id,
               pageTitle: document.title,
               componentId: component.id,
+              componentTitle: component.block.title,
               ops: toOps(ops),
             })
           }
