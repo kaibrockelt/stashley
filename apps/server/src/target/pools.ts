@@ -149,7 +149,16 @@ interface RawSession {
     timeout?: number
     rowsAsArray?: boolean
   }): Promise<[unknown, unknown]>
+  /** Drops a statement mysql2 keeps prepared; its cache key includes `rowsAsArray`. */
+  unprepare(options: { sql: string; rowsAsArray?: boolean }): void
 }
+
+/**
+ * MariaDB (10.11 to 12.3 at least) fails some prepared statements on views when they run a
+ * second time, with errno 1356 ("View … references invalid table(s)"), e.g. a view with a
+ * window function and a correlated subquery. The first run of a fresh prepare succeeds.
+ */
+const mariadbReexecuteErrno = 1356
 
 /** Session setup (§9.2), run once on every new connection. */
 async function setUp(raw: RawSession, spec: TargetSpec, purpose: CredentialPurpose) {
@@ -234,13 +243,29 @@ function session(
               killed = true
               void kill().catch(() => undefined)
             }, spec.queryTimeoutMs + killGraceMs)
-      try {
-        const [rows, fields] = await raw.execute({
+      const run = () =>
+        raw.execute({
           sql,
           values: params,
           rowsAsArray: true,
           timeout: spec.queryTimeoutMs + dropGraceMs,
         })
+      try {
+        let result: [unknown, unknown]
+        try {
+          result = await run()
+        } catch (error) {
+          if (
+            killed ||
+            server.engine !== 'mariadb' ||
+            (error as { errno?: unknown }).errno !== mariadbReexecuteErrno
+          ) {
+            throw error
+          }
+          raw.unprepare({ sql, rowsAsArray: true })
+          result = await run()
+        }
+        const [rows, fields] = result
         return {
           rows: rows as unknown[][],
           fields: Array.isArray(fields) ? fields.map(fieldInfo) : [],
