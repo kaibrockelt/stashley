@@ -27,6 +27,7 @@ import {
 } from '../../../ui/controls.tsx'
 import table from '../../../ui/table.module.css'
 import styles from '../connections/connections.module.css'
+import { ScrollArea } from '../../../ui/scroll-area.tsx'
 
 const typeLabels: Record<NewColumnTypeName, MessageId> = {
   int: 'tables.type.int',
@@ -172,7 +173,7 @@ export function TableDefinitionEditor(props: {
         )}
       </div>
       {problem('columns') !== undefined && <p className={styles.danger}>{problem('columns')}</p>}
-      <div className={table.wrap}>
+      <ScrollArea>
         <table className={table.table}>
           <thead>
             <tr>
@@ -335,7 +336,7 @@ export function TableDefinitionEditor(props: {
             })}
           </tbody>
         </table>
-      </div>
+      </ScrollArea>
       <p className={styles.muted}>{t('tables.hint')}</p>
       <p className={styles.muted}>{t('tables.caseSensitive.hint')}</p>
       {props.sources === undefined && (

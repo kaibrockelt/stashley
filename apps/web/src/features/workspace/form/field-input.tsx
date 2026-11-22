@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { FieldOption, FieldOptions, RenderField } from '@stashley/shared'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { type RefObject, useContext, useEffect, useRef, useState } from 'react'
 import {
   ComboBox,
+  ComboBoxStateContext,
   FieldError,
   Input,
   Label,
@@ -77,6 +78,23 @@ function TypedInput(props: FieldProps & { type: string; inputMode?: 'decimal' | 
 }
 
 /**
+ * Opens the option list when the user types. The list never opens on its own: a value set
+ * from outside (a default, a page filter) changes the input of a focused field too, and an
+ * open list would hide the rest of the page from screen readers.
+ */
+function OpenOnTyping(props: { typed: string | null; typedRef: RefObject<boolean> }) {
+  const state = useContext(ComboBoxStateContext)
+  const { typed, typedRef } = props
+  useEffect(() => {
+    if (!typedRef.current || state === null) return
+    typedRef.current = false
+    if (typed === null || typed === '') state.close()
+    else if (!state.isOpen) state.open(null, 'input')
+  }, [typed, typedRef, state])
+  return null
+}
+
+/**
  * A searchable selection of a foreign key (§ Auswahllisten): the display value shows, the key
  * is stored. Search runs on the server from one character, 50 hits per page. An exact hit,
  * such as a start number, is taken at once; Enter takes the highlighted option.
@@ -89,6 +107,8 @@ function ReferenceInput(props: FieldProps) {
   // What the user types; null while the input shows the chosen option's label.
   const [typed, setTyped] = useState<string | null>(null)
   const [picked, setPicked] = useState<FieldOption | null>(null)
+  // Set by keystrokes, so only typing opens the list (see OpenOnTyping).
+  const typedRef = useRef(false)
   const search = useDebounced((typed ?? '').trim(), 200)
   const selected = typeof props.value === 'string' && props.value !== '' ? props.value : null
   const request = { ...modeFields(context), filters: context.filters, params: context.params }
@@ -165,11 +185,20 @@ function ReferenceInput(props: FieldProps) {
         isRequired={field.required}
         isReadOnly={props.isReadOnly ?? false}
         allowsEmptyCollection
-        menuTrigger="input"
+        menuTrigger="manual"
         autoFocus={props.autoFocus ?? false}
       >
+        <OpenOnTyping typed={typed} typedRef={typedRef} />
         <Label className={controls.label}>{props.label}</Label>
-        <Input className={controls.input} placeholder={t('form.reference.placeholder')} />
+        <Input
+          className={controls.input}
+          placeholder={t('form.reference.placeholder')}
+          onInput={() => {
+            typedRef.current = true
+            // New keystrokes may take the same exact hit again, e.g. after the form cleared.
+            lastExact.current = undefined
+          }}
+        />
         {field.help !== null && (
           <Text slot="description" className={controls.description}>
             {field.help}

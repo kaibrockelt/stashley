@@ -28,6 +28,7 @@ import table from '../../../ui/table.module.css'
 import { ConsequencesNotice, consequencesOf } from '../api/consequences.tsx'
 import styles from './connections.module.css'
 import { AccessWarnings, opLabels } from './texts.tsx'
+import { ScrollArea } from '../../../ui/scroll-area.tsx'
 
 type Visibility = 'shown' | ExclusionScope
 
@@ -268,7 +269,7 @@ export function AccessDialog(props: {
             </p>
           )}
           {exclusionError !== undefined && <p className={styles.danger}>{exclusionError}</p>}
-          <div className={`${table.wrap} ${styles.columns}`}>
+          <ScrollArea className={styles.columns}>
             <table className={table.table}>
               <thead>
                 <tr>
@@ -297,7 +298,7 @@ export function AccessDialog(props: {
                 ))}
               </tbody>
             </table>
-          </div>
+          </ScrollArea>
         </div>
         <Actions>
           {access !== undefined && (

@@ -42,7 +42,7 @@
   --color-accent-subtle: oklch(95% 0.03 var(--accent-hue));
   --color-focus: oklch(55% 0.2 var(--accent-hue));
   --color-danger: oklch(52% 0.2 27);
-  --color-warning: oklch(62% 0.15 75);
+  --color-warning: oklch(52% 0.13 70);
   --color-success: oklch(52% 0.13 150);
   --shadow-popover: 0 4px 16px oklch(0% 0 0 / 0.12);
 }

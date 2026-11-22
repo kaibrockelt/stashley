@@ -18,6 +18,7 @@ import {
   TextField,
 } from '../../ui/controls.tsx'
 import table from '../../ui/table.module.css'
+import { ScrollArea } from '../../ui/scroll-area.tsx'
 
 export const rolesKey = ['design', 'roles'] as const
 
@@ -129,7 +130,7 @@ export function RolesPage() {
         }
       />
       {!mayManage && <Notice tone="info">{t('roles.adminsOnly')}</Notice>}
-      <div className={table.wrap}>
+      <ScrollArea>
         <table className={table.table}>
           <thead>
             <tr>
@@ -157,7 +158,7 @@ export function RolesPage() {
           </tbody>
         </table>
         {roles.data?.data.length === 0 && <p className={table.empty}>{t('roles.empty')}</p>}
-      </div>
+      </ScrollArea>
       <RoleDialog
         key={creating ? 'new' : selected?.id}
         role={selected}

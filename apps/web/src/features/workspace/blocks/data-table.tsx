@@ -6,6 +6,7 @@ import { useT } from '../../../i18n/use-t.ts'
 import table from '../../../ui/table.module.css'
 import { useValueFormatter } from '../format.ts'
 import styles from './blocks.module.css'
+import { ScrollArea } from '../../../ui/scroll-area.tsx'
 
 export interface DataColumn {
   id: string
@@ -40,7 +41,7 @@ export function DataTable(props: {
         : 'descending'
   if (props.rows.length === 0) return <p className={table.empty}>{t('block.empty')}</p>
   return (
-    <div className={table.wrap}>
+    <ScrollArea>
       <table className={table.table}>
         <caption className={styles.visuallyHidden}>{props.caption}</caption>
         <thead>
@@ -101,6 +102,6 @@ export function DataTable(props: {
           ))}
         </tbody>
       </table>
-    </div>
+    </ScrollArea>
   )
 }

@@ -17,6 +17,7 @@ import table from '../../ui/table.module.css'
 import { designKeys } from '../design/design-api.ts'
 import { ChangeList } from './changes.tsx'
 import styles from './editor.module.css'
+import { ScrollArea } from '../../ui/scroll-area.tsx'
 
 const draft = 'draft'
 
@@ -98,7 +99,7 @@ export function VersionsDialog(props: {
       {list.length === 0 ? (
         <p className={styles.muted}>{t('versions.none')}</p>
       ) : (
-        <div className={table.wrap}>
+        <ScrollArea>
           <table className={table.table}>
             <thead>
               <tr>
@@ -141,7 +142,7 @@ export function VersionsDialog(props: {
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollArea>
       )}
       {list.length > 0 && (
         <>

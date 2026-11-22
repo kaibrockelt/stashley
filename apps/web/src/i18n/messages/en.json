@@ -756,7 +756,7 @@
   "editor.addRow": "Add row",
   "editor.addTable": "Set up table",
   "editor.removeRow": "Remove row",
-  "editor.removeBlock": "Remove {title}",
+  "editor.removeBlock": "Delete {title}",
   "editor.moveTo": "Row of {title}",
   "editor.newRow": "New row",
   "editor.untitled": "Untitled",

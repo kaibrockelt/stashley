@@ -756,7 +756,7 @@
   "editor.addRow": "Zeile hinzufügen",
   "editor.addTable": "Tabelle einrichten",
   "editor.removeRow": "Zeile entfernen",
-  "editor.removeBlock": "{title} entfernen",
+  "editor.removeBlock": "{title} löschen",
   "editor.moveTo": "Zeile von {title}",
   "editor.newRow": "Neue Zeile",
   "editor.untitled": "Ohne Titel",

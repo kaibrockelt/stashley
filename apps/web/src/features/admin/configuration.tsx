@@ -25,6 +25,7 @@ import {
   SelectField,
 } from '../../ui/controls.tsx'
 import table from '../../ui/table.module.css'
+import { ScrollArea } from '../../ui/scroll-area.tsx'
 
 const kindLabels: Record<ConfigItemKind, MessageId> = {
   section: 'config.kind.section',
@@ -243,7 +244,7 @@ function ImportSection() {
         <>
           <p aria-live="polite">{t('config.import.summary', plan.counts)}</p>
           {plan.counts.conflict > 0 && <Notice tone="info">{t('config.import.blocked')}</Notice>}
-          <div className={table.wrap}>
+          <ScrollArea>
             <table className={table.table}>
               <thead>
                 <tr>
@@ -277,7 +278,7 @@ function ImportSection() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </ScrollArea>
         </>
       )}
     </Section>

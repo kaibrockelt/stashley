@@ -24,6 +24,7 @@ import {
 } from '../../ui/controls.tsx'
 import table from '../../ui/table.module.css'
 import { rolesKey, useRoles } from '../design/roles.tsx'
+import { ScrollArea } from '../../ui/scroll-area.tsx'
 
 const usersKey = ['admin', 'users'] as const
 
@@ -324,7 +325,7 @@ export function UsersPage() {
           ]}
         />
       </div>
-      <div className={table.wrap}>
+      <ScrollArea>
         <table className={table.table}>
           <thead>
             <tr>
@@ -360,7 +361,7 @@ export function UsersPage() {
           </tbody>
         </table>
         {users.data?.data.length === 0 && <p className={table.empty}>{t('users.empty')}</p>}
-      </div>
+      </ScrollArea>
       <InviteDialog isOpen={inviting} onClose={() => setInviting(false)} />
       <UserDialog key={selected?.id} user={selected} onClose={() => setSelected(undefined)} />
     </>

@@ -34,6 +34,7 @@ import table from '../../../ui/table.module.css'
 import styles from '../connections/connections.module.css'
 import { opLabels } from '../connections/texts.tsx'
 import { apiOperationLabels, ConsequencesNotice, consequencesOf } from './consequences.tsx'
+import { ScrollArea } from '../../../ui/scroll-area.tsx'
 
 const endpointsKey = ['admin', 'api', 'endpoints'] as const
 const tokensKey = ['admin', 'api', 'tokens'] as const
@@ -285,7 +286,7 @@ function TokenDialog(props: {
           {open.length === 0 ? (
             <p className={table.empty}>{t('api.token.grants.none')}</p>
           ) : (
-            <div className={table.wrap}>
+            <ScrollArea>
               <table className={table.table}>
                 <thead>
                   <tr>
@@ -321,7 +322,7 @@ function TokenDialog(props: {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </ScrollArea>
           )}
         </div>
         {confirmRevoke && <Notice tone="info">{t('api.token.revoke.confirm')}</Notice>}
@@ -405,7 +406,7 @@ export function ApiPage() {
       {download.error !== null && <Notice tone="error">{errorText.message(download.error)}</Notice>}
       <p className={styles.muted}>{t('api.intro')}</p>
       <Section title={t('api.endpoints')}>
-        <div className={table.wrap}>
+        <ScrollArea>
           <table className={table.table}>
             <thead>
               <tr>
@@ -452,7 +453,7 @@ export function ApiPage() {
             </tbody>
           </table>
           {states.length === 0 && <p className={table.empty}>{t('api.endpoints.empty')}</p>}
-        </div>
+        </ScrollArea>
       </Section>
       <Section
         title={t('api.tokens')}
@@ -462,7 +463,7 @@ export function ApiPage() {
           </Button>
         }
       >
-        <div className={table.wrap}>
+        <ScrollArea>
           <table className={table.table}>
             <thead>
               <tr>
@@ -503,7 +504,7 @@ export function ApiPage() {
             </tbody>
           </table>
           {tokens.data?.data.length === 0 && <p className={table.empty}>{t('api.tokens.empty')}</p>}
-        </div>
+        </ScrollArea>
       </Section>
       {endpoint !== undefined && (
         <EndpointDialog state={endpoint} onClose={() => setEndpoint(undefined)} />

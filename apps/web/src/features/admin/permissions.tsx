@@ -14,6 +14,7 @@ import { Badge, PageHeader, SelectField } from '../../ui/controls.tsx'
 import { StateView } from '../../ui/state.tsx'
 import table from '../../ui/table.module.css'
 import { opLabels } from './connections/texts.tsx'
+import { ScrollArea } from '../../ui/scroll-area.tsx'
 
 const all = '__all'
 
@@ -105,7 +106,7 @@ export function PermissionsPage() {
       {entries.isSuccess && data.length === 0 ? (
         <StateView title={t('permissions.empty')} />
       ) : (
-        <div className={table.wrap}>
+        <ScrollArea>
           <table className={table.table}>
             <thead>
               <tr>
@@ -136,7 +137,7 @@ export function PermissionsPage() {
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollArea>
       )}
     </>
   )

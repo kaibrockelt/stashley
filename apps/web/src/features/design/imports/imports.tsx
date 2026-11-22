@@ -37,6 +37,7 @@ import {
 import table from '../../../ui/table.module.css'
 import styles from '../../admin/connections/connections.module.css'
 import { NewTableOutcomeView, TableDefinitionEditor } from '../../admin/tables/table-editor.tsx'
+import { ScrollArea } from '../../../ui/scroll-area.tsx'
 
 const jobsKey = ['design', 'imports'] as const
 const newTableChoice = '__new'
@@ -144,7 +145,7 @@ export function ImportsPage() {
       />
       <p className={styles.muted}>{t('imports.intro')}</p>
       {upload.error !== null && <Notice tone="error">{errors.message(upload.error)}</Notice>}
-      <div className={table.wrap}>
+      <ScrollArea>
         <table className={table.table}>
           <thead>
             <tr>
@@ -170,7 +171,7 @@ export function ImportsPage() {
           </tbody>
         </table>
         {jobs.data?.data.length === 0 && <p className={table.empty}>{t('imports.empty')}</p>}
-      </div>
+      </ScrollArea>
     </>
   )
 }
@@ -584,7 +585,7 @@ function ImportEditor(props: { job: ImportJob }) {
           )}
           {target !== undefined && !newMode && (
             <Section title={t('imports.step.mapping')}>
-              <div className={table.wrap}>
+              <ScrollArea>
                 <table className={table.table}>
                   <thead>
                     <tr>
@@ -652,7 +653,7 @@ function ImportEditor(props: { job: ImportJob }) {
                     })}
                   </tbody>
                 </table>
-              </div>
+              </ScrollArea>
               {(save.error ?? step.error) !== null &&
                 errors.field(save.error ?? step.error, 'mapping.columns') !== undefined && (
                   <p className={styles.danger}>{t('imports.requiredMissing')}</p>
@@ -665,7 +666,7 @@ function ImportEditor(props: { job: ImportJob }) {
             </Section>
           )}
           <Section title={t('imports.step.preview')}>
-            <div className={table.wrap}>
+            <ScrollArea>
               <table className={table.table}>
                 <thead>
                   <tr>
@@ -703,7 +704,7 @@ function ImportEditor(props: { job: ImportJob }) {
                   })}
                 </tbody>
               </table>
-            </div>
+            </ScrollArea>
           </Section>
           <Section title={t('imports.step.run')}>
             {running && data.progress !== null && (

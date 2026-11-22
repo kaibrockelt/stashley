@@ -11,6 +11,7 @@ import table from '../../../ui/table.module.css'
 import { ConnectionDialog } from './connection-dialog.tsx'
 import styles from './connections.module.css'
 import { connectionsKey, GrantBadge } from './texts.tsx'
+import { ScrollArea } from '../../../ui/scroll-area.tsx'
 
 export function ConnectionsPage() {
   const t = useT()
@@ -29,7 +30,7 @@ export function ConnectionsPage() {
           </Button>
         }
       />
-      <div className={table.wrap}>
+      <ScrollArea>
         <table className={table.table}>
           <thead>
             <tr>
@@ -86,7 +87,7 @@ export function ConnectionsPage() {
         {connections.data?.data.length === 0 && (
           <p className={table.empty}>{t('connections.empty')}</p>
         )}
-      </div>
+      </ScrollArea>
       {adding && <ConnectionDialog onClose={() => setAdding(false)} />}
     </>
   )

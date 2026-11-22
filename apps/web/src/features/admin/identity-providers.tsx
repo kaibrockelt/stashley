@@ -20,6 +20,7 @@ import {
   TextField,
 } from '../../ui/controls.tsx'
 import table from '../../ui/table.module.css'
+import { ScrollArea } from '../../ui/scroll-area.tsx'
 
 const providersKey = ['admin', 'identity-providers'] as const
 
@@ -171,7 +172,7 @@ export function IdentityProvidersPage() {
           </Button>
         }
       />
-      <div className={table.wrap}>
+      <ScrollArea>
         <table className={table.table}>
           <thead>
             <tr>
@@ -201,7 +202,7 @@ export function IdentityProvidersPage() {
           </tbody>
         </table>
         {providers.data?.data.length === 0 && <p className={table.empty}>{t('providers.empty')}</p>}
-      </div>
+      </ScrollArea>
       {editing !== undefined && (
         <ProviderDialog
           key={editing === 'new' ? 'new' : editing.id}

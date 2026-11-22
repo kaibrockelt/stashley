@@ -22,6 +22,7 @@ import {
   TextField,
 } from '../../ui/controls.tsx'
 import table from '../../ui/table.module.css'
+import { ScrollArea } from '../../ui/scroll-area.tsx'
 
 const variablesKey = ['design', 'variables'] as const
 
@@ -179,7 +180,7 @@ export function VariablesPage() {
           </Button>
         }
       />
-      <div className={table.wrap}>
+      <ScrollArea>
         <table className={table.table}>
           <thead>
             <tr>
@@ -210,7 +211,7 @@ export function VariablesPage() {
           </tbody>
         </table>
         {variables.data?.data.length === 0 && <p className={table.empty}>{t('variables.empty')}</p>}
-      </div>
+      </ScrollArea>
       <VariableDialog
         key={creating ? 'new' : selected?.id}
         variable={selected}

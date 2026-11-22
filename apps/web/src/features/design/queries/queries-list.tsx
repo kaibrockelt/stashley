@@ -7,6 +7,7 @@ import { Badge, buttonClass, PageHeader } from '../../../ui/controls.tsx'
 import table from '../../../ui/table.module.css'
 import { useDesignConnections, useQueries } from '../design-api.ts'
 import { useTtlLabel } from './ttl.ts'
+import { ScrollArea } from '../../../ui/scroll-area.tsx'
 
 /** The query library (§10.1): named, versioned queries shared by blocks. */
 export function QueriesListPage() {
@@ -31,7 +32,7 @@ export function QueriesListPage() {
           </Link>
         }
       />
-      <div className={table.wrap}>
+      <ScrollArea>
         <table className={table.table}>
           <thead>
             <tr>
@@ -68,7 +69,7 @@ export function QueriesListPage() {
           </tbody>
         </table>
         {queries.data?.length === 0 && <p className={table.empty}>{t('queries.empty')}</p>}
-      </div>
+      </ScrollArea>
     </>
   )
 }

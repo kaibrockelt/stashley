@@ -153,7 +153,11 @@ function EditCard(props: {
             ]}
           />
         )}
-        <Button variant="ghost" onPress={props.onEdit}>
+        <Button
+          variant="ghost"
+          onPress={props.onEdit}
+          aria-label={t('editor.editBlock', { title: props.block.title || props.block.id })}
+        >
           {t('action.edit')}
         </Button>
         <Button

@@ -37,6 +37,7 @@ import {
   tlsLabels,
 } from './texts.tsx'
 import { UserScopePanel } from './user-scope.tsx'
+import { ScrollArea } from '../../../ui/scroll-area.tsx'
 
 function useConnectionData(id: string) {
   const key = ['admin', 'connection', id] as const
@@ -278,7 +279,7 @@ export function ConnectionPage() {
 
       <Section title={t('access.title')}>
         <p className={styles.muted}>{t('access.hint')}</p>
-        <div className={table.wrap}>
+        <ScrollArea>
           <table className={table.table}>
             <thead>
               <tr>
@@ -333,7 +334,7 @@ export function ConnectionPage() {
             </tbody>
           </table>
           {data.schema.data === null && <p className={table.empty}>{t('access.noSchema')}</p>}
-        </div>
+        </ScrollArea>
         {missingObjects.map((entry) => (
           <Notice key={entry.id} tone="error">
             {t('access.missing', { object: entry.objectName })}
@@ -350,7 +351,7 @@ export function ConnectionPage() {
           </Button>
         }
       >
-        <div className={table.wrap}>
+        <ScrollArea>
           <table className={table.table}>
             <thead>
               <tr>
@@ -394,7 +395,7 @@ export function ConnectionPage() {
           {data.relations.data?.data.length === 0 && (
             <p className={table.empty}>{t('relations.empty')}</p>
           )}
-        </div>
+        </ScrollArea>
       </Section>
 
       {editing && <ConnectionDialog connection={connection} onClose={() => setEditing(false)} />}

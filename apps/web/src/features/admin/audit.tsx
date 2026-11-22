@@ -8,6 +8,7 @@ import { useFormatDateTime } from '../../i18n/format.ts'
 import { useT } from '../../i18n/use-t.ts'
 import { Button, buttonClass, PageHeader, TextField } from '../../ui/controls.tsx'
 import table from '../../ui/table.module.css'
+import { ScrollArea } from '../../ui/scroll-area.tsx'
 
 function describeChanges(event: AuditEvent): string {
   const parts = Object.entries(event.changes ?? {}).map(
@@ -55,7 +56,7 @@ export function AuditPage() {
         <TextField label={t('audit.action')} value={action} onChange={setAction} />
         <TextField label={t('audit.actor')} value={actor} onChange={setActor} />
       </div>
-      <div className={table.wrap}>
+      <ScrollArea>
         <table className={table.table}>
           <thead>
             <tr>
@@ -81,7 +82,7 @@ export function AuditPage() {
         {rows.length === 0 && !events.isPending && (
           <p className={table.empty}>{t('audit.empty')}</p>
         )}
-      </div>
+      </ScrollArea>
       {events.hasNextPage && (
         <div className={table.more}>
           <Button
