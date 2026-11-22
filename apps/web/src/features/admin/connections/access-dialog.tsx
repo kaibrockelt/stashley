@@ -137,6 +137,7 @@ export function AccessDialog(props: {
         ) : removeConsequences !== undefined ? (
           <ConsequencesNotice
             consequences={removeConsequences.consequences}
+            action="remove"
             onConfirm={() => remove.mutate(removeConsequences.confirmation)}
             onCancel={() => remove.reset()}
             isPending={remove.isPending}

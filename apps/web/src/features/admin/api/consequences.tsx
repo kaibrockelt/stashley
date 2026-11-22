@@ -45,7 +45,10 @@ export function ConsequencesNotice(props: {
   onConfirm: () => void
   onCancel: () => void
   isPending?: boolean
+  /** `remove`: the table access is being removed, not saved. */
+  action?: 'save' | 'remove'
 }) {
+  const removing = props.action === 'remove'
   const t = useT()
   const ref = useRef<HTMLDivElement>(null)
   const listed = JSON.stringify(props.consequences)
@@ -70,7 +73,7 @@ export function ConsequencesNotice(props: {
   return (
     <div ref={ref}>
       <Notice tone="info">
-        <p>{t('consequence.intro')}</p>
+        <p>{t(removing ? 'consequence.introRemove' : 'consequence.intro')}</p>
         <ul>
           {props.consequences.map((consequence, index) => (
             <li key={index}>{line(consequence)}</li>
@@ -79,7 +82,7 @@ export function ConsequencesNotice(props: {
         <Actions>
           <Button onPress={props.onCancel}>{t('action.cancel')}</Button>
           <Button variant="danger" onPress={props.onConfirm} isDisabled={props.isPending === true}>
-            {t('consequence.confirm')}
+            {t(removing ? 'consequence.confirmRemove' : 'consequence.confirm')}
           </Button>
         </Actions>
       </Notice>
