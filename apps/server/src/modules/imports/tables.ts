@@ -201,12 +201,14 @@ export class TableCreator {
     const username = target.users.read?.username ?? 'stashley_read'
     const account = quoteAccount(report?.account ?? `${username}@%`)
     const database = target.spec.database.replace(/`/g, '``')
+    // Any table access can be checked again, so its name may hold a backtick too.
+    const object = objectName.replace(/`/g, '``')
     return {
       readable: false,
       statements: [
         {
           purpose: 'read',
-          statement: `GRANT SELECT ON \`${database}\`.\`${objectName}\` TO ${account};`,
+          statement: `GRANT SELECT ON \`${database}\`.\`${object}\` TO ${account};`,
         },
       ],
     }

@@ -22,11 +22,14 @@ const integerText = /^-?(0|[1-9]\d{0,19})$/
 const decimalText = /^-?(\d+)(?:\.(\d+))?$/
 const dateText = /^(\d{4})-(\d{2})-(\d{2})$/
 const dateTimeText = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/
-/** Text defaults: no control characters and no backslash, so quoting cannot depend on modes. */
+/**
+ * Text defaults: no control characters (C0, DEL, C1) and no backslash, so quoting cannot
+ * depend on modes.
+ */
 function safeText(text: string): boolean {
   return [...text].every((char) => {
     const code = char.charCodeAt(0)
-    return code >= 0x20 && code !== 0x7f && char !== '\\'
+    return code >= 0x20 && !(code >= 0x7f && code <= 0x9f) && char !== '\\'
   })
 }
 

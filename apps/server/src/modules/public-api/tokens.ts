@@ -322,9 +322,16 @@ export class ApiTokens {
     return this.toApi(row, grants.get(id) ?? [], this.usage.get(id))
   }
 
-  /** Checks addresses and grants: each grant must be on an enabled endpoint (§16). */
+  /**
+   * Checks addresses and grants: each grant must be on an enabled endpoint (§16). Runs in the
+   * transaction that saves the grants, so an endpoint closed meanwhile cannot keep one.
+   * `keptExpiry`: the stored expiry of a token being changed; keeping it is no error even
+   * when it has passed (the name of an expired token can still change).
+   */
   private async check(
     input: TokenInput,
+    db: Kysely<Database>,
+    keptExpiry?: number | null,
   ): Promise<{ allowlist: string[]; grants: ApiTokenGrant[] }> {
     const errors: { field: string; code: string }[] = []
     const allowlist: string[] = []
@@ -333,7 +340,11 @@ export class ApiTokens {
       if (range === undefined) errors.push({ field: `ipAllowlist.${index}`, code: 'invalid' })
       else allowlist.push(entry)
     })
-    if (input.expiresAt !== null && input.expiresAt <= this.clock()) {
+    if (
+      input.expiresAt !== null &&
+      input.expiresAt !== keptExpiry &&
+      input.expiresAt <= this.clock()
+    ) {
       errors.push({ field: 'expiresAt', code: 'in_the_past' })
     }
     const unique = new Map(
@@ -341,7 +352,7 @@ export class ApiTokens {
     )
     const grants = [...unique.values()]
     if (grants.length > 0) {
-      const enabled = await this.deps.db
+      const enabled = await db
         .selectFrom('api_endpoints')
         .select(['table_access_id', 'operation'])
         .where(
@@ -381,11 +392,11 @@ export class ApiTokens {
   }
 
   async create(actor: Actor, input: TokenInput): Promise<ApiTokenCreated> {
-    const { allowlist, grants } = await this.check(input)
     const secret = generateToken()
     const id = uuidv7()
     const now = this.clock()
-    await writeTransaction(this.deps.db, async (trx) => {
+    const { allowlist, grants } = await writeTransaction(this.deps.db, async (trx) => {
+      const checked = await this.check(input, trx)
       await trx
         .insertInto('api_tokens')
         .values({
@@ -394,7 +405,7 @@ export class ApiTokens {
           token_hash: hashToken(secret),
           token_hint: secret.slice(-4),
           expires_at: input.expiresAt,
-          ip_allowlist: JSON.stringify(allowlist),
+          ip_allowlist: JSON.stringify(checked.allowlist),
           rate_limit_per_minute: input.rateLimitPerMinute,
           created_by: actor.kind === 'user' ? actor.id : null,
           created_at: now,
@@ -404,7 +415,8 @@ export class ApiTokens {
           request_count: 0,
         })
         .execute()
-      await this.saveGrants(trx, id, grants)
+      await this.saveGrants(trx, id, checked.grants)
+      return checked
     })
     await this.deps.audit.record(actor, {
       action: 'api_token.created',
@@ -423,8 +435,8 @@ export class ApiTokens {
   async update(actor: Actor, id: string, input: z.infer<typeof apiTokenUpdate>): Promise<ApiToken> {
     const before = await this.get(id)
     if (before.revokedAt !== null) throw new AppError('conflict')
-    const { allowlist, grants } = await this.check(input)
     await writeTransaction(this.deps.db, async (trx) => {
+      const { allowlist, grants } = await this.check(input, trx, before.expiresAt)
       await trx
         .updateTable('api_tokens')
         .set({

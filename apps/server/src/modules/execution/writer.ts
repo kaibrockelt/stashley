@@ -1153,13 +1153,18 @@ export class RowWriter {
     const keyColumn = source.object.keyColumn
     if (keyColumn === null || source.object.objectType !== 'table') throw new AppError('not_found')
     const key = this.key(model.key.kind, rawKey)
+    // Without a write model there is no version to compare; a condition that cannot hold is
+    // refused rather than ignored.
+    if (request.version !== undefined && source.write === null) {
+      throw new AppError('version_conflict')
+    }
     const result = await context.target.run(async (session) => {
       const locked = lockRow(object, keyColumn, [], key, !context.simulate)
       const found = await session.execute(locked.sql, locked.values)
       if (found.rows.length === 0) throw new Abort(new AppError('not_found'))
       const before = await this.visible(context, session, model, key)
       if (before === undefined) throw new Abort(new AppError('not_found'))
-      if (request.version !== undefined && source.write !== null) {
+      if (request.version !== undefined) {
         const state = await this.readState(context, session, { key }, false)
         if (
           state !== undefined &&

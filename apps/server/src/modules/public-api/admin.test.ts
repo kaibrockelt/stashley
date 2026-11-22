@@ -309,6 +309,31 @@ describe('API tokens', () => {
       rateLimitPerMinute: 10,
       grants: [],
     })
+    // An expired token keeps its expiry while its name changes; a new past date is refused.
+    await s.server.store.db
+      .updateTable('api_tokens')
+      .set({ expires_at: Date.now() - 1000 })
+      .where('id', '=', token.id)
+      .execute()
+    const expired = (await s.admin.request('GET', '/internal/admin/api/tokens')).json<{
+      data: ApiToken[]
+    }>().data[0] as ApiToken
+    const renamed = await s.admin.send('PUT', `/internal/admin/api/tokens/${token.id}`, {
+      name: 'Kasse alt',
+      expiresAt: expired.expiresAt,
+      ipAllowlist: [],
+      rateLimitPerMinute: 10,
+      grants: [],
+    })
+    expect(renamed.statusCode, renamed.body).toBe(200)
+    const moved = await s.admin.send('PUT', `/internal/admin/api/tokens/${token.id}`, {
+      name: 'Kasse alt',
+      expiresAt: Date.now() - 5000,
+      ipAllowlist: [],
+      rateLimitPerMinute: 10,
+      grants: [],
+    })
+    expect(problem(moved).errors).toEqual([{ field: 'expiresAt', code: 'in_the_past' }])
     const revoked = await s.admin.send('POST', `/internal/admin/api/tokens/${token.id}/revoke`, {})
     expect(revoked.json<ApiToken>().revokedAt).not.toBeNull()
     const again = await s.admin.send('PUT', `/internal/admin/api/tokens/${token.id}`, {

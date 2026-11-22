@@ -135,6 +135,9 @@ describe('new table checks', () => {
     expect(check({ default: { kind: 'value', value: "O'Brien" } })).toBeUndefined()
     expect(check({ default: { kind: 'value', value: 'a\\b' } })).toBe('invalid')
     expect(check({ default: { kind: 'value', value: 'a\nb' } })).toBe('invalid')
+    // C1 controls are control characters as well.
+    expect(check({ default: { kind: 'value', value: 'a\u0085b' } })).toBe('invalid')
+    expect(check({ default: { kind: 'value', value: 'Straße ü' } })).toBeUndefined()
     expect(check({ length: 3, default: { kind: 'value', value: 'abcd' } })).toBe('too_long')
     expect(check({ type: 'text', default: { kind: 'value', value: 'x' } })).toBe('not_supported')
   })
