@@ -1,10 +1,10 @@
 # Progress
 
-**Current milestone:** M8 – MCP server (open)
+**Current milestone:** M9 – Demo scenario and acceptance (open); M8 moved after the MVP (D17)
 
-**Next step:** The operator decides whether M8 stays in the MVP or moves after it (see log 2026-11-22); then the plan of M8 or M9.
+**Next step:** Plan M9 in a fresh session and present it to the operator for approval.
 
-**Recommended model strength:** M8: high (authorization server and the review: extra high); M9: medium (final review: high).
+**Recommended model strength:** M9: medium (final review: high).
 
 The SQL validation of M4 is tested externally; that does not block M6.
 
@@ -20,10 +20,10 @@ The SQL validation of M4 is tested externally; that does not block M6.
 | M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | Done |
 | M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | Done |
 | M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High (new tables, review: extra high) | Done |
-| M8 | MCP server: authorization server, metadata, tools, MCP exposure, privacy notice, call log | High | Open |
-| M9 | Demo scenario and acceptance: seed script, configuration export and import, end-to-end suite, accessibility, performance, documentation, release pipeline | Medium (final review: high) | Open |
+| M8 | MCP server: authorization server, metadata, tools, MCP exposure, privacy notice, call log | High (authorization server and its review: extra high) | After the MVP (D17) |
+| M9 | Demo scenario and acceptance: seed script, configuration export and import, end-to-end suite, accessibility, performance, documentation, release pipeline; MCP controls hidden until M8 (D17) | Medium (final review: high) | Open |
 
-Status values: open, in progress, in review, done.
+Status values: open, in progress, in review, done, after the MVP.
 
 ## Acceptance criteria
 
@@ -41,7 +41,7 @@ Status values: open, in progress, in review, done.
 - [ ] Every write appears in the audit log with its old and new values.
 - [x] The admin enables `list`, `get` and `create` for payments and creates a token with `create` only. A write through the API appears in the audit log, and `list` with that token returns `403`. (M7, through the UI on the test stand; the end-to-end suite follows in M9.)
 - [x] The admin creates a new table from a CSV file encoded in Windows-1252, with semicolons and German dates, adding an `id` column. After the ceiling is adjusted, a second import upserts existing rows by `email`, and its dry run reports the faulty rows beforehand. (M7, through the UI on the test stand and in the integration tests; the end-to-end suite follows in M9.)
-- [ ] The cashier connects an MCP client through OAuth and asks which registrations are still unpaid. The privacy notice appears before the connection and must be confirmed. The assistant receives only components of the cashier page whose tables are exposed to MCP. An admin account cannot set up MCP access.
+- [ ] (After the MVP, D17.) The cashier connects an MCP client through OAuth and asks which registrations are still unpaid. The privacy notice appears before the connection and must be confirmed. The assistant receives only components of the cashier page whose tables are exposed to MCP. An admin account cannot set up MCP access.
 - [ ] The configuration is exported and imported into a second instance. After the connection is mapped, the demo works there unchanged.
 - [x] `scripts/build.sh --platform linux/amd64,linux/arm64` builds both architectures.
 - [ ] The Playwright end-to-end suite covers all criteria above and runs in CI against the demo database.
@@ -49,7 +49,7 @@ Status values: open, in progress, in review, done.
 
 ## Deviations from the specification
 
-D1–D12 approved on 2026-11-12, D13–D16 on 2026-11-14. Rationale for D1–D12 for each is in [`docs/architecture.md` §28](docs/architecture.md#28-decisions-requiring-approval).
+D1–D12 approved on 2026-11-12, D13–D16 on 2026-11-14, D17 on 2026-11-22. Rationale for D1–D12 for each is in [`docs/architecture.md` §28](docs/architecture.md#28-decisions-requiring-approval).
 
 | ID | Approved deviation or interpretation |
 | --- | --- |
@@ -69,6 +69,7 @@ D1–D12 approved on 2026-11-12, D13–D16 on 2026-11-14. Rationale for D1–D12
 | D14 | When managers may not create roles, only admins create, rename or delete roles; managers still grant rights to existing roles. (Approved 2026-11-14.) |
 | D15 | Grants to deleted roles stop taking effect and show as a warning on the page; stored pages are not rewritten, and the page settings remove deleted roles in one step. (Approved 2026-11-14; warning instead of error since the M5 review.) |
 | D16 | The SQL lexer rejects locking clauses (`FOR UPDATE`, `FOR SHARE`, `LOCK IN SHARE MODE`) itself, because the MariaDB parser does not know all of them and the error must stay specific. (Approved 2026-11-14.) |
+| D17 | The MCP server (M8) moves after the MVP, and with it its acceptance criterion: an OAuth 2.1 authorization server with client registration through fetched metadata documents, consent within the sign-in, versioned notices and data leaving to AI providers make it a large milestone with new security questions. The MCP flags and exclusions of table access and the MCP setting of pages stay in the data model; their controls are hidden until M8 (in M9). (Approved 2026-11-22.) |
 
 Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an addition to the D8 list; approving a pending account keeps its session, so the user can continue without signing in again; the common-password list is the subset of 12+ characters from SecLists (MIT). npm is removed from the runtime image; dependencies must be at least three days old (`minimumReleaseAge`); the compose host port is configurable with `STASHLEY_PORT`. Earlier decisions: documentation site with VitePress on GitHub Pages; problem types as `urn:stashley:problem:<code>`; images at `ghcr.io/kaibrockelt/stashley`.
 
@@ -408,3 +409,4 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Left on the stand: the audit entries of the check.
 - 2026-11-22: Noted for after the MVP: case-insensitive search and sorting on case-sensitive text columns (`utf8mb4_bin`) at the query level, e.g. with an explicit collation for `contains` and the sort.
 - 2026-11-22: M7 accepted by the operator. Asked whether M8 (MCP) is a large milestone; if it is large, complicated and brings new security implications, the operator prefers to move it after the MVP.
+- 2026-11-22: M8 moved after the MVP (D17), as the operator decided: it is as large as M7, and its authorization server, client metadata fetched from foreign addresses and data leaving to AI providers bring new security questions. A slim variant with personal tokens only was offered and not chosen. Next is M9, which also hides the MCP controls until M8.

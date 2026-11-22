@@ -1173,6 +1173,8 @@ The module is `modules/imports`. Managers and admins import into existing tables
 
 ## 18. MCP server and authorization server
 
+> Moved after the MVP (D17, 2026-11-22). The data model keeps the MCP flags, exclusions and page setting; their controls stay hidden until this milestone.
+
 ### 18.1 Gates
 
 - **Instance gate:** MCP is off by default. Admins enable it, which requires a notice text (§18.5). They also choose which system roles (`manager`, `user`) and which roles may use MCP.
