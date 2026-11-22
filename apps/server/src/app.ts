@@ -240,7 +240,9 @@ export async function createServer(
         await app.close()
         await services.auth.idle()
         await scheduler.stop()
-        // A running import rolls back when its connection closes; the job is marked failed.
+        // Running imports are cancelled and roll back first; one that does not stop in time
+        // is marked failed and rolls back when its connection closes.
+        await services.imports.stop()
         await services.imports.recover()
         await services.apiTokens.flush().catch((error: unknown) => {
           app.log.error({ err: error }, 'API usage counters not written')

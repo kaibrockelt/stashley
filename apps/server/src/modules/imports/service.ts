@@ -996,6 +996,23 @@ export class ImportService {
     return this.get(user, id)
   }
 
+  /**
+   * Shutdown: cancels every running job and waits, at most `timeoutMs`, for them to roll
+   * back and record themselves as cancelled. A job still running afterwards is marked failed
+   * by `recover()`; its transaction ends with the pools.
+   */
+  async stop(timeoutMs = 10_000): Promise<void> {
+    for (const running of this.running.values()) running.cancel = true
+    let timer: NodeJS.Timeout | undefined
+    await Promise.race([
+      this.settled(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs)
+      }),
+    ])
+    clearTimeout(timer)
+  }
+
   /** Waits for a running job (tests and shutdown). */
   async settled(id?: string): Promise<void> {
     const entries = id === undefined ? [...this.running.values()] : [this.running.get(id)]
