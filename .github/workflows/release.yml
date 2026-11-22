@@ -80,6 +80,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          prerelease=()
+          if [[ "$GITHUB_REF_NAME" == v0.* ]]; then prerelease=(--prerelease); fi
           gh release create "$GITHUB_REF_NAME" --title "Stashley ${GITHUB_REF_NAME#v}" \
-            --notes-file "$RUNNER_TEMP/notes.md" \
-            $([[ "$GITHUB_REF_NAME" == v0.* ]] && echo --prerelease)
+            --notes-file "$RUNNER_TEMP/notes.md" "${prerelease[@]}"
