@@ -7,7 +7,7 @@ import type {
   TableAccess,
   TableOp,
 } from '@stashley/shared'
-import { isTextKind, tableOps } from '@stashley/shared'
+import { features, isTextKind, tableOps } from '@stashley/shared'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../../api/client.ts'
@@ -121,7 +121,10 @@ export function AccessDialog(props: {
   const visibilityOptions = (isKey: boolean) => [
     { id: 'shown' as const, label: t('access.column.shown') },
     ...(isKey ? [] : [{ id: 'all' as const, label: t('access.column.hidden') }]),
-    { id: 'mcp' as const, label: t('access.column.hiddenMcp') },
+    // MCP-only exclusions are offered once MCP is (D17); stored ones stay selectable.
+    ...(features.mcp || Object.values(visibility).includes('mcp')
+      ? [{ id: 'mcp' as const, label: t('access.column.hiddenMcp') }]
+      : []),
   ]
 
   return (
@@ -215,12 +218,14 @@ export function AccessDialog(props: {
             description={t('access.apiResource.hint')}
             error={errors.field(save.error, 'apiResource')}
           />
-          <SwitchField
-            label={t('access.mcp')}
-            description={t('access.mcp.hint')}
-            isSelected={mcp}
-            onChange={setMcp}
-          />
+          {features.mcp && (
+            <SwitchField
+              label={t('access.mcp')}
+              description={t('access.mcp.hint')}
+              isSelected={mcp}
+              onChange={setMcp}
+            />
+          )}
         </div>
         {!isView && (
           <SelectField

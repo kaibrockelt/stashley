@@ -9,6 +9,7 @@ import type {
   SchemaRefreshResult,
   TableAccess,
 } from '@stashley/shared'
+import { features } from '@stashley/shared'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -310,7 +311,9 @@ export function ConnectionPage() {
                               {t(opLabels[op])}
                             </Badge>
                           ))}
-                          {access.mcpEnabled && <Badge>{t('access.mcp.badge')}</Badge>}
+                          {features.mcp && access.mcpEnabled && (
+                            <Badge>{t('access.mcp.badge')}</Badge>
+                          )}
                           {access.warnings.length > 0 && (
                             <Badge tone="warning">
                               {t('access.warnings', { count: access.warnings.length })}

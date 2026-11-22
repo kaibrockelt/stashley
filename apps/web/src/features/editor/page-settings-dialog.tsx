@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { PageDocument, PageFilter, ParamType } from '@stashley/shared'
-import { paramTypes } from '@stashley/shared'
+import { features, paramTypes } from '@stashley/shared'
 import { useState } from 'react'
 import type { MessageId } from '../../i18n/locale.ts'
 import { useT } from '../../i18n/use-t.ts'
@@ -157,7 +157,7 @@ export function PageSettingsDialog(props: {
               onChange={(description) => {
                 setDocument(withDescription(document, description))
               }}
-              description={t('editor.descriptionHint')}
+              {...(features.mcp && { description: t('editor.descriptionHint') })}
               rows={3}
             />
             <fieldset className={styles.fieldset}>
@@ -185,12 +185,14 @@ export function PageSettingsDialog(props: {
                 </Notice>
               )}
             </fieldset>
-            <SwitchField
-              label={t('editor.mcp')}
-              description={t('editor.mcpHint')}
-              isSelected={document.mcp.available}
-              onChange={(available) => setDocument({ ...document, mcp: { available } })}
-            />
+            {features.mcp && (
+              <SwitchField
+                label={t('editor.mcp')}
+                description={t('editor.mcpHint')}
+                isSelected={document.mcp.available}
+                onChange={(available) => setDocument({ ...document, mcp: { available } })}
+              />
+            )}
           </div>
           <div className={styles.dialogColumn}>
             <fieldset className={styles.fieldset}>
