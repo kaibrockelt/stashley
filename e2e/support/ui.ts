@@ -92,9 +92,25 @@ export function dialog(page: Page, title: string | RegExp): Locator {
   return page.getByRole('dialog').filter({ has: page.getByRole('heading', { name: title }) })
 }
 
-/** Chooses an option of a React Aria select by its label. */
-export async function choose(scope: Page | Locator, label: string, option: string | RegExp) {
-  await scope.getByRole('button', { name: label }).click()
+/**
+ * Chooses an option of a React Aria select by its label. The select's button is named by its
+ * current value followed by its label, so a string label is matched at the end.
+ */
+export async function choose(
+  scope: Page | Locator,
+  label: string | RegExp,
+  option: string | RegExp,
+) {
+  const name =
+    typeof label === 'string'
+      ? new RegExp(`(^|\\s)${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`)
+      : label
+  // Opened with the keyboard: a list that opens under the pointer would take the click's
+  // release as a choice.
+  const button = scope.getByRole('button', { name })
+  await button.focus()
+  await expect(button).toBeFocused()
+  await button.press('Enter')
   const page = 'page' in scope ? scope.page() : scope
   await page.getByRole('option', { name: option }).click()
 }

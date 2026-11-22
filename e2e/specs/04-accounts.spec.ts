@@ -112,6 +112,7 @@ test('the admin creates roles and accounts and approves an OIDC sign-in', async 
   const pending = dialog(page, accounts.checkin2.name)
   await setChecked(pending, 'Check-in', true)
   await pending.getByRole('button', { name: 'Save' }).click()
+  await expect(pending).toBeHidden()
   await choose(page, 'Status', 'All')
   await page.getByRole('button', { name: accounts.checkin2.name, exact: true }).click()
   await dialog(page, accounts.checkin2.name).getByRole('button', { name: 'Approve' }).click()

@@ -1425,16 +1425,17 @@ The image installs a `stashley` wrapper. The library is commander.
   ```
 
 - **Portable references:**
-  - Objects are referenced as `{ connectionRef, object }` instead of table access IDs.
+  - Connections are referred to by name (`connections[].ref`).
+  - Page documents keep their table access IDs; `tables` maps each to `{ connectionRef, object }`, and the import rewrites them to the target's table access of that object.
   - Queries carry their latest version plus every version pinned by a published page.
   - Pages carry their draft and their current published document.
-  - Roles, queries, sections and pages keep their stable IDs.
-- **Never exported:** credentials, accounts, role assignments, table access ceilings and API or MCP configuration.
-- **Import:**
+  - Roles, queries, sections and pages keep their stable IDs; instance variables, relations and display templates are matched by name.
+- **Never exported:** credentials, accounts, role assignments, table access (ceilings, exclusions, API names) and API or MCP configuration.
+- **Import** (admins only):
   1. Validate the file.
   2. Map each connection reference to a target connection.
-  3. Show a preview of new and changed items and conflicts. Examples of conflicts: a referenced object without table access on the target, or a name that already exists with a different ID.
-  4. Apply everything in one metadata store transaction. Published documents are imported as new published versions on the target.
+  3. Preview every item as new, changed, unchanged or in conflict. Conflicts: an unmapped connection, an object without table access on the target, a name or slug used by another ID, a query version that differs on the target, SQL that does not validate against the target, a variable of another type, an item deleted on the target, a reference the file and the target lack. Conflicts block the import; they are resolved by hand.
+  4. Apply everything in one metadata store transaction, only if the preview's fingerprint still holds, with one `config.imported` audit event. Published documents are imported as new published versions on the target; new query versions keep their numbers.
 
 ## 25. Build, container and release
 
@@ -1472,6 +1473,7 @@ Multi-stage, with digest-pinned `node:26-slim` base images:
 | `docs.yml` | Push to `main` (`docs/**`) | Build the documentation site and publish it to GitHub Pages |
 
 - **Rollout:** M1 adds the `checks` and `image` jobs. The `integration` job follows in M3, `e2e` in M9, and `release.yml` and `docs.yml` in M9.
+- **End-to-end environment** (`e2e/compose.yml`, `scripts/test-e2e.sh`): two instances, the demo database and a mock OIDC provider. Stashley accepts plain HTTP only on localhost, so the instances (ports 8080 and 8081) and the Playwright runner share one network namespace. `scripts/load-test.sh` runs k6 against the first instance limited to 2 vCPU and 2 GB.
 - **Actions** are pinned to commit SHAs.
 - **Dependencies:** pnpm installs only releases that are at least three days old (`minimumReleaseAge`). Dependabot keeps npm packages, base images and actions up to date, with the same cooldown for npm.
 
