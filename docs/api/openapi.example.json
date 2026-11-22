@@ -1,0 +1,533 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Stashley API",
+    "version": "1",
+    "description": "JSON only. Instants in UTC (ISO 8601), dates as YYYY-MM-DD, DECIMAL and BIGINT as text."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080/api/v1"
+    }
+  ],
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "payments"
+    }
+  ],
+  "paths": {
+    "/payments": {
+      "get": {
+        "operationId": "listPayments",
+        "tags": ["payments"],
+        "summary": "List payments",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "id",
+                "-id",
+                "anmeldung_id",
+                "-anmeldung_id",
+                "betrag",
+                "-betrag",
+                "eingang_am",
+                "-eingang_am",
+                "verwendungszweck",
+                "-verwendungszweck",
+                "kommentar",
+                "-kommentar"
+              ]
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "description": "Comma-separated columns to return",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "deepObject",
+            "explode": true,
+            "description": "`filter[column][operator]=value` with `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `like`, `null`. `in` takes up to 100 comma-separated values, `like` a pattern with `%` and `_`, `null` `true` or `false`. Columns: `id`, `anmeldung_id`, `betrag`, `eingang_am`, `verwendungszweck`, `kommentar`",
+            "schema": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Payments"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": ["string", "null"]
+                    }
+                  },
+                  "required": ["data", "next_cursor"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request, unknown parameter, operator or column",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token may not use this operation, or its address is not allowed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown resource, disabled endpoint or unknown row",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit of the token reached; see Retry-After",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPayments",
+        "tags": ["payments"],
+        "summary": "Create one row of payments; never updates",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentsCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created. The row when the token may read it, otherwise its key.",
+            "headers": {
+              "ETag": {
+                "description": "Version of the row, for If-Match",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Payments"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request, unknown parameter, operator or column",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token may not use this operation, or its address is not allowed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown resource, disabled endpoint or unknown row",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Row locked",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed, duplicate key or missing referenced row",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit of the token reached; see Retry-After",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments/{id}": {
+      "get": {
+        "operationId": "getPayments",
+        "tags": ["payments"],
+        "summary": "One row of payments",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The value of `id`. The IDs `count` and `schema` cannot be fetched.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The row",
+            "headers": {
+              "ETag": {
+                "description": "Version of the row, for If-Match",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Payments"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request, unknown parameter, operator or column",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token may not use this operation, or its address is not allowed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown resource, disabled endpoint or unknown row",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit of the token reached; see Retry-After",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An API token (stl_api_…)"
+      }
+    },
+    "schemas": {
+      "Problem": {
+        "type": "object",
+        "description": "RFC 9457 problem document",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "params": {
+                  "type": "object"
+                }
+              },
+              "required": ["field", "code"]
+            }
+          },
+          "errorId": {
+            "type": "string"
+          }
+        },
+        "required": ["type", "title", "status", "code"]
+      },
+      "Payments": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "BIGINT as text"
+          },
+          "anmeldung_id": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "BIGINT as text"
+          },
+          "betrag": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "DECIMAL as text (8,2)"
+          },
+          "eingang_am": {
+            "type": "string",
+            "format": "date"
+          },
+          "verwendungszweck": {
+            "type": ["string", "null"],
+            "maxLength": 140
+          },
+          "kommentar": {
+            "type": ["string", "null"],
+            "maxLength": 500
+          }
+        },
+        "additionalProperties": false
+      },
+      "PaymentsCreate": {
+        "type": "object",
+        "properties": {
+          "anmeldung_id": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "BIGINT as text"
+          },
+          "betrag": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "DECIMAL as text (8,2)"
+          },
+          "eingang_am": {
+            "type": "string",
+            "format": "date"
+          },
+          "verwendungszweck": {
+            "type": ["string", "null"],
+            "maxLength": 140
+          },
+          "kommentar": {
+            "type": ["string", "null"],
+            "maxLength": 500
+          }
+        },
+        "required": ["anmeldung_id", "betrag", "eingang_am"],
+        "additionalProperties": false
+      },
+      "PaymentsUpdate": {
+        "type": "object",
+        "properties": {
+          "anmeldung_id": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "BIGINT as text"
+          },
+          "betrag": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "DECIMAL as text (8,2)"
+          },
+          "eingang_am": {
+            "type": "string",
+            "format": "date"
+          },
+          "verwendungszweck": {
+            "type": ["string", "null"],
+            "maxLength": 140
+          },
+          "kommentar": {
+            "type": ["string", "null"],
+            "maxLength": 500
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

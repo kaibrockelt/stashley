@@ -2,7 +2,7 @@
 
 Self-hosted dashboards, forms and table views on top of existing MariaDB and MySQL databases, delivered to users by role.
 
-> Stashley is in early development. See [`PROGRESS.md`](PROGRESS.md) for the current milestone and [`docs/architecture.md`](docs/architecture.md) for the design.
+Documentation: admin guide, manager guide and API reference in [`docs/`](docs/) (published as a site). Progress and decisions: [`PROGRESS.md`](PROGRESS.md); design: [`docs/architecture.md`](docs/architecture.md).
 
 ## Quick start
 
@@ -48,6 +48,11 @@ pnpm check
 | `pnpm --filter @stashley/web dev` | Web client dev server, proxies API calls to port 8080 |
 | `pnpm build` | Build all packages |
 | `scripts/build.sh` | Build the Docker image |
+| `scripts/seed-demo.sh` | Start a MariaDB container with the demo database (see `docs/demo.md`) |
+| `scripts/test-integration.sh` | Target database tests against MariaDB 10.11 and 12.3, MySQL 8.4 and 9.7 |
+| `scripts/test-e2e.sh` | Playwright end-to-end suite in Docker (two instances, demo database, mock OIDC provider), removed afterwards |
+| `scripts/load-test.sh` | k6 load test, 50 users on 2 vCPU / 2 GB; run after `scripts/test-e2e.sh --keep` |
+| `pnpm --filter @stashley/docs dev` | Documentation site |
 
 ## License
 
