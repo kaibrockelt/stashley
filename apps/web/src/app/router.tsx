@@ -30,6 +30,9 @@ import styles from '../ui/state.module.css'
 import { queryClient } from './providers.tsx'
 import { Shell } from './shell.tsx'
 
+/** The workspace page chunk; main.tsx starts loading it with the session for page links. */
+export const loadPageRoute = () => import('../features/workspace/page-route.tsx')
+
 function NotFound() {
   const t = useT()
   return (
@@ -173,19 +176,13 @@ const appRoutes = [
     path: '/pages/$slug',
     // Filter values and URL parameters are validated by the server against the page (§13.6).
     validateSearch: (search: Record<string, unknown>): PageSearch => search,
-    component: lazyRouteComponent(
-      () => import('../features/workspace/page-route.tsx'),
-      'PageRoute',
-    ),
+    component: lazyRouteComponent(loadPageRoute, 'PageRoute'),
   }),
   createRoute({
     getParentRoute: () => appLayout,
     path: '/pages/$slug/$recordKey',
     validateSearch: (search: Record<string, unknown>): PageSearch => search,
-    component: lazyRouteComponent(
-      () => import('../features/workspace/page-route.tsx'),
-      'DetailRoute',
-    ),
+    component: lazyRouteComponent(loadPageRoute, 'DetailRoute'),
   }),
   createRoute({
     getParentRoute: () => appLayout,

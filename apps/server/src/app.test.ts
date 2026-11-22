@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { brotliCompressSync } from 'node:zlib'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
@@ -22,6 +23,10 @@ async function started(setup?: (app: FastifyInstance) => void) {
   )
   mkdirSync(path.join(config.webDir, 'assets'))
   writeFileSync(path.join(config.webDir, 'assets', 'app-abc.js'), 'console.log(1)')
+  writeFileSync(
+    path.join(config.webDir, 'assets', 'app-abc.js.br'),
+    brotliCompressSync('console.log(1)'),
+  )
   const server = await createServer(config, { quiet: true, listen: false })
   servers.push(server)
   setup?.(server.app)
@@ -97,6 +102,13 @@ describe('http conventions', () => {
     const asset = await server.app.inject('/assets/app-abc.js')
     expect(asset.statusCode).toBe(200)
     expect(asset.headers['cache-control']).toContain('immutable')
+    // The build's Brotli variant goes to browsers that accept it.
+    const compressed = await server.app.inject({
+      url: '/assets/app-abc.js',
+      headers: { 'accept-encoding': 'br, gzip' },
+    })
+    expect(compressed.headers['content-encoding']).toBe('br')
+    expect(compressed.headers['cache-control']).toContain('immutable')
     const index = await server.app.inject('/index.html')
     expect(index.body).toContain('csp-nonce')
   })

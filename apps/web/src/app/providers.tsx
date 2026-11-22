@@ -46,7 +46,8 @@ function Preferences(props: {
   initial: { locale: Locale; messages: Messages }
   children: ReactNode
 }) {
-  const session = useQuery({ queryKey: sessionKey, queryFn: fetchSession }).data
+  // main.tsx loaded the session already; this only follows later changes of it.
+  const session = useQuery({ queryKey: sessionKey, queryFn: fetchSession, staleTime: 60_000 }).data
   const [loaded, setLoaded] = useState(props.initial)
   const [localTheme, setLocalTheme] = useState<Theme>(() => readStoredTheme(storage()))
   const locale = userLocale(session)

@@ -6,7 +6,7 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/compress.mjs",
     "typecheck": "tsc -p .",
     "test": "vitest run",
     "check:i18n": "node scripts/check-i18n.mjs",

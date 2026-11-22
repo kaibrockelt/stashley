@@ -104,6 +104,8 @@ export async function createHttpServer(options: HttpOptions): Promise<FastifyIns
       prefix: '/',
       index: false,
       wildcard: true,
+      // The web build writes .br and .gz variants (apps/web/scripts/compress.mjs).
+      preCompressed: true,
       // Directories and index.html go to the web client fallback below.
       allowedPath: (pathName) => !pathName.endsWith('/') && pathName !== '/index.html',
       setHeaders(res, filePath) {
