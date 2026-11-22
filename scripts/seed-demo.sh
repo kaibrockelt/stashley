@@ -53,7 +53,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 demo="$root/packages/demo"
 
 if [ "$remove" = 1 ]; then
-  docker rm -f "$name" >/dev/null 2>&1 || true
+  docker rm -fv "$name" >/dev/null 2>&1 || true
   echo "Removed $name."
   exit 0
 fi
