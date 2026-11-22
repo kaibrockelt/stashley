@@ -34,11 +34,9 @@ async function newPage(
 
 /** The row of a form field or base filter column in the block dialog. */
 function fieldRow(block: Locator, column: string) {
-  return block
-    .locator('div[class*="fieldRow"]')
-    .filter({
-      has: block.page().getByRole('button', { name: new RegExp(`(^|\\s)${column}( \\*)?$`) }),
-    })
+  return block.locator('div[class*="fieldRow"]').filter({
+    has: block.page().getByRole('button', { name: new RegExp(`(^|\\s)${column}( \\*)?$`) }),
+  })
 }
 
 async function blockDialog(page: Page, type: string, title: string) {
