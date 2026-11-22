@@ -1,10 +1,10 @@
 # Progress
 
-**Current milestone:** M7 – Public REST API and CSV import (in review)
+**Current milestone:** M8 – MCP server (open)
 
-**Next step:** The operator's acceptance of M7 (review findings fixed, see log 2026-11-22).
+**Next step:** The operator decides whether M8 stays in the MVP or moves after it (see log 2026-11-22); then the plan of M8 or M9.
 
-**Recommended model strength:** M7: high (new tables and the review: extra high).
+**Recommended model strength:** M8: high (authorization server and the review: extra high); M9: medium (final review: high).
 
 The SQL validation of M4 is tested externally; that does not block M6.
 
@@ -19,7 +19,7 @@ The SQL validation of M4 is tested externally; that does not block M6.
 | M4 | Queries, access control and cache: query library, SQL validation and execution, parameters, instance variables, roles, page and component rights, base filters, pagination, cache invalidation | Strongest, maximum effort | Done |
 | M5 | Pages and dashboards: workspace shell, navigation, drafts and versions, grid, blocks, charts, query builder, SQL editor, preview as role | Medium (query builder: high) | Done |
 | M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | Done |
-| M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High (new tables, review: extra high) | In review |
+| M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High (new tables, review: extra high) | Done |
 | M8 | MCP server: authorization server, metadata, tools, MCP exposure, privacy notice, call log | High | Open |
 | M9 | Demo scenario and acceptance: seed script, configuration export and import, end-to-end suite, accessibility, performance, documentation, release pipeline | Medium (final review: high) | Open |
 
@@ -407,3 +407,4 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Found and fixed in the browser check: removing a table access asked "Speichern nimmt Folgendes weg" and "Trotzdem speichern"; it now names the removal. Not checked in the browser after that fix (the stand runs the build before it).
   - Left on the stand: the audit entries of the check.
 - 2026-11-22: Noted for after the MVP: case-insensitive search and sorting on case-sensitive text columns (`utf8mb4_bin`) at the query level, e.g. with an explicit collation for `contains` and the sort.
+- 2026-11-22: M7 accepted by the operator. Asked whether M8 (MCP) is a large milestone; if it is large, complicated and brings new security implications, the operator prefers to move it after the MVP.
