@@ -24,7 +24,7 @@ export interface DataRouteDeps {
 const idParams = z.object({ id: z.uuid() })
 const driftParams = z.object({ id: z.uuid(), driftId: z.uuid() })
 const connectionQuery = z.object({ connectionId: z.uuid() })
-const confirmQuery = z.object({ confirm: z.enum(['true', 'false']).optional() })
+const confirmQuery = z.object({ confirm: z.string().max(64).optional() })
 const testBody = connectionInput.extend({ connectionId: z.uuid().optional() })
 /** These open connections to other hosts; the limit keeps them from becoming a port scanner. */
 const outbound = { rateLimit: { max: 20, timeWindow: '1 minute' } }
@@ -157,7 +157,7 @@ export function registerDataRoutes(app: FastifyInstance, deps: DataRouteDeps): v
     admin(request)
     const { id } = parse(idParams, request.params)
     const { confirm } = parse(confirmQuery, request.query)
-    await tableAccess.remove(actorOf(request), id, { confirm: confirm === 'true' })
+    await tableAccess.remove(actorOf(request), id, { confirm })
     return reply.code(204).send()
   })
 

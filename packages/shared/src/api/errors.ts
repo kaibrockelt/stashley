@@ -79,6 +79,8 @@ export interface ProblemDocument {
   current?: unknown
   /** `confirmation_required`: what the change would take away. */
   consequences?: unknown[]
+  /** `confirmation_required`: sent back as `confirm`, it confirms exactly these consequences. */
+  confirmation?: string
 }
 
 export const problemTypePrefix = 'urn:stashley:problem:'

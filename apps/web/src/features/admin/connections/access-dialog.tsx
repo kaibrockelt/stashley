@@ -83,7 +83,7 @@ export function AccessDialog(props: {
   })
   // A change that takes API endpoints or grants away is confirmed first (E15).
   const save = useMutation({
-    mutationFn: (confirm: boolean) =>
+    mutationFn: (confirm?: string) =>
       access === undefined
         ? api('POST', '/internal/admin/table-access', {
             connectionId: props.connectionId,
@@ -92,7 +92,7 @@ export function AccessDialog(props: {
           })
         : api('PUT', `/internal/admin/table-access/${access.id}`, {
             ...body(),
-            ...(confirm && { confirm: true }),
+            ...(confirm !== undefined && { confirm }),
           }),
     onSuccess: async () => {
       await refresh()
@@ -100,10 +100,12 @@ export function AccessDialog(props: {
     },
   })
   const remove = useMutation({
-    mutationFn: (confirm: boolean) =>
+    mutationFn: (confirm?: string) =>
       api(
         'DELETE',
-        `/internal/admin/table-access/${access?.id ?? ''}${confirm ? '?confirm=true' : ''}`,
+        `/internal/admin/table-access/${access?.id ?? ''}${
+          confirm === undefined ? '' : `?confirm=${encodeURIComponent(confirm)}`
+        }`,
       ),
     onSuccess: async () => {
       await refresh()
@@ -124,18 +126,18 @@ export function AccessDialog(props: {
 
   return (
     <Dialog title={object.name} isOpen isWide onOpenChange={(open) => !open && props.onClose()}>
-      <Form onSubmit={() => save.mutate(false)}>
+      <Form onSubmit={() => save.mutate(undefined)}>
         {saveConsequences !== undefined ? (
           <ConsequencesNotice
-            consequences={saveConsequences}
-            onConfirm={() => save.mutate(true)}
+            consequences={saveConsequences.consequences}
+            onConfirm={() => save.mutate(saveConsequences.confirmation)}
             onCancel={() => save.reset()}
             isPending={save.isPending}
           />
         ) : removeConsequences !== undefined ? (
           <ConsequencesNotice
-            consequences={removeConsequences}
-            onConfirm={() => remove.mutate(true)}
+            consequences={removeConsequences.consequences}
+            onConfirm={() => remove.mutate(removeConsequences.confirmation)}
             onCancel={() => remove.reset()}
             isPending={remove.isPending}
           />
@@ -295,7 +297,7 @@ export function AccessDialog(props: {
           {access !== undefined && (
             <Button
               variant="danger"
-              onPress={() => remove.mutate(false)}
+              onPress={() => remove.mutate(undefined)}
               isDisabled={remove.isPending}
             >
               {t('access.unshare')}

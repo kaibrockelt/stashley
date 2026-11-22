@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
+import { createHash } from 'node:crypto'
 import type {
   AccessWarning,
   CatalogObject,
@@ -56,6 +57,29 @@ export interface TableAccessDeps {
   audit: AuditLog
   clock?: Clock
   events?: EventBus
+}
+
+/** The fingerprint of a list of consequences, which a confirmation must name (E15). */
+export function confirmationOf(consequences: readonly ChangeConsequence[]): string {
+  return createHash('sha256').update(JSON.stringify(consequences)).digest('base64url').slice(0, 22)
+}
+
+/**
+ * Refuses a change with consequences unless `confirm` names exactly these: a confirmation
+ * given for another list (the form changed, another admin changed something) asks again.
+ */
+export function requireConfirmation(
+  consequences: readonly ChangeConsequence[],
+  confirm: string | undefined,
+): void {
+  if (consequences.length === 0) return
+  const confirmation = confirmationOf(consequences)
+  if (confirm !== confirmation) {
+    throw new AppError('confirmation_required', {
+      consequences: [...consequences],
+      confirmation,
+    })
+  }
 }
 
 /** A change of a table access, as modules built on it see it (E15). */
@@ -145,15 +169,13 @@ export class TableAccessService {
   private async consequences(
     before: TableAccess,
     change: AccessChange,
-    confirm: boolean | undefined,
+    confirm: string | undefined,
   ): Promise<ChangeConsequence[]> {
     const all: ChangeConsequence[] = []
     for (const dependent of this.dependents) {
       all.push(...(await dependent.consequences(before, change)))
     }
-    if (all.length > 0 && confirm !== true) {
-      throw new AppError('confirmation_required', { consequences: all })
-    }
+    requireConfirmation(all, confirm)
     return all
   }
 
@@ -776,7 +798,11 @@ export class TableAccessService {
     return after
   }
 
-  async remove(actor: Actor, id: string, options: { confirm?: boolean } = {}): Promise<void> {
+  async remove(
+    actor: Actor,
+    id: string,
+    options: { confirm?: string | undefined } = {},
+  ): Promise<void> {
     const access = await this.get(id)
     const change: AccessChange = {
       ops: access.ops,

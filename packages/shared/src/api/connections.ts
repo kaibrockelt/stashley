@@ -314,8 +314,11 @@ export const tableAccessCreate = z.object({
 })
 export const tableAccessUpdate = z.object({
   ...tableAccessFields,
-  /** Confirms the consequences of a previous `confirmation_required` answer (E15). */
-  confirm: z.boolean().optional(),
+  /**
+   * The `confirmation` of a previous `confirmation_required` answer: the change runs only
+   * while it takes away exactly what that answer listed (E15).
+   */
+  confirm: z.string().max(64).optional(),
 })
 
 export interface AccessWarning {

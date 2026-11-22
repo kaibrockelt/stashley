@@ -131,7 +131,7 @@ describe('API endpoints', () => {
     const back = await s.admin.send(
       'PUT',
       `/internal/admin/table-access/${zahlung.id}`,
-      accessBody(zahlung, { apiResource: 'zahlung', confirm: true }),
+      accessBody(zahlung, { apiResource: 'zahlung', confirm: 'any' }),
     )
     expect(back.statusCode).toBe(422)
     expect(problem(back).errors).toEqual([{ field: 'apiResource', code: 'alias_is_object_name' }])
@@ -162,9 +162,20 @@ describe('API endpoints', () => {
     })
     expect((await endpoints(s, zahlung.id)).enabled).toEqual(['list', 'get', 'create'])
 
+    // A confirmation covers exactly the listed consequences: lowering further asks again.
+    const confirmation = problem(asked).confirmation
+    expect(confirmation).toMatch(/^[A-Za-z0-9_-]{22}$/)
+    const further = await s.admin.send('PUT', `/internal/admin/table-access/${zahlung.id}`, {
+      ...accessBody(access, { ops: ['create'] }),
+      confirm: confirmation,
+    })
+    expect(further.statusCode).toBe(409)
+    expect(problem(further).confirmation).not.toBe(confirmation)
+    expect((await endpoints(s, zahlung.id)).enabled).toEqual(['list', 'get', 'create'])
+
     const confirmed = await s.admin.send('PUT', `/internal/admin/table-access/${zahlung.id}`, {
       ...lowered,
-      confirm: true,
+      confirm: confirmation,
     })
     expect(confirmed.statusCode).toBe(200)
     expect((await endpoints(s, zahlung.id)).enabled).toEqual(['list', 'get'])
@@ -205,7 +216,7 @@ describe('API endpoints', () => {
     ])
     const done = await s.admin.send('PUT', `/internal/admin/api/endpoints/${zahlung.id}`, {
       ...disable,
-      confirm: true,
+      confirm: problem(asked).confirmation,
     })
     expect(done.json<ApiEndpointState>().enabled).toEqual(['list', 'create'])
 
@@ -223,7 +234,7 @@ describe('API endpoints', () => {
     ])
     const removed = await s.admin.request(
       'DELETE',
-      `/internal/admin/table-access/${zahlung.id}?confirm=true`,
+      `/internal/admin/table-access/${zahlung.id}?confirm=${problem(removal).confirmation ?? ''}`,
     )
     expect(removed.statusCode).toBe(204)
   })

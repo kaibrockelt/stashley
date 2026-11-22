@@ -107,8 +107,11 @@ export interface ApiEndpointState {
 
 export const apiEndpointsUpdate = z.object({
   operations: z.array(z.enum(apiOperations)).max(apiOperations.length),
-  /** Confirms the consequences listed by a previous `confirmation_required` answer (E15). */
-  confirm: z.boolean().optional(),
+  /**
+   * The `confirmation` of a previous `confirmation_required` answer: the change runs only
+   * while it takes away exactly what that answer listed (E15).
+   */
+  confirm: z.string().max(64).optional(),
 })
 
 /** What a change of a table access or its endpoints takes away (E15). */

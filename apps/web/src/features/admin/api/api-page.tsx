@@ -60,10 +60,10 @@ function EndpointDialog(props: { state: ApiEndpointState; onClose: () => void })
   const { state } = props
   const [enabled, setEnabled] = useState<ApiOperation[]>(state.enabled)
   const save = useMutation({
-    mutationFn: (confirm: boolean) =>
+    mutationFn: (confirm?: string) =>
       api('PUT', `/internal/admin/api/endpoints/${state.tableAccessId}`, {
         operations: enabled,
-        ...(confirm && { confirm: true }),
+        ...(confirm !== undefined && { confirm }),
       }),
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ['admin', 'api'] })
@@ -74,11 +74,11 @@ function EndpointDialog(props: { state: ApiEndpointState; onClose: () => void })
   const blocked = state.blockers.length > 0
   return (
     <Dialog title={state.apiResource} isOpen onOpenChange={(open) => !open && props.onClose()}>
-      <Form onSubmit={() => save.mutate(false)}>
+      <Form onSubmit={() => save.mutate(undefined)}>
         {consequences !== undefined ? (
           <ConsequencesNotice
-            consequences={consequences}
-            onConfirm={() => save.mutate(true)}
+            consequences={consequences.consequences}
+            onConfirm={() => save.mutate(consequences.confirmation)}
             onCancel={() => save.reset()}
             isPending={save.isPending}
           />

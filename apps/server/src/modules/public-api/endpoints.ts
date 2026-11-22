@@ -27,10 +27,11 @@ import { AppError } from '../../platform/http/problem.ts'
 import { fieldError } from '../../platform/http/validation.ts'
 import type { Actor, AuditLog } from '../audit/audit-log.ts'
 import type { ConnectionsService } from '../connections/service.ts'
-import type {
-  AccessChange,
-  TableAccessDependent,
-  TableAccessService,
+import {
+  requireConfirmation,
+  type AccessChange,
+  type TableAccessDependent,
+  type TableAccessService,
 } from '../table-access/service.ts'
 
 type EndpointsInput = z.infer<typeof apiEndpointsUpdate>
@@ -246,9 +247,7 @@ export class ApiEndpoints implements TableAccessDependent {
     }
     const removed = before.filter((operation) => !wanted.includes(operation))
     const consequences = await this.grantsOf(tableAccessId, removed)
-    if (consequences.length > 0 && input.confirm !== true) {
-      throw new AppError('confirmation_required', { consequences })
-    }
+    requireConfirmation(consequences, input.confirm)
     if (added.length === 0 && removed.length === 0) return this.get(tableAccessId)
     const now = this.clock()
     await writeTransaction(this.deps.db, async (trx) => {

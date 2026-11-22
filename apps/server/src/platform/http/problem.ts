@@ -15,6 +15,7 @@ export class AppError extends Error {
   readonly detail: string | undefined
   readonly current: unknown
   readonly consequences: unknown[] | undefined
+  readonly confirmation: string | undefined
 
   constructor(
     code: ErrorCode,
@@ -23,6 +24,7 @@ export class AppError extends Error {
       errors?: FieldError[]
       current?: unknown
       consequences?: unknown[]
+      confirmation?: string
     } = {},
   ) {
     super(errorCodes[code].title)
@@ -32,13 +34,17 @@ export class AppError extends Error {
     this.detail = options.detail
     this.current = options.current
     this.consequences = options.consequences
+    this.confirmation = options.confirmation
   }
 }
 
 export function problem(
   code: ErrorCode,
   extra: Partial<
-    Pick<ProblemDocument, 'detail' | 'errors' | 'errorId' | 'current' | 'consequences'>
+    Pick<
+      ProblemDocument,
+      'detail' | 'errors' | 'errorId' | 'current' | 'consequences' | 'confirmation'
+    >
   > = {},
 ): ProblemDocument {
   const { status, title } = errorCodes[code]
@@ -76,6 +82,7 @@ export function errorHandler(
         ...(error.errors !== undefined && { errors: error.errors }),
         ...(error.current !== undefined && { current: error.current }),
         ...(error.consequences !== undefined && { consequences: error.consequences }),
+        ...(error.confirmation !== undefined && { confirmation: error.confirmation }),
       }),
     )
   }
