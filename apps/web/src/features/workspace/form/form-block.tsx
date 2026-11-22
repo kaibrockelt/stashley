@@ -3,7 +3,7 @@
 import type { FieldError, RenderComponent, RenderField, RowWriteResult } from '@stashley/shared'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useIntl } from 'react-intl'
 import { api, ApiError } from '../../../api/client.ts'
 import { useSession } from '../../../api/session.ts'
@@ -85,6 +85,34 @@ export function FormBlock(props: { component: RenderComponent }) {
       format,
     )
   const [inputs, setInputs] = useState<Record<string, InputValue>>(fresh)
+  // Fields prefilled from a page filter or URL parameter follow it when it changes later, e.g.
+  // the station a helper picks after the page loaded, unless the user changed the field.
+  const prefills = useRef(fresh())
+  const sources = JSON.stringify([context.filters, context.params])
+  useEffect(() => {
+    const next = fresh()
+    const before = prefills.current
+    prefills.current = next
+    setInputs((current) => {
+      let changed = false
+      const updated = { ...current }
+      for (const field of fields) {
+        const kind = field.default?.kind
+        if (kind !== 'filter' && kind !== 'url') continue
+        const column = field.column
+        if (
+          JSON.stringify(current[column]) === JSON.stringify(before[column]) &&
+          JSON.stringify(next[column]) !== JSON.stringify(before[column])
+        ) {
+          updated[column] = next[column]
+          changed = true
+        }
+      }
+      return changed ? updated : current
+    })
+    // `fresh` reads the filters and parameters that `sources` stands for.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sources])
   const [errors, setErrors] = useState<FieldError[]>([])
   const [message, setMessage] = useState<{
     tone: 'success' | 'error' | 'info'
