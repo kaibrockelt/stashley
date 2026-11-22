@@ -808,7 +808,9 @@ export class ImportService {
         const cancelled = error instanceof Cancelled
         await this.update(id, {
           status: cancelled ? 'uploaded' : 'failed',
-          result: cancelled ? null : JSON.stringify({ failure: this.failure(error) }),
+          result: cancelled
+            ? null
+            : JSON.stringify({ failure: { ...this.failure(error), phase: 'dry_run' } }),
         })
         if (!cancelled && !(error instanceof AppError)) throw error
       }
@@ -879,7 +881,10 @@ export class ImportService {
         await this.update(id, {
           status: cancelled ? 'cancelled' : 'failed',
           result: JSON.stringify({
-            failure: cancelled ? { code: 'cancelled' } : this.failure(error),
+            failure: {
+              ...(cancelled ? { code: 'cancelled' } : this.failure(error)),
+              phase: 'import',
+            },
           }),
         })
         // Nothing was written: the transaction rolled back. The attempt is audited anyway.
@@ -973,7 +978,7 @@ export class ImportService {
         const failure = cancelled ? { code: 'cancelled' } : this.failure(error)
         await this.update(id, {
           status: cancelled ? 'cancelled' : 'failed',
-          result: JSON.stringify({ failure }),
+          result: JSON.stringify({ failure: { ...failure, phase: 'import' } }),
         })
         await this.deps.audit.record(actor, {
           action: 'import.failed',

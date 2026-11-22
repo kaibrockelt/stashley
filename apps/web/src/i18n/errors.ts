@@ -93,6 +93,11 @@ export function useErrorText() {
       const code = error.fieldError(field)
       return code === undefined ? undefined : t(fieldMessages[code] ?? 'field.invalid')
     },
+    /** The message of a stored error code, e.g. why an import stopped. */
+    code(code: string): string {
+      const id = errorMessages[code as ErrorCode] ?? fieldMessages[code]
+      return id === undefined ? t('error.generic') : t(id)
+    },
     signIn(code: string): string {
       return t(signInErrors[code] ?? 'signIn.error.failed')
     },

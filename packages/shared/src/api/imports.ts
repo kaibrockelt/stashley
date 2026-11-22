@@ -175,7 +175,8 @@ export interface ImportJob {
   result: (ImportCounts & { finishedAt: number }) | null
   progress: ImportProgress | null
   /** Why the job failed, as an error code with field errors. */
-  failure: { code: string; errors?: FieldError[] } | null
+  /** Why the last dry run (`phase: dry_run`) or import stopped. */
+  failure: { code: string; errors?: FieldError[]; phase?: 'dry_run' | 'import' } | null
   createdBy: string
   createdAt: number
   expiresAt: number

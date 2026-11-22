@@ -428,6 +428,29 @@ function ImportEditor(props: { job: ImportJob }) {
     },
   })
 
+  /** Why the last dry run or import stopped, in words; a created table is said, too. */
+  const failureText = (failure: NonNullable<ImportJob['failure']>) => {
+    const first = failure.errors?.[0]
+    const line = first?.params?.line
+    let text: string
+    if (failure.code === 'cancelled') text = t('imports.failed.cancelled')
+    else if (failure.code === 'interrupted') text = t('imports.failed.interrupted')
+    else if (failure.code === 'import_stopped' && first !== undefined) {
+      text = t('imports.failed.stopped', {
+        line: String(line ?? '–'),
+        reason: cellText({ line: Number(line ?? 0), column: first.field, code: first.code }),
+      })
+    } else {
+      const reason = errors.code(first?.code ?? failure.code)
+      text = t(failure.phase === 'dry_run' ? 'imports.failed.dryRun' : 'imports.failed.other', {
+        reason,
+      })
+    }
+    if (failure.phase !== 'dry_run' && newTable !== null && newTable.createdAt !== null) {
+      text = `${text} ${t('imports.failed.tableCreated', { name: newTable.definition.name })}`
+    }
+    return text
+  }
   const running = data.status === 'checking' || data.status === 'importing'
   const done = data.status === 'completed'
   const error = save.error ?? step.error ?? remove.error
@@ -449,14 +472,7 @@ function ImportEditor(props: { job: ImportJob }) {
       {error !== null && errors.message(error) !== undefined && (
         <Notice tone="error">{errors.message(error)}</Notice>
       )}
-      {data.failure !== null && (
-        <Notice tone="error">
-          {t('imports.failed', {
-            code: data.failure.errors?.[0]?.code ?? data.failure.code,
-            line: String(data.failure.errors?.[0]?.params?.line ?? '–'),
-          })}
-        </Notice>
-      )}
+      {data.failure !== null && <Notice tone="error">{failureText(data.failure)}</Notice>}
       {done && newTable?.outcome !== null && newTable?.outcome !== undefined && (
         <Section title={t('imports.newTable.outcome')}>
           <NewTableOutcomeView outcome={newTable.outcome} />

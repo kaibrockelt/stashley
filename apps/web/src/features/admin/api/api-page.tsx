@@ -53,6 +53,13 @@ const blockerBadges: Record<ApiEndpointBlocker, MessageId> = {
 
 const iso = (time: number | null) => (time === null ? null : new Date(time).toISOString())
 
+/** A time as the date of the browser's time zone, as a date field shows it. */
+function localDate(time: number): string {
+  const date = new Date(time)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
 function EndpointDialog(props: { state: ApiEndpointState; onClose: () => void }) {
   const t = useT()
   const errors = useErrorText()
@@ -150,11 +157,9 @@ function TokenDialog(props: {
   const client = useQueryClient()
   const { token } = props
   const [name, setName] = useState(token?.name ?? '')
-  const [expires, setExpires] = useState(
-    token?.expiresAt === null || token === undefined
-      ? ''
-      : new Date(token.expiresAt).toISOString().slice(0, 10),
-  )
+  const storedExpiry = token?.expiresAt ?? null
+  const storedDate = storedExpiry === null ? '' : localDate(storedExpiry)
+  const [expires, setExpires] = useState(storedDate)
   const [allowlist, setAllowlist] = useState((token?.ipAllowlist ?? []).join('\n'))
   const [limit, setLimit] = useState(String(token?.rateLimitPerMinute ?? defaultApiRateLimit))
   const [grants, setGrants] = useState<Set<string>>(new Set((token?.grants ?? []).map(grantKey)))
@@ -162,8 +167,14 @@ function TokenDialog(props: {
   const open = props.endpoints.filter((state) => state.enabled.length > 0)
   const body = () => ({
     name,
-    // The end of the chosen day in the browser's time zone.
-    expiresAt: expires === '' ? null : new Date(`${expires}T23:59:59`).getTime(),
+    // The end of the chosen day in the browser's time zone; an unchanged date keeps the
+    // stored time, so saving never moves the expiry.
+    expiresAt:
+      expires === ''
+        ? null
+        : expires === storedDate && storedExpiry !== null
+          ? storedExpiry
+          : new Date(`${expires}T23:59:59`).getTime(),
     ipAllowlist: allowlist
       .split(/\s+/)
       .map((entry) => entry.trim())
@@ -342,7 +353,7 @@ function TokenDialog(props: {
   )
 }
 
-async function downloadDocument(): Promise<void> {
+async function downloadDocument(): Promise<null> {
   const document = await api<unknown>('GET', '/internal/admin/api/openapi')
   const blob = new Blob([JSON.stringify(document, null, 2)], { type: 'application/json' })
   const link = window.document.createElement('a')
@@ -350,6 +361,7 @@ async function downloadDocument(): Promise<void> {
   link.download = 'stashley-openapi.json'
   link.click()
   URL.revokeObjectURL(link.href)
+  return null
 }
 
 /** The public REST API (§16): endpoints per table access and tokens. */
@@ -368,6 +380,8 @@ export function ApiPage() {
   const [token, setToken] = useState<ApiToken>()
   const [creating, setCreating] = useState(false)
   const [now] = useState(() => Date.now())
+  const errorText = useErrorText()
+  const download = useMutation({ mutationFn: downloadDocument })
   const states = endpoints.data?.data ?? []
   const resourceOf = (id: string) =>
     states.find((state) => state.tableAccessId === id)?.apiResource ?? '?'
@@ -383,9 +397,12 @@ export function ApiPage() {
       <PageHeader
         title={t('api.title')}
         actions={
-          <Button onPress={() => void downloadDocument()}>{t('api.openapi.download')}</Button>
+          <Button onPress={() => download.mutate()} isDisabled={download.isPending}>
+            {t('api.openapi.download')}
+          </Button>
         }
       />
+      {download.error !== null && <Notice tone="error">{errorText.message(download.error)}</Notice>}
       <p className={styles.muted}>{t('api.intro')}</p>
       <Section title={t('api.endpoints')}>
         <div className={table.wrap}>
