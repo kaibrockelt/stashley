@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "rootDir": ".",
+    "lib": ["es2024", "dom"],
+    "types": ["node"]
+  },
+  "include": ["scripts/**/*.ts", ".vitepress/config.ts"]
+}

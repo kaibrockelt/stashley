@@ -1,0 +1,91 @@
+# SPDX-FileCopyrightText: 2026 Stashley contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The end-to-end environment (§26): two Stashley instances from the same image, the demo
+# database, a mock OIDC provider and the Playwright runner. Everything is test-only and is
+# removed with `docker compose -f e2e/compose.yml down -v` (scripts/test-e2e.sh does that).
+# The secrets below are test values for this environment only.
+#
+# Stashley accepts plain HTTP only on localhost, so both instances and the browser share the
+# network namespace of the OIDC provider: the instances listen on localhost:8080 and :8081,
+# the provider on :9090 (reached as `oidc:9090` by the servers and the browser alike).
+name: stashley-e2e
+
+x-stashley: &stashley
+  image: ${STASHLEY_IMAGE:-stashley:e2e}
+  network_mode: service:oidc
+  depends_on:
+    db:
+      condition: service_healthy
+    oidc:
+      condition: service_started
+  tmpfs:
+    - /data:uid=1000,gid=1000
+  healthcheck:
+    test: ['CMD', 'node', '/app/healthcheck.mjs']
+    interval: 2s
+    timeout: 5s
+    retries: 30
+
+services:
+  db:
+    image: mariadb:12.3
+    environment:
+      MARIADB_ROOT_PASSWORD: e2e-root-password
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+  oidc:
+    image: ghcr.io/navikt/mock-oauth2-server:6.1.5
+    environment:
+      SERVER_PORT: '9090'
+      JSON_CONFIG: '{"interactiveLogin": true}'
+
+  stashley-a:
+    <<: *stashley
+    environment:
+      APP_SECRET_KEY: e2e-secret-key-a-0123456789abcdefghij
+      APP_BASE_URL: http://localhost:8080
+      PORT: '8080'
+      APP_TIMEZONE: Europe/Berlin
+      INITIAL_ADMIN_EMAIL: admin@stashley.test
+      INITIAL_ADMIN_PASSWORD: e2e admin passphrase a
+      LOG_LEVEL: warn
+
+  stashley-b:
+    <<: *stashley
+    environment:
+      APP_SECRET_KEY: e2e-secret-key-b-0123456789abcdefghij
+      APP_BASE_URL: http://localhost:8081
+      PORT: '8081'
+      APP_TIMEZONE: Europe/Berlin
+      INITIAL_ADMIN_EMAIL: admin@stashley.test
+      INITIAL_ADMIN_PASSWORD: e2e admin passphrase b
+      LOG_LEVEL: warn
+
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.65.1-noble
+    depends_on:
+      stashley-a:
+        condition: service_healthy
+      stashley-b:
+        condition: service_healthy
+    network_mode: service:oidc
+    working_dir: /repo/e2e
+    volumes:
+      - ..:/repo
+    environment:
+      CI: ${CI:-}
+      NODE_OPTIONS: --conditions=@stashley/source
+      E2E_BASE_A: http://localhost:8080
+      E2E_BASE_B: http://localhost:8081
+      E2E_ADMIN_EMAIL: admin@stashley.test
+      E2E_ADMIN_PASSWORD_A: e2e admin passphrase a
+      E2E_ADMIN_PASSWORD_B: e2e admin passphrase b
+      E2E_DB_HOST: db
+      E2E_DB_ROOT_PASSWORD: e2e-root-password
+      E2E_OIDC_ISSUER: http://oidc:9090/default
+    command: ['npx', 'playwright', 'test']

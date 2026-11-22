@@ -3,3 +3,8 @@ pnpm-lock.yaml
 LICENSE
 dist
 coverage
+e2e/report
+e2e/.tmp
+docs/.vitepress/dist
+docs/.vitepress/cache
+docs/api/reference.md

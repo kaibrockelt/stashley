@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "pnpm -r build",
-    "typecheck": "tsc -b && tsc -p apps/server/tsconfig.test.json && tsc -p packages/shared/tsconfig.test.json && tsc -p packages/demo/tsconfig.test.json && pnpm --filter @stashley/web typecheck",
+    "typecheck": "tsc -b && tsc -p apps/server/tsconfig.test.json && tsc -p packages/shared/tsconfig.test.json && tsc -p packages/demo/tsconfig.test.json && tsc -p e2e/tsconfig.json && tsc -p docs/tsconfig.json && pnpm --filter @stashley/web typecheck",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "test": "pnpm -r test",

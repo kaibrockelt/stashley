@@ -17,7 +17,18 @@ const optionalModulePattern = {
 }
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**'] },
+  {
+    ignores: [
+      '**/dist/**',
+      '**/coverage/**',
+      '**/node_modules/**',
+      'e2e/report/**',
+      'e2e/.tmp/**',
+      'e2e/load/**',
+      'docs/.vitepress/dist/**',
+      'docs/.vitepress/cache/**',
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
@@ -27,6 +38,8 @@ export default tseslint.config(
           './apps/server/tsconfig.test.json',
           './packages/shared/tsconfig.test.json',
           './packages/demo/tsconfig.test.json',
+          './e2e/tsconfig.json',
+          './docs/tsconfig.json',
           './apps/web/tsconfig.json',
         ],
         tsconfigRootDir: import.meta.dirname,
