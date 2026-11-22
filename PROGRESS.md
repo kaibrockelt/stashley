@@ -2,7 +2,7 @@
 
 **Current milestone:** M7 – Public REST API and CSV import (in review)
 
-**Next step:** Review M7 in a fresh session with extra high effort (the API as a second path to data, tokens, DDL for new tables); then the operator's acceptance.
+**Next step:** The operator's acceptance of M7 (review findings fixed, see log 2026-11-22).
 
 **Recommended model strength:** M7: high (new tables and the review: extra high).
 
@@ -391,4 +391,16 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Found and fixed in the browser check: endpoint states as full sentences in badges; visible labels on matrix and editor check boxes; the empty-values field had the label of the empty import list; the designer flagged the empty name at once.
   - Not checked in the browser: the `pending_grants` path with its statement and check again (the stand's read user may read the whole schema; covered by the integration test), the designer creating a table, cancelling a running import.
   - Left on the stand: the revoked test token (tokens cannot be deleted) and the audit entries.
-
+- 2026-11-22: M7 reviewed (2026-11-17): 1 blocking finding, 8 should-fix, 12 nice-to-have. A token never read or wrote beyond grant, enabled endpoint, ceiling and database grants; the read limit was open in the import. The operator approved every fix with the recommended variants (B1 a, S3 b, S4 SELECT for create, S6 c).
+  - B1: an upsert dry run counted unchanged and updated rows, so a manager could guess stored values of a table without read. Upsert imports now need read in the ceiling; without it only insert is offered.
+  - S1: the import compared stored keys and foreign keys by exact text while the database compares with the column's collation, so `ANNA@example.com` was reported as new and the import failed on the unique index. Lookups return which batch value each row matched (`IF(column = ?, i, NULL)`); duplicates within the file compare by weight strings of the column's collation, which the catalog now records (`collation`).
+  - S2: the owner and an admin starting one job at the same time imported the file twice. The slot is reserved before the first await and the job is claimed in the store from the statuses it may start from.
+  - S3: `PUT /:id` always wrote left-out columns with a default, so each repeat bumped the version, broke open forms and wrote an empty audit entry; `created_at` went back to now. Literal defaults are written as their values, expression defaults keep the stored value (`defaultExpression` in the catalog), and a write without changes records no audit entry.
+  - S4: create counted as granted with `INSERT` alone, yet the write path reads its row back, so create-only setups failed with 503. Create needs `SELECT` like update and delete.
+  - S5: asymmetric column grants (INSERT ≠ UPDATE) withheld update or create on the API and in imports entirely. Each operation checks only the columns it writes, payloads keep to them, and the endpoint list shows what the resource model withholds.
+  - S6: new tables got the server's default collation for utf8mb4 instead of the schema's, and joins with existing columns failed with 1267. The schema's collation is read fresh and written out; a checkbox per text column makes it case-sensitive (`utf8mb4_bin`).
+  - S7: reading the first rows of a CSV left the file open, so deleted uploads kept their space. The stream chain uses `pipeline`.
+  - S8: the per-address limit for invalid tokens was checked before the token, so bad requests from a shared address locked valid integrations out for hours. It applies to failed attempts only; unknown tokens are not cached; the log warns once when forwarded headers arrive without `TRUST_PROXY`.
+  - N1: a table replaced by a view loses the endpoints and grants the view cannot serve, in the catalog's transaction. N2: a confirmation carries a fingerprint and covers exactly the listed consequences. N3: token grants are checked inside the saving transaction. N4: the GRANT statement escapes backticks. N5: a shutdown cancels running imports and waits up to 10 s. N6: `DELETE` with `If-Match` on a resource without a write model answers 412. N7: import failures in words, with the failed phase and a note when the table exists already. N8: token expiry as a local date, kept while unchanged; an expired token can be renamed. N9: a failed OpenAPI download shows an error. N10: text defaults refuse C1 control characters. N11: no change, the definition schema allows at most 200 columns. N12: the consequences notice scrolls into view.
+  - Verified: typecheck, lint, SPDX, i18n (1249 keys); 629 server, 116 shared and 67 web unit tests; 288 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7 (72 per engine), among them two users starting one import, upserts and foreign keys in another letter case, repeated `PUT /:id` with literal and expression defaults, a table replaced by a view with a write endpoint and grant, and a new table in a `utf8mb4_unicode_ci` schema with a case-sensitive column.
+- 2026-11-22: Noted for after the MVP: case-insensitive search and sorting on case-sensitive text columns (`utf8mb4_bin`) at the query level, e.g. with an explicit collation for `contains` and the sort.
