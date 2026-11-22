@@ -115,6 +115,7 @@ describe.skipIf(targets.length === 0).each(targets)('target database $name', ({ 
     await root.query('DROP DATABASE IF EXISTS wanderverein')
     await root.query('CREATE DATABASE wanderverein CHARACTER SET utf8mb4')
     await root.query('USE wanderverein')
+    await root.query('SET NAMES utf8mb4')
     await root.query(schemaSql())
     await root.query(usersSql())
     server = await createServer(

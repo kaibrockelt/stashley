@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import { type DemoFacts, generateDemo, schemaSql, usersSql } from '@stashley/demo'
+import {
+  type DemoFacts,
+  demoCeilings,
+  demoViewKeys,
+  generateDemo,
+  schemaSql,
+  usersSql,
+} from '@stashley/demo'
 import type { Connection, TableAccess, TableOp } from '@stashley/shared'
 import mysql from 'mysql2/promise'
 import { expect } from 'vitest'
@@ -44,6 +51,10 @@ export async function prepareDatabase(root: mysql.Connection): Promise<void> {
   await root.query('DROP DATABASE IF EXISTS wanderverein')
   await root.query('CREATE DATABASE wanderverein CHARACTER SET utf8mb4')
   await root.query('USE wanderverein')
+  // Views keep the collation of the connection that created them; with mysql2's default
+  // (utf8mb4_unicode_ci) their string literals clash with those of Stashley's sessions,
+  // which use the server default like the seed script's client does.
+  await root.query('SET NAMES utf8mb4')
   await root.query(schemaSql())
   await root.query(usersSql())
 }
@@ -91,25 +102,7 @@ export function connectionInput(url: URL, overrides: Record<string, unknown> = {
   }
 }
 
-export const demoCeilings: Record<string, TableOp[]> = {
-  person: ['read', 'create', 'update'],
-  event: ['read', 'create', 'update'],
-  hotel: ['read', 'create', 'update'],
-  hotel_kontingent: ['read', 'create', 'update'],
-  station: ['read', 'create', 'update'],
-  anmeldung: ['read', 'create', 'update'],
-  hotelbuchung: ['read', 'create', 'update', 'delete'],
-  zahlung: ['read', 'create', 'update'],
-  checkin: ['read', 'create', 'delete'],
-  stempel: ['read', 'create', 'delete'],
-  ehrung: ['read', 'create'],
-}
-export const demoViewKeys: Record<string, string | null> = {
-  v_teilnahmen: 'person_id',
-  v_zahlungsstatus: 'anmeldung_id',
-  v_streckenlage: 'anmeldung_id',
-  v_medaille: null,
-}
+export { demoCeilings, demoViewKeys }
 
 /** Saves the connection and exposes the whole demo schema with its ceilings. */
 export async function connectDemo(

@@ -3,5 +3,7 @@
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
+  resolve: { conditions: ['@stashley/source'] },
+  ssr: { resolve: { conditions: ['@stashley/source'] } },
   test: { include: ['src/**/*.test.ts'] },
 })

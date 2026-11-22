@@ -6,6 +6,16 @@ import path from 'node:path'
 export { DEMO_SEED, generateDemo } from './generate.ts'
 export type { DemoData, DemoFacts, DemoOptions } from './generate.ts'
 export { verificationQuery } from './verify.ts'
+export {
+  demoCeilings,
+  demoConfig,
+  demoConnectionName,
+  demoId,
+  demoIds,
+  demoRoles,
+  demoViewKeys,
+} from './scenario.ts'
+export type { DemoRole } from './scenario.ts'
 
 const sqlDirectory = path.join(import.meta.dirname, '..', 'sql')
 

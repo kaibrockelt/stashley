@@ -11,6 +11,9 @@
       "default": "./dist/index.js"
     }
   },
+  "devDependencies": {
+    "@stashley/shared": "workspace:*"
+  },
   "scripts": {
     "build": "tsc -b",
     "test": "vitest run"

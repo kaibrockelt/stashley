@@ -361,7 +361,11 @@ importers:
         specifier: 8.3.7
         version: 8.3.7(@types/node@26.6.6)(yaml@2.9.1)
 
-  packages/demo: {}
+  packages/demo:
+    devDependencies:
+      '@stashley/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/shared:
     dependencies:
