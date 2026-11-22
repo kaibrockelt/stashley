@@ -614,7 +614,8 @@ export function matchedKeys(
 
 /** The key indexes of a `matchedKeys` column. */
 export function keyIndexes(value: unknown): number[] {
-  return String(value ?? '')
+  const text = typeof value === 'string' ? value : typeof value === 'number' ? String(value) : ''
+  return text
     .split(',')
     .filter((entry) => entry !== '')
     .map(Number)

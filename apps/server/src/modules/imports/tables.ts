@@ -68,6 +68,33 @@ export class TableCreator {
   }
 
   /**
+   * The schema's collation when its character set is utf8mb4 (`schema`): new tables write it
+   * out, so they compare text like the tables around them (joins across collations fail with
+   * 1267), even where a pooled session still holds an older default of the schema. Otherwise
+   * null, and the table gets utf8mb4's default collation. `collation` is what text columns
+   * without `caseSensitive` end up with. Read fresh from the database.
+   */
+  async charset(
+    connectionId: string,
+  ): Promise<{ schema: string | null; collation: string | null }> {
+    const { target } = await this.schemaUser(connectionId)
+    return this.withSchemaUser(connectionId, async (session) => {
+      const [schema] = await session.query<{ charset: string; collation: string }>(
+        `SELECT DEFAULT_CHARACTER_SET_NAME AS charset, DEFAULT_COLLATION_NAME AS collation
+           FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?`,
+        [target.spec.database],
+      )
+      if (schema?.charset.toLowerCase() === 'utf8mb4') {
+        return { schema: schema.collation, collation: schema.collation }
+      }
+      const [fallback] = await session.query<{ collation: string }>(
+        "SELECT COLLATION(CONVERT('' USING utf8mb4)) AS collation",
+      )
+      return { schema: null, collation: fallback?.collation ?? null }
+    })
+  }
+
+  /**
    * `CREATE TABLE` through the schema user; audited with the statement as `table.created`.
    * DDL commits implicitly, so callers run it only after a passed dry run.
    */
@@ -79,6 +106,7 @@ export class TableCreator {
     const ddl = createTableStatement(definition, {
       taken: await this.taken(definition.connectionId),
       sourceCount: context.sourceCount,
+      collation: (await this.charset(definition.connectionId)).schema,
     })
     try {
       await this.withSchemaUser(definition.connectionId, (session) => session.query(ddl))

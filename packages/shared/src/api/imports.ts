@@ -204,6 +204,11 @@ export const newTableColumn = z
     required: z.boolean(),
     unique: z.boolean(),
     default: newColumnDefault.nullable(),
+    /**
+     * Text columns only: compare case and accents (`COLLATE utf8mb4_bin`) instead of the
+     * schema's collation, in unique keys, sorting and search alike.
+     */
+    caseSensitive: z.boolean().optional(),
   })
   .strict()
 export type NewTableColumn = z.infer<typeof newTableColumn>

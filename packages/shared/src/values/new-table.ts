@@ -201,6 +201,9 @@ export function checkNewTable(
     }
     const defaultProblem = checkNewDefault(column)
     if (defaultProblem !== undefined) errors.push({ field: `${at}.default`, code: defaultProblem })
+    if (column.caseSensitive === true && column.type !== 'varchar' && column.type !== 'text') {
+      errors.push({ field: `${at}.caseSensitive`, code: 'not_supported' })
+    }
   })
   if (key.kind === 'column') {
     const column = definition.columns.find((entry) => entry.name === key.column)
@@ -213,12 +216,18 @@ export function checkNewTable(
   return errors
 }
 
+/** The collation of text columns that compare case and accents (`caseSensitive`). */
+export const caseSensitiveCollation = 'utf8mb4_bin'
+
 /**
  * The catalog columns the table will have, so the import can check values before the table
  * exists (dry run) and write them without reading the catalog (the read user may not see the
- * table yet).
+ * table yet). `collation` is the one text columns get without `caseSensitive`.
  */
-export function newTableCatalog(definition: NewTableDefinition): CatalogColumn[] {
+export function newTableCatalog(
+  definition: NewTableDefinition,
+  collation: string | null = null,
+): CatalogColumn[] {
   const key = definition.primaryKey
   const columns: CatalogColumn[] = []
   if (key.kind === 'added') {
@@ -273,6 +282,12 @@ export function newTableCatalog(definition: NewTableDefinition): CatalogColumn[]
       onUpdate: null,
       maxLength:
         column.type === 'varchar' ? (column.length ?? 255) : column.type === 'text' ? 65_535 : null,
+      collation:
+        column.type === 'varchar' || column.type === 'text'
+          ? column.caseSensitive === true
+            ? caseSensitiveCollation
+            : collation
+          : null,
       precision:
         column.type === 'decimal' ? (column.precision ?? 10) : column.type === 'int' ? 10 : null,
       scale: column.type === 'decimal' ? (column.scale ?? 0) : null,

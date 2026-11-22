@@ -298,7 +298,10 @@ export class Importer {
         const chunk = texts.slice(start, start + 500)
         const statement = weightStatement(collation, chunk)
         const [result] = (await session.execute(statement.sql, statement.values)).rows
-        chunk.forEach((text, index) => weights.set(text, String(result?.[index] ?? text)))
+        chunk.forEach((text, index) => {
+          const weight = result?.[index]
+          weights.set(text, typeof weight === 'string' ? weight : text)
+        })
       }
       out.set(name, weights)
     }
@@ -537,8 +540,8 @@ export class Importer {
     const changedColumns = new Set<string>()
     const rows = records.map((record) => this.read(record, errors))
     counts.rows = rows.length
-    // A table this import created is empty and has no foreign keys: nothing to look up, and
-    // its dry run runs before the table exists, without a session.
+    // A table this import created is empty and has no foreign keys: nothing to look up; its
+    // dry run runs before the table exists, and its session only compares keys of the file.
     const lookups = this.plan.table.existing
     if (lookups && session === null) throw new Error('Existing tables need a session')
     if (lookups && session !== null) {

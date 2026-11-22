@@ -62,12 +62,14 @@ export async function createHttpServer(options: HttpOptions): Promise<FastifyIns
   // address and IP allowlists of API tokens then see only the proxy. Said once in the log.
   if (options.trustProxy === undefined) {
     let warned = false
-    app.addHook('onRequest', async (request) => {
-      if (warned || request.headers['x-forwarded-for'] === undefined) return
-      warned = true
-      request.log.warn(
-        'requests carry X-Forwarded-For, but TRUST_PROXY is not set: limits per address and API allowlists see the proxy address',
-      )
+    app.addHook('onRequest', (request, _reply, done) => {
+      if (!warned && request.headers['x-forwarded-for'] !== undefined) {
+        warned = true
+        request.log.warn(
+          'requests carry X-Forwarded-For, but TRUST_PROXY is not set: limits per address and API allowlists see the proxy address',
+        )
+      }
+      done()
     })
   }
 

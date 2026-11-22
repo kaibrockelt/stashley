@@ -73,6 +73,39 @@ describe('CREATE TABLE', () => {
     )
   })
 
+  it('takes the schema collation and compares chosen text columns by case', () => {
+    const statement = createTableStatement(
+      {
+        ...base,
+        columns: [
+          column('code', { required: true, unique: true, caseSensitive: true }),
+          column('notiz', { type: 'text', caseSensitive: true }),
+          column('name'),
+        ],
+      },
+      { taken: [], collation: 'utf8mb4_unicode_ci' },
+    )
+    expect(statement).toContain('  `code` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL,')
+    expect(statement).toContain('  `notiz` TEXT COLLATE utf8mb4_bin NULL,')
+    expect(statement).toContain('  `name` VARCHAR(64) NULL,')
+    // The schema's collation, written out.
+    expect(statement).toMatch(
+      /\) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci$/,
+    )
+    expect(() =>
+      createTableStatement(
+        { ...base, columns: [column('n')] },
+        { taken: [], collation: 'latin1_swedish_ci; DROP TABLE person' },
+      ),
+    ).toThrow(AppError)
+    expect(() =>
+      createTableStatement(
+        { ...base, columns: [column('n', { type: 'int', caseSensitive: true })] },
+        { taken: [] },
+      ),
+    ).toThrow(AppError)
+  })
+
   it('makes an existing column the primary key, never nullable', () => {
     const statement = createTableStatement(
       {

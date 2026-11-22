@@ -538,6 +538,54 @@ describe.skipIf(targets.length === 0).each(targets)('CSV import on $name', ({ ur
     ])
   })
 
+  it('creates tables in the schema collation, chosen text columns case-sensitive', async () => {
+    // Older schemas often use another collation than the server's default for utf8mb4.
+    await root.query('ALTER DATABASE wanderverein COLLATE utf8mb4_unicode_ci')
+    const created = await admin.send('POST', '/internal/admin/tables', {
+      connectionId: connection.id,
+      name: 'codes',
+      primaryKey: { kind: 'added', name: 'id' },
+      columns: [
+        {
+          name: 'code',
+          source: null,
+          type: 'varchar',
+          length: 20,
+          required: true,
+          unique: true,
+          default: null,
+          caseSensitive: true,
+        },
+        {
+          name: 'email',
+          source: null,
+          type: 'varchar',
+          length: 254,
+          required: false,
+          unique: false,
+          default: null,
+        },
+      ],
+    })
+    expect(created.statusCode, created.body).toBe(201)
+    expect(created.json<NewTableOutcome>().ddl).toMatch(
+      /\) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci$/,
+    )
+    expect(
+      await rows(
+        `SELECT COLUMN_NAME AS name, COLLATION_NAME AS collation FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = 'wanderverein' AND TABLE_NAME = 'codes' AND COLLATION_NAME IS NOT NULL
+          ORDER BY ORDINAL_POSITION`,
+      ),
+    ).toEqual([
+      { name: 'code', collation: 'utf8mb4_bin' },
+      { name: 'email', collation: 'utf8mb4_unicode_ci' },
+    ])
+    // The case-sensitive unique key takes both spellings.
+    await root.query("INSERT INTO codes (code, email) VALUES ('ab', 'a@example.com'), ('AB', NULL)")
+    expect(await rows('SELECT COUNT(*) AS n FROM codes')).toEqual([{ n: 2 }])
+  })
+
   it('designs an empty table that waits for the grants of the read user', async () => {
     // Narrow the read user to the tables that exist, so a new table is not readable.
     const tables = await rows<{ name: string }>(

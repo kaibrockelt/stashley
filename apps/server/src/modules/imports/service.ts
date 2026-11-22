@@ -533,10 +533,17 @@ export class ImportService {
     }
   }
 
-  /** The plan of the data step into a table this import creates. */
-  private newTablePlan(state: NewTableState, options: ImportParseOptions): ImportPlan {
+  /**
+   * The plan of the data step into a table this import creates; `collation` is the one its
+   * text columns get, so duplicates in the file compare like the unique index will.
+   */
+  private newTablePlan(
+    state: NewTableState,
+    options: ImportParseOptions,
+    collation: string | null,
+  ): ImportPlan {
     const definition = state.definition
-    const catalog = newTableCatalog(definition)
+    const catalog = newTableCatalog(definition, collation)
     const byName = new Map(catalog.map((column) => [column.name, column]))
     const key = definition.primaryKey
     const keyColumn = key.kind === 'added' ? key.name : key.column
@@ -692,13 +699,16 @@ export class ImportService {
       const state = JSON.parse(row.new_table) as NewTableState
       const connectionId = state.definition.connectionId
       const resolved = await this.deps.connections.resolve(connectionId)
-      const importer = new Importer(this.newTablePlan(state, options), resolved.row.timezone)
-      if (!write) await consume(importer, null)
-      else {
-        await this.deps.tables.withSchemaUser(connectionId, (session) =>
-          transaction(session, () => consume(importer, session)),
-        )
-      }
+      const { collation } = await this.deps.tables.charset(connectionId)
+      const importer = new Importer(
+        this.newTablePlan(state, options, collation),
+        resolved.row.timezone,
+      )
+      // The dry run reads nothing of the table, which may not exist yet; its session only
+      // compares the file's keys in the collation the table will have.
+      await this.deps.tables.withSchemaUser(connectionId, (session) =>
+        transaction(session, () => consume(importer, session)),
+      )
       return { counts, errors, changed, wrote }
     }
 

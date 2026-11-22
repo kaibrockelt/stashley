@@ -286,9 +286,11 @@ describe.skipIf(targets.length === 0).each(targets)('public API on $name', ({ ur
     ).toEqual(['email', 'land'])
 
     const createdAt = async () =>
-      ((await root.query('SELECT created_at FROM person WHERE id = 3')) as unknown as [
-        { created_at: Date }[],
-      ])[0][0]?.created_at
+      (
+        (await root.query('SELECT created_at FROM person WHERE id = 3')) as unknown as [
+          { created_at: Date }[],
+        ]
+      )[0][0]?.created_at
     const created = await createdAt()
     const body = { vorname: 'Chloé', nachname: 'Dubois', email: 'chloe@example.com', land: 'BE' }
     const replaced = await call(sync, 'PUT', 'people/3', body)

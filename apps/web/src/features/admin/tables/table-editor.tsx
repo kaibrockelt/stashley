@@ -58,13 +58,23 @@ const problemLabels: Record<string, MessageId> = {
 
 /** A column with the size fields its type needs, and none it does not. */
 function withType(column: NewTableColumn, type: NewColumnTypeName): NewTableColumn {
-  const { length: _length, precision: _precision, scale: _scale, ...rest } = column
+  const {
+    length: _length,
+    precision: _precision,
+    scale: _scale,
+    caseSensitive: _caseSensitive,
+    ...rest
+  } = column
   void _length
   void _precision
   void _scale
+  void _caseSensitive
   return {
     ...rest,
     type,
+    // Only text compares by case; a column that stays text keeps the choice.
+    ...((type === 'varchar' || type === 'text') &&
+      column.caseSensitive === true && { caseSensitive: true }),
     ...(type === 'varchar' && { length: column.length ?? 255 }),
     ...(type === 'decimal' && { precision: column.precision ?? 10, scale: column.scale ?? 2 }),
     default: type === 'text' ? null : column.default,
@@ -172,6 +182,7 @@ export function TableDefinitionEditor(props: {
               <th>{t('tables.size')}</th>
               <th>{t('tables.required')}</th>
               <th>{t('tables.unique')}</th>
+              <th>{t('tables.caseSensitive')}</th>
               <th>{t('tables.default')}</th>
               <th />
             </tr>
@@ -272,6 +283,16 @@ export function TableDefinitionEditor(props: {
                     />
                   </td>
                   <td>
+                    {(column.type === 'varchar' || column.type === 'text') && (
+                      <CheckboxField
+                        isLabelHidden
+                        label={t('tables.caseSensitive.of', { column: column.name })}
+                        isSelected={column.caseSensitive === true}
+                        onChange={(caseSensitive) => setColumn(index, { ...column, caseSensitive })}
+                      />
+                    )}
+                  </td>
+                  <td>
                     {column.type !== 'text' && !isKey && (
                       <>
                         <TextField
@@ -316,6 +337,7 @@ export function TableDefinitionEditor(props: {
         </table>
       </div>
       <p className={styles.muted}>{t('tables.hint')}</p>
+      <p className={styles.muted}>{t('tables.caseSensitive.hint')}</p>
       {props.sources === undefined && (
         <Actions>
           <Button

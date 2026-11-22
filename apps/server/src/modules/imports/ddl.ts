@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { NewTableColumn, NewTableDefinition } from '@stashley/shared'
 import {
+  caseSensitiveCollation,
   checkNewTable,
   columnTypeText,
   isValidNewName,
@@ -58,13 +59,23 @@ function keyNames(columns: readonly string[]): Map<string, string> {
   return names
 }
 
+const utf8mb4Collation = /^utf8mb4_[a-z0-9_]{1,56}$/
+
 /**
  * The `CREATE TABLE` statement of a checked definition. `taken` are the object names the
  * catalog knows; a name the read user cannot see still fails at the database (1050).
+ * `collation`: the schema's utf8mb4 collation, written out so the table compares text like
+ * the tables around it (a pooled session may still hold an older default of the schema);
+ * without one the table gets utf8mb4 with that character set's default collation.
+ * Case-sensitive text columns get `utf8mb4_bin`.
  */
 export function createTableStatement(
   definition: NewTableDefinition,
-  context: { taken: readonly string[]; sourceCount?: number | undefined },
+  context: {
+    taken: readonly string[]
+    sourceCount?: number | undefined
+    collation?: string | null | undefined
+  },
 ): string {
   const errors = checkNewTable(definition, context)
   if (errors.length > 0) throw new AppError('validation_failed', { errors })
@@ -74,8 +85,9 @@ export function createTableStatement(
   for (const column of definition.columns) {
     const isKey = key.kind === 'column' && key.column === column.name
     const notNull = column.required || isKey
+    const collation = column.caseSensitive === true ? ` COLLATE ${caseSensitiveCollation}` : ''
     lines.push(
-      `  ${id(column.name)} ${columnTypeText(column)} ${notNull ? 'NOT NULL' : 'NULL'}${defaultClause(column)}`,
+      `  ${id(column.name)} ${columnTypeText(column)}${collation} ${notNull ? 'NOT NULL' : 'NULL'}${defaultClause(column)}`,
     )
   }
   lines.push(`  PRIMARY KEY (${id(key.kind === 'added' ? key.name : key.column)})`)
@@ -86,5 +98,10 @@ export function createTableStatement(
   for (const column of unique) {
     lines.push(`  UNIQUE KEY ${id(names.get(column) as string)} (${id(column)})`)
   }
-  return `CREATE TABLE ${id(definition.name)} (\n${lines.join(',\n')}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  const collation = context.collation ?? null
+  if (collation !== null && !utf8mb4Collation.test(collation)) {
+    throw new AppError('validation_failed', { errors: [{ field: 'collation', code: 'invalid' }] })
+  }
+  const options = `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4${collation === null ? '' : ` COLLATE=${collation}`}`
+  return `CREATE TABLE ${id(definition.name)} (\n${lines.join(',\n')}\n) ${options}`
 }

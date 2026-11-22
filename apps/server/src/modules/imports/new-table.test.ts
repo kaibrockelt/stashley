@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { ImportJob, NewTableColumn, NewTableDefinition } from '@stashley/shared'
 import iconv from 'iconv-lite'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import type { TargetSession } from '../../target/pools.ts'
 import { setupDemo } from '../../test/demo.ts'
 import { createUser, problem, setupServer } from '../../test/setup.ts'
 
@@ -67,7 +68,7 @@ describe('new tables from CSV (E28)', () => {
     expect(designer.statusCode).toBe(403)
   })
 
-  it('check the definition before saving it, and run the dry run without the database', async () => {
+  it('check the definition before saving it, and run the dry run before the table exists', async () => {
     const { s, demo, job } = await setup()
     const suggested = (
       await s.admin.request(
@@ -115,6 +116,17 @@ describe('new tables from CSV (E28)', () => {
     const saved = await save(typed)
     expect(saved.statusCode, saved.body).toBe(200)
     expect(saved.json<ImportJob>().newTable).toMatchObject({ createdAt: null, skipFailed: false })
+    // The dry run compares the file's keys in the collation the table will get, through the
+    // schema user; without a database here, its session is a stub that knows no collation.
+    const tables = s.server.services.tables
+    vi.spyOn(tables, 'charset').mockResolvedValue({ schema: null, collation: null })
+    const session = {
+      engine: 'mariadb',
+      query: () => Promise.resolve([]),
+      execute: () => Promise.resolve({ rows: [], fields: [] }),
+      write: () => Promise.resolve({ affectedRows: 0, insertId: 0 }),
+    } as unknown as TargetSession
+    vi.spyOn(tables, 'withSchemaUser').mockImplementation((_connectionId, work) => work(session))
     const started = await s.admin.send('POST', `/internal/imports/${job.id}/dry-run`)
     expect(started.statusCode, started.body).toBe(200)
     await s.server.services.imports.settled()
