@@ -826,7 +826,11 @@ export class TableAccessService {
     this.changed(access.connectionId)
   }
 
-  async createRelation(actor: Actor, input: z.infer<typeof relationInput>): Promise<Relation> {
+  /**
+   * Checks a virtual relation against the schema and the keys of the target; throws field
+   * errors. Duplicates are left to the caller.
+   */
+  async checkRelation(input: z.infer<typeof relationInput>): Promise<CatalogSnapshot> {
     await this.deps.connections.get(input.connectionId)
     const snapshot = await this.snapshot(input.connectionId)
     const objects = new Map(snapshot.objects.map((object) => [object.name, object]))
@@ -860,6 +864,11 @@ export class TableAccessService {
     ) {
       throw fieldError('sourceColumn', 'not_unique')
     }
+    return snapshot
+  }
+
+  async createRelation(actor: Actor, input: z.infer<typeof relationInput>): Promise<Relation> {
+    const snapshot = await this.checkRelation(input)
     const existing = await this.resolvedRelations(input.connectionId, snapshot)
     if (
       existing.some(

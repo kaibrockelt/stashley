@@ -3,6 +3,7 @@
 export * from './access/index.ts'
 export * from './features.ts'
 export * from './api/accounts.ts'
+export * from './api/config-transfer.ts'
 export * from './api/connections.ts'
 export * from './api/errors.ts'
 export * from './api/imports.ts'

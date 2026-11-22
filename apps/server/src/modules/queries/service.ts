@@ -268,8 +268,11 @@ export class QueriesService {
     connectionId: string,
     sql: string,
     definitions: readonly QueryParameter[],
+    /** Instance variables that are about to exist, e.g. from the same configuration import. */
+    pendingVariables: Iterable<string> = [],
   ): Promise<{ analysis: QueryAnalysis; executable: Executable }> {
-    const ctx = await this.guardContext(connectionId)
+    const base = await this.guardContext(connectionId)
+    const ctx = { ...base, variables: new Set([...base.variables, ...pendingVariables]) }
     let guarded
     try {
       guarded = guardSql(sql, ctx)

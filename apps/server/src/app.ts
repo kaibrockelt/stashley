@@ -20,6 +20,7 @@ import { registerAdminRoutes } from './modules/users/routes.ts'
 import { registerApiAdminRoutes } from './modules/public-api/admin-routes.ts'
 import { registerPublicApi } from './modules/public-api/routes.ts'
 import { registerImportRoutes } from './modules/imports/routes.ts'
+import { registerConfigTransferRoutes } from './modules/config-transfer/routes.ts'
 import { createServices, type ServiceOverrides, type Services } from './services.ts'
 import { registerSecurity } from './platform/http/security.ts'
 import {
@@ -134,6 +135,7 @@ export async function createServer(
     tokens: services.apiTokens,
     docs: services.apiDocs,
   })
+  registerConfigTransferRoutes(app, { transfer: services.configTransfer })
   registerImportRoutes(app, {
     imports: services.imports,
     tables: services.tables,

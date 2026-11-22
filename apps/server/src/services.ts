@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
+import { ConfigTransferService } from './modules/config-transfer/service.ts'
 import type { FastifyBaseLogger } from 'fastify'
 import type { AppConfig } from './config/env.ts'
 import type { Metastore } from './metastore/db.ts'
@@ -188,8 +189,19 @@ export function createServices(
     log,
     clock,
   })
+  const configTransfer = new ConfigTransferService({
+    db,
+    audit,
+    events,
+    tableAccess,
+    queries,
+    variables,
+    appVersion: process.env.STASHLEY_VERSION ?? 'dev',
+    clock,
+  })
   return {
     access,
+    configTransfer,
     apiEndpoints,
     apiTokens,
     apiDocs,

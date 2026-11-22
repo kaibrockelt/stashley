@@ -111,7 +111,8 @@ export class VariablesService {
     return result.value
   }
 
-  private changed(name: string): void {
+  /** Drops the held values after a change written elsewhere (the configuration import). */
+  changed(name: string): void {
     this.values = undefined
     this.deps.events.emit('variable.changed', { name })
   }
