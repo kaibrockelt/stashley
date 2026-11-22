@@ -155,6 +155,7 @@ export function createServices(
   })
   tableAccess.addDependent(apiEndpoints)
   catalog.addImpactProvider((connectionId, diff) => apiEndpoints.impact(connectionId, diff))
+  catalog.addTypeChangeHook((trx, change) => apiEndpoints.typeChanged(trx, change))
   const apiTokens = new ApiTokens({ db, audit, events, clock })
   const apiDocs = new ApiDocs({ access, endpoints: apiEndpoints, baseUrl: base, events })
   const tables = new TableCreator({ connections, pools, catalog, tableAccess, audit, log })

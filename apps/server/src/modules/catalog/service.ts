@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { createHash } from 'node:crypto'
 import type {
+  ChangeConsequence,
+  TableOp,
   CatalogObject,
   CatalogSnapshot,
   ImpactItem,
@@ -40,6 +42,21 @@ export interface CatalogDeps {
 /** Adds affected items of other modules (queries, components) to a schema impact report. */
 export type ImpactProvider = (connectionId: string, diff: SchemaDiff) => Promise<ImpactItem[]>
 
+/**
+ * Follows a table access whose object changed type (table ↔ view) in the catalog's own
+ * transaction: modules built on table access drop what the new form cannot serve, so raising
+ * the ceiling later reopens nothing (E15). Returns what it took away, for the audit entry.
+ */
+export type TypeChangeHook = (
+  trx: Kysely<Database>,
+  change: {
+    tableAccessId: string
+    ops: TableOp[]
+    objectType: 'table' | 'view'
+    keyColumn: string | null
+  },
+) => Promise<ChangeConsequence[]>
+
 /** The failure code of a schema read: the read user's connection failure, or `failed`. */
 function failureOf(error: unknown): string {
   if (error instanceof AppError && error.code === 'connection_failed') {
@@ -58,6 +75,7 @@ export class CatalogService {
   private readonly deps: CatalogDeps
   private readonly clock: Clock
   private readonly impactProviders: ImpactProvider[] = []
+  private readonly typeChangeHooks: TypeChangeHook[] = []
 
   constructor(deps: CatalogDeps) {
     this.deps = deps
@@ -66,6 +84,10 @@ export class CatalogService {
 
   addImpactProvider(provider: ImpactProvider): void {
     this.impactProviders.push(provider)
+  }
+
+  addTypeChangeHook(hook: TypeChangeHook): void {
+    this.typeChangeHooks.push(hook)
   }
 
   private async latest(connectionId: string): Promise<SchemaSnapshotsTable | undefined> {
@@ -271,6 +293,17 @@ export class CatalogService {
         updated_at: this.clock(),
       }
       await db.updateTable('table_access').set(next).where('id', '=', access.id).execute()
+      const consequences: ChangeConsequence[] = []
+      for (const hook of this.typeChangeHooks) {
+        consequences.push(
+          ...(await hook(db, {
+            tableAccessId: access.id,
+            ops: maskToOps(next.ops),
+            objectType: next.object_type,
+            keyColumn: next.key_column,
+          })),
+        )
+      }
       audit.push({
         action: 'table_access.type_changed',
         subject: { kind: 'table_access', id: access.id, label: access.object_name },
@@ -283,6 +316,7 @@ export class CatalogService {
             keyColumn: [access.key_column, next.key_column],
           }),
         },
+        ...(consequences.length > 0 && { details: { consequences } }),
       })
     }
     return audit

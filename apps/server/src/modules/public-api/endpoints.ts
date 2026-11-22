@@ -8,6 +8,7 @@ import type {
   ImpactItem,
   SchemaDiff,
   TableAccess,
+  TableOp,
   apiEndpointsUpdate,
 } from '@stashley/shared'
 import {
@@ -127,9 +128,10 @@ export class ApiEndpoints implements TableAccessDependent {
   private async grantsOf(
     tableAccessId: string,
     operations: readonly ApiOperation[],
+    db: Kysely<Database> = this.deps.db,
   ): Promise<ChangeConsequence[]> {
     if (operations.length === 0) return []
-    const rows = await this.deps.db
+    const rows = await db
       .selectFrom('api_token_grants')
       .innerJoin('api_tokens', 'api_tokens.id', 'api_token_grants.token_id')
       .select(['api_tokens.id', 'api_tokens.name', 'api_token_grants.operation'])
@@ -343,6 +345,37 @@ export class ApiEndpoints implements TableAccessDependent {
     if (lost.length > 0 || change.apiResource !== before.apiResource) {
       this.deps.events.emit('api.changed', {})
     }
+  }
+
+  /**
+   * A table access whose object changed type in the catalog (a table replaced by a view):
+   * the endpoints it can no longer serve go with their token grants, in the catalog's
+   * transaction, so a later ceiling raise reopens nothing (E15).
+   */
+  async typeChanged(
+    trx: Kysely<Database>,
+    change: {
+      tableAccessId: string
+      ops: TableOp[]
+      objectType: 'table' | 'view'
+      keyColumn: string | null
+    },
+  ): Promise<ChangeConsequence[]> {
+    const enabled = await this.enabledOf(change.tableAccessId, trx)
+    const available = apiOperationsFor({
+      objectType: change.objectType,
+      keyColumn: change.keyColumn,
+      ceiling: change.ops,
+    })
+    const lost = enabled.filter((operation) => !available.includes(operation))
+    if (lost.length === 0) return []
+    const consequences: ChangeConsequence[] = [
+      ...lost.map((operation) => ({ kind: 'api_endpoint_removed' as const, operation })),
+      ...(await this.grantsOf(change.tableAccessId, lost, trx)),
+    ]
+    await this.remove(trx, change.tableAccessId, lost)
+    this.deps.events.emit('api.changed', {})
+    return consequences
   }
 
   /**

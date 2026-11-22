@@ -589,11 +589,28 @@ describe.skipIf(targets.length === 0).each(targets)('target database $name', ({ 
         ops: ['read', 'create', 'update', 'delete'],
         keyColumn: null,
         displayTemplate: null,
-        apiResource: null,
+        apiResource: 'swaps',
         mcpEnabled: false,
         exclusions: [],
       })
       expect(exposed.statusCode).toBe(201)
+      const accessId = exposed.json<TableAccess>().id
+      // Open endpoints and a token grant on create: the view cannot serve it, so both go.
+      const opened = await admin.send('PUT', `/internal/admin/api/endpoints/${accessId}`, {
+        operations: ['list', 'create'],
+      })
+      expect(opened.statusCode, opened.body).toBe(200)
+      const token = await admin.send('POST', '/internal/admin/api/tokens', {
+        name: 'Tausch',
+        expiresAt: null,
+        ipAllowlist: [],
+        rateLimitPerMinute: 60,
+        grants: [
+          { tableAccessId: accessId, operation: 'list' },
+          { tableAccessId: accessId, operation: 'create' },
+        ],
+      })
+      expect(token.statusCode, token.body).toBe(201)
       await root.query('DROP TABLE wanderverein.tausch')
       await root.query(
         'CREATE VIEW wanderverein.tausch AS SELECT id, CAST(startnummer AS CHAR) AS x FROM wanderverein.anmeldung',
@@ -627,6 +644,16 @@ describe.skipIf(targets.length === 0).each(targets)('target database $name', ({ 
           ops: [['read', 'create', 'update', 'delete'], ['read']],
         },
       ])
+      const endpoints = (await admin.request('GET', '/internal/admin/api/endpoints')).json<{
+        data: { tableAccessId: string; enabled: string[] }[]
+      }>().data
+      expect(endpoints.find((entry) => entry.tableAccessId === accessId)?.enabled).toEqual(['list'])
+      const tokens = (await admin.request('GET', '/internal/admin/api/tokens')).json<{
+        data: { name: string; grants: { operation: string }[] }[]
+      }>().data
+      expect(
+        tokens.find((entry) => entry.name === 'Tausch')?.grants.map((grant) => grant.operation),
+      ).toEqual(['list'])
     } finally {
       await root.query('DROP VIEW IF EXISTS wanderverein.tausch')
       await root.query('DROP TABLE IF EXISTS wanderverein.tausch')
