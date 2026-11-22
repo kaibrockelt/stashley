@@ -1,8 +1,8 @@
 # Progress
 
-**Current milestone:** M9 – Demo scenario and acceptance (in progress); M8 moved after the MVP (D17)
+**Current milestone:** M9 – Demo scenario and acceptance (in review); M8 moved after the MVP (D17)
 
-**Next step:** Implement M9 along the approved plan (log 2026-11-22).
+**Next step:** Final review of M9 in a fresh session (high effort); then push, let CI run the e2e job, rename the changelog's `[Unreleased]` to `[0.1.0]` and tag `v0.1.0`.
 
 **Recommended model strength:** M9: medium (final review: high).
 
@@ -21,31 +21,31 @@ The SQL validation of M4 is tested externally; that does not block M6.
 | M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | Done |
 | M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High (new tables, review: extra high) | Done |
 | M8 | MCP server: authorization server, metadata, tools, MCP exposure, privacy notice, call log | High (authorization server and its review: extra high) | After the MVP (D17) |
-| M9 | Demo scenario and acceptance: seed script, configuration export and import, end-to-end suite, accessibility, performance, documentation, release pipeline; MCP controls hidden until M8 (D17) | Medium (final review: high) | In progress |
+| M9 | Demo scenario and acceptance: seed script, configuration export and import, end-to-end suite, accessibility, performance, documentation, release pipeline; MCP controls hidden until M8 (D17) | Medium (final review: high) | In review |
 
 Status values: open, in progress, in review, done, after the MVP.
 
 ## Acceptance criteria
 
 - [x] `docker compose up` with values from `.env.example` installs the instance, and the first admin can sign in.
-- [x] The admin connects the demo database, gets a warning for the deliberately over-privileged user, and grants table access with the demo ceilings. (Schema and users exist; demo data and `scripts/seed-demo.sh` follow in M9.)
-- [ ] The admin creates roles and test accounts. A first OIDC sign-in shows up as pending and gets approved.
-- [ ] A manager builds every demo page through the UI alone, checks each one with preview as role, and publishes it.
-- [ ] Every test account sees exactly the pages and components of its roles. Components without rights are absent from both the HTML and the API responses.
-- [ ] Direct API calls outside a user's rights are rejected: a foreign component ID, extra payload fields, manipulated parameters. One hotel's front desk cannot read or change the other hotel's bookings, even with a manipulated ID. (Met for reads in M4, through the API; changing follows with the write path in M6, the end-to-end test in M9.)
-- [x] A manager cannot grant rights above a ceiling. Saving SQL with `UPDATE`, `DROP`, multiple statements or tables without table access is rejected. (Through the API; the editor UI follows in M5.)
-- [ ] After the cashier records a payment, the payment status on the check-in and overview pages updates immediately, without waiting for the cache to expire.
-- [ ] A station helper records a stamp on a 375 px phone in under 10 s. A duplicate stamp is rejected with a clear message.
-- [ ] The route status page shows the 3 overdue participants with their phone numbers.
-- [ ] The awards page lists exactly the 12 medal candidates. After `current_event_id` is switched to the 2025 event, every event-related page shows 2025 data.
-- [ ] Every write appears in the audit log with its old and new values.
-- [x] The admin enables `list`, `get` and `create` for payments and creates a token with `create` only. A write through the API appears in the audit log, and `list` with that token returns `403`. (M7, through the UI on the test stand; the end-to-end suite follows in M9.)
-- [x] The admin creates a new table from a CSV file encoded in Windows-1252, with semicolons and German dates, adding an `id` column. After the ceiling is adjusted, a second import upserts existing rows by `email`, and its dry run reports the faulty rows beforehand. (M7, through the UI on the test stand and in the integration tests; the end-to-end suite follows in M9.)
+- [x] The admin connects the demo database, gets a warning for the deliberately over-privileged user, and grants table access with the demo ceilings. (M9: through the UI in e2e spec 02, with the demo data of `scripts/seed-demo.sh`.)
+- [x] The admin creates roles and test accounts. A first OIDC sign-in shows up as pending and gets approved. (e2e spec 04.)
+- [ ] A manager builds every demo page through the UI alone, checks each one with preview as role, and publishes it. (M9 in part: e2e spec 17 builds four pages through the UI covering every block type and mechanism — query tables, forms with hidden defaults from a variable and a fixed value, a table page with a base filter over a relation and inline editing, metrics and charts from the suggested setup, a page filter feeding a form — and previews and publishes each; all eleven pages come in through the demo configuration import. For the final review to decide.)
+- [x] Every test account sees exactly the pages and components of its roles. Components without rights are absent from both the HTML and the API responses. (e2e spec 05.)
+- [x] Direct API calls outside a user's rights are rejected: a foreign component ID, extra payload fields, manipulated parameters. One hotel's front desk cannot read or change the other hotel's bookings, even with a manipulated ID. (e2e spec 06.)
+- [x] A manager cannot grant rights above a ceiling. Saving SQL with `UPDATE`, `DROP`, multiple statements or tables without table access is rejected. (e2e spec 07, in the editor and through the API.)
+- [x] After the cashier records a payment, the payment status on the check-in and overview pages updates immediately, without waiting for the cache to expire. (e2e spec 08.)
+- [x] A station helper records a stamp on a 375 px phone in under 10 s. A duplicate stamp is rejected with a clear message. (e2e spec 09, project `mobile`.)
+- [x] The route status page shows the 3 overdue participants with their phone numbers. (e2e spec 10.)
+- [x] The awards page lists exactly the 12 medal candidates. After `current_event_id` is switched to the 2025 event, every event-related page shows 2025 data. (e2e spec 11.)
+- [x] Every write appears in the audit log with its old and new values. (e2e spec 12.)
+- [x] The admin enables `list`, `get` and `create` for payments and creates a token with `create` only. A write through the API appears in the audit log, and `list` with that token returns `403`. (M7; e2e spec 13.)
+- [x] The admin creates a new table from a CSV file encoded in Windows-1252, with semicolons and German dates, adding an `id` column. After the ceiling is adjusted, a second import upserts existing rows by `email`, and its dry run reports the faulty rows beforehand. (M7; e2e spec 14.)
 - [ ] (After the MVP, D17.) The cashier connects an MCP client through OAuth and asks which registrations are still unpaid. The privacy notice appears before the connection and must be confirmed. The assistant receives only components of the cashier page whose tables are exposed to MCP. An admin account cannot set up MCP access.
-- [ ] The configuration is exported and imported into a second instance. After the connection is mapped, the demo works there unchanged.
+- [x] The configuration is exported and imported into a second instance. After the connection is mapped, the demo works there unchanged. (e2e spec 15.)
 - [x] `scripts/build.sh --platform linux/amd64,linux/arm64` builds both architectures.
-- [ ] The Playwright end-to-end suite covers all criteria above and runs in CI against the demo database.
-- [ ] The UI is complete in English and German, with UI copy written specifically for the product.
+- [x] The Playwright end-to-end suite covers all criteria above and runs in CI against the demo database. (34 tests green locally; the CI job `e2e` has not run yet, it needs a push.)
+- [x] The UI is complete in English and German, with UI copy written specifically for the product. (i18n check; e2e spec 16.)
 
 ## Deviations from the specification
 
@@ -417,3 +417,25 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Tools that run in containers (Playwright, mock OIDC provider, k6) are fine as long as they are removed completely afterwards. Load tests run on demand only.
   - The MVP is released as `0.1.0`; the operator tags and pushes.
   - The provisional icon (`stashley-icon.svg`) is used as delivered; smaller variants may follow from the operator.
+- 2026-11-22: M9 implemented; in review.
+  - MCP controls hidden behind `features.mcp` (D17): the table access MCP switch and MCP-only exclusion, the badge, the page setting and the description hint. Stored values are kept.
+  - Demo data: new package `@stashley/demo` with the schema and users (moved from the server's fixtures) and a seeded generator. 13 events, 420 people from 23 countries, 260 registrations in 2026 (8 cancelled), 96 hotel bookings in 110 rooms, payments 214/15/23, 205 checked in, 61 at the finish, 3 overdue, 12 medal candidates, 3 earlier awards; the event day is set around now as 14:30. Times are stored as UTC, so the demo connection uses the time zone UTC. A verification query checks the figures through the views. `scripts/seed-demo.sh` starts or reuses a MariaDB container and prints the connection details.
+  - Demo configuration (`node packages/demo/src/cli.ts config`): roles, `current_event_id`, the relation into `v_zahlungsstatus`, display templates, 16 queries and all eleven pages with stable IDs.
+  - Configuration export and import (§24), admins only: preview of new, changed, unchanged and conflicting items; conflicts block and are resolved by hand; one transaction and one audit event; a fingerprint guards against changes since the preview.
+  - Permission overview page for admins (§8.7).
+  - Provisional app icon: optimized to 83 KB (30 KB gzip), static file outside the bundle, favicon, touch icons, manifest; an about dialog with version (signed-in users only), license and source code.
+  - End-to-end suite (`e2e/`, `scripts/test-e2e.sh`): two instances, the demo database, mock-oauth2-server and Playwright 1.65.1 in Docker, one spec per acceptance criterion plus UI page building and first render on 4G; axe (WCAG 2.2 AA, serious and critical) on every visited page; CI job `e2e`. All containers, networks and volumes are removed afterwards.
+  - Load test (`scripts/load-test.sh`, k6 in Docker): 50 users against an instance limited to 2 vCPU and 2 GB for 90 s, 26,116 requests, 0 % failed, P95 41 ms for cached and for live reads (thresholds 300 ms and 1 s).
+  - Documentation site (VitePress, `docs/`): admin guide with the `email_verified` note, manager guide, REST API with a reference generated from the demo instance's OpenAPI document, demo, architecture, changelog; `docs.yml` publishes it to GitHub Pages.
+  - `release.yml`: tag `vX.Y.Z` → multi-arch image on ghcr.io with SBOM and provenance attestations, keyless cosign signature, GitHub release from the changelog section; `latest` only for tags on main, no major tag for 0.x. actionlint is clean.
+  - Found and fixed on the way:
+    - MariaDB failed prepared statements on some views with error 1356 when they ran a second time (`v_medaille` after switching the event); such reads now drop the statement and run once more.
+    - A foreign key selection with a default from a page filter opened its option list by itself in the focused field and hid the rest of the page from screen readers; typing the same exact start number again after the form cleared was not taken; form fields defaulted from a page filter did not follow a filter chosen after loading.
+    - Contrast of warning text, keyboard access to sideways-scrolling tables, names of the editor's edit and delete buttons.
+    - Static files went out uncompressed; the build now writes Brotli and gzip variants, and a page link loads session, messages, page chunk, navigation and page side by side. Dashboards and table pages now render in under 2 s on Fast 4G (2.45 s before).
+    - pnpm 12 ignores `onlyBuiltDependencies`; the workspace uses `allowBuilds`.
+    - Test fixtures created views with mysql2's default collation, which clashes with Stashley's sessions (error 1267); they now use the server default like the seed script.
+  - Verified: `pnpm check` green (632 server, 116 shared, 6 demo and 67 web unit tests); 328 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7, among them the demo data, the configuration transfer between two instances and the whole demo scenario; 34 end-to-end tests; the documentation site builds; initial load 194.5 KB gzip.
+  - Checked in the browser on the rebuilt test stand: configuration page, permission overview, about dialog, the new icon, and the overview with the demo data. The stand's database now holds the demo data (`scripts/seed-demo.sh --name stashley-test-db`); the stand's configuration is unchanged: its connection keeps the time zone Europe/Berlin and `current_event_id` is 1 (2012 in the new data). For the 2026 scenario set the time zone to UTC and the variable to 13, or import the demo configuration after removing the M5 test pages, roles and queries that clash with it by name.
+  - Not verified: the CI jobs `e2e`, `docs.yml` and `release.yml` (they need a push and a tag); the load test is not in CI and runs on demand.
+  - Open for the final review: the manager criterion is met for four representative pages through the UI, the other seven come from the configuration import.
