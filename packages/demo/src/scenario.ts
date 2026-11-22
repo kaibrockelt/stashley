@@ -496,6 +496,7 @@ function pages() {
         type: 'table',
         source: tableSource('anmeldung'),
         bindings: [],
+        settings: { formats: { offen: euro } },
         table: tableConfig({
           columns: [
             column('startnummer', 'startnummer', [], 'Startnr.'),
@@ -658,7 +659,7 @@ function pages() {
                 },
               }),
               input('betrag', 'betrag', { required: true, label: 'Betrag' }),
-              generatedDate('eingang', 'eingang_am', 'today', true),
+              { ...generatedDate('eingang', 'eingang_am', 'today', true), label: 'Eingang' },
               input('zweck', 'verwendungszweck', { label: 'Verwendungszweck' }),
               input('kommentar', 'kommentar', { widget: 'textarea', label: 'Kommentar' }),
             ],
@@ -1020,7 +1021,10 @@ function pages() {
                 hidden: true,
                 default: { kind: 'constant', value: 'medaille_10' },
               }),
-              generatedDate('uebergeben', 'uebergeben_am', 'now', true),
+              {
+                ...generatedDate('uebergeben', 'uebergeben_am', 'now', true),
+                label: 'Übergeben am',
+              },
             ],
             record: null,
             upsertKey: null,
