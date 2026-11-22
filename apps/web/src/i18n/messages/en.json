@@ -1303,5 +1303,10 @@
   "permissions.ops": "Operations",
   "permissions.all": "All",
   "permissions.deletedRole": "Deleted role",
-  "permissions.empty": "No published page grants access yet."
+  "permissions.empty": "No published page grants access yet.",
+  "about.action": "About",
+  "about.title": "About Stashley",
+  "about.version": "Version {version}",
+  "about.license": "Free software under the GNU Affero General Public License 3.0.",
+  "about.source": "Source code"
 }

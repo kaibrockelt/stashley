@@ -62,6 +62,8 @@ export interface SessionResponse {
     smtp: boolean
     /** Whether managers may create, rename and delete roles (D14). */
     managersCreateRoles: boolean
+    /** The running version; only for signed-in users. */
+    version: string | null
   }
 }
 

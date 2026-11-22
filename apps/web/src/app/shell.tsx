@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Link, Outlet } from '@tanstack/react-router'
-import type { ReactNode } from 'react'
-import { useUser } from '../api/session.ts'
-import { Logo } from '../brand/logo.tsx'
+import { useState, type ReactNode } from 'react'
+import { useSession, useUser } from '../api/session.ts'
+import { Logo, Mascot } from '../brand/logo.tsx'
 import { useSignOut } from '../features/auth/mfa.tsx'
 import { useNavigation } from '../features/workspace/api.ts'
 import { useT } from '../i18n/use-t.ts'
-import { Button } from '../ui/controls.tsx'
+import { Button, Dialog } from '../ui/controls.tsx'
 import styles from './shell.module.css'
 
 function NavLink(props: { to: string; children: ReactNode }) {
@@ -61,10 +61,34 @@ function WorkspaceNavigation() {
   )
 }
 
+/** Name, version, license and the source code, which the AGPL offers to every user. */
+function About(props: { onClose: () => void }) {
+  const t = useT()
+  const { instance } = useSession()
+  return (
+    <Dialog title={t('about.title')} isOpen onOpenChange={(open) => !open && props.onClose()}>
+      <div className={styles.about}>
+        <Mascot />
+        <p>{t('about.version', { version: instance.version ?? '' })}</p>
+        <p>{t('about.license')}</p>
+        <p>
+          <a href="https://github.com/kaibrockelt/stashley" target="_blank" rel="noreferrer">
+            {t('about.source')}
+          </a>
+        </p>
+      </div>
+      <div className={styles.aboutActions}>
+        <Button onPress={props.onClose}>{t('action.done')}</Button>
+      </div>
+    </Dialog>
+  )
+}
+
 export function Shell() {
   const t = useT()
   const user = useUser()
   const signOut = useSignOut()
+  const [about, setAbout] = useState(false)
   return (
     <div className={styles.shell}>
       <a href="#main" className={styles.skip}>
@@ -102,10 +126,14 @@ export function Shell() {
         </nav>
         <div className={styles.account}>
           <NavLink to="/profile">{user.displayName}</NavLink>
+          <Button variant="ghost" onPress={() => setAbout(true)}>
+            {t('about.action')}
+          </Button>
           <Button variant="ghost" onPress={signOut}>
             {t('action.signOut')}
           </Button>
         </div>
+        {about && <About onClose={() => setAbout(false)} />}
       </aside>
       <main id="main" className={styles.main} tabIndex={-1}>
         <Outlet />

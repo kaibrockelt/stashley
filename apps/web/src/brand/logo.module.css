@@ -10,16 +10,9 @@
 }
 
 .mark {
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
-  color: var(--color-accent);
-}
-
-.mark :global(svg),
-.mascot :global(svg) {
-  width: 100%;
-  height: 100%;
+  display: block;
+  width: 28px;
+  height: 28px;
 }
 
 .wordmark {
@@ -27,13 +20,7 @@
 }
 
 .mascot {
-  display: inline-flex;
-  width: 56px;
-  height: 56px;
-  color: var(--color-border);
-}
-
-.mark :global(.face),
-.mascot :global(.face) {
-  fill: var(--color-surface);
+  display: block;
+  width: 64px;
+  height: 64px;
 }

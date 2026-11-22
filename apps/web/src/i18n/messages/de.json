@@ -1303,5 +1303,10 @@
   "permissions.ops": "Operationen",
   "permissions.all": "Alle",
   "permissions.deletedRole": "Gelöschte Fachrolle",
-  "permissions.empty": "Noch keine veröffentlichte Seite gewährt Zugriff."
+  "permissions.empty": "Noch keine veröffentlichte Seite gewährt Zugriff.",
+  "about.action": "Info",
+  "about.title": "Über Stashley",
+  "about.version": "Version {version}",
+  "about.license": "Freie Software unter der GNU Affero General Public License 3.0.",
+  "about.source": "Quellcode"
 }

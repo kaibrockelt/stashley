@@ -72,6 +72,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
         providers,
         smtp: deps.mailer.enabled,
         managersCreateRoles: roles.enabled,
+        version: auth?.state === 'active' ? (process.env.STASHLEY_VERSION ?? 'dev') : null,
       },
     }
   })
