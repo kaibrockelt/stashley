@@ -289,6 +289,14 @@ const appRoutes = [
     }),
     createRoute({
       getParentRoute: () => adminLayout,
+      path: '/configuration',
+      component: lazyRouteComponent(
+        () => import('../features/admin/configuration.tsx'),
+        'ConfigurationPage',
+      ),
+    }),
+    createRoute({
+      getParentRoute: () => adminLayout,
       path: '/audit',
       component: lazyRouteComponent(() => import('../features/admin/audit.tsx'), 'AuditPage'),
     }),

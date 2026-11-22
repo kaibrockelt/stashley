@@ -94,6 +94,7 @@ export function Shell() {
               <NavLink to="/admin/users">{t('users.title')}</NavLink>
               <NavLink to="/admin/identity-providers">{t('providers.title')}</NavLink>
               <NavLink to="/admin/settings">{t('settings.title')}</NavLink>
+              <NavLink to="/admin/configuration">{t('config.title')}</NavLink>
               <NavLink to="/admin/audit">{t('audit.title')}</NavLink>
             </div>
           )}
