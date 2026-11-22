@@ -8,6 +8,7 @@ import * as m0004 from './0004_schema_check.ts'
 import * as m0005 from './0005_queries_pages.ts'
 import * as m0006 from './0006_table_lock.ts'
 import * as m0007 from './0007_public_api_imports.ts'
+import * as m0008 from './0008_deleted_page_slugs.ts'
 
 /** Registered statically so the server can be bundled; names sort in apply order. */
 export const migrations: Record<string, Migration> = {
@@ -18,4 +19,5 @@ export const migrations: Record<string, Migration> = {
   '0005_queries_pages': m0005,
   '0006_table_lock': m0006,
   '0007_public_api_imports': m0007,
+  '0008_deleted_page_slugs': m0008,
 }

@@ -560,9 +560,10 @@ export class PagesService {
 
   async remove(actor: Actor, id: string): Promise<void> {
     const row = await this.row(id)
+    // The address becomes free for new and imported pages; `~` never occurs in one.
     await this.deps.db
       .updateTable('pages')
-      .set({ archived_at: this.clock() })
+      .set({ archived_at: this.clock(), slug: `~${id}` })
       .where('id', '=', id)
       .execute()
     await this.deps.db
@@ -574,6 +575,7 @@ export class PagesService {
       action: 'page.deleted',
       subject: { kind: 'page', id, label: parseDocument(row.draft).title },
       pageId: id,
+      details: { slug: row.slug },
     })
     this.deps.events.emit('page.published', { pageId: id })
   }
