@@ -2,7 +2,7 @@
 
 **Current milestone:** M9 – Demo scenario and acceptance (in review); M8 moved after the MVP (D17)
 
-**Next step:** Final review of M9 in a fresh session (high effort); then push, let CI run the e2e job, rename the changelog's `[Unreleased]` to `[0.1.0]` and tag `v0.1.0`.
+**Next step:** Operator acceptance of M9 (the final review's findings are fixed); then push, let CI run the e2e job, rename the changelog's `[Unreleased]` to `[0.1.0]` and tag `v0.1.0`.
 
 **Recommended model strength:** M9: medium (final review: high).
 
@@ -30,7 +30,7 @@ Status values: open, in progress, in review, done, after the MVP.
 - [x] `docker compose up` with values from `.env.example` installs the instance, and the first admin can sign in.
 - [x] The admin connects the demo database, gets a warning for the deliberately over-privileged user, and grants table access with the demo ceilings. (M9: through the UI in e2e spec 02, with the demo data of `scripts/seed-demo.sh`.)
 - [x] The admin creates roles and test accounts. A first OIDC sign-in shows up as pending and gets approved. (e2e spec 04.)
-- [ ] A manager builds every demo page through the UI alone, checks each one with preview as role, and publishes it. (M9 in part: e2e spec 17 builds four pages through the UI covering every block type and mechanism — query tables, forms with hidden defaults from a variable and a fixed value, a table page with a base filter over a relation and inline editing, metrics and charts from the suggested setup, a page filter feeding a form — and previews and publishes each; all eleven pages come in through the demo configuration import. For the final review to decide.)
+- [x] A manager builds every demo page through the UI alone, checks each one with preview as role, and publishes it. (Deviation, see below: e2e spec 17 builds four pages through the UI covering every block type and mechanism — query tables, forms with hidden defaults from a variable and a fixed value, a table page with a base filter over a relation and inline editing, metrics and charts from the suggested setup, a page filter feeding a form — and previews and publishes each; all eleven pages come in through the demo configuration import.)
 - [x] Every test account sees exactly the pages and components of its roles. Components without rights are absent from both the HTML and the API responses. (e2e spec 05.)
 - [x] Direct API calls outside a user's rights are rejected: a foreign component ID, extra payload fields, manipulated parameters. One hotel's front desk cannot read or change the other hotel's bookings, even with a manipulated ID. (e2e spec 06.)
 - [x] A manager cannot grant rights above a ceiling. Saving SQL with `UPDATE`, `DROP`, multiple statements or tables without table access is rejected. (e2e spec 07, in the editor and through the API.)
@@ -48,6 +48,8 @@ Status values: open, in progress, in review, done, after the MVP.
 - [x] The UI is complete in English and German, with UI copy written specifically for the product. (i18n check; e2e spec 16.)
 
 ## Deviations from the specification
+
+- **Manager criterion, end-to-end coverage (M9, accepted in the final review 2026-11-23):** the suite builds four of the eleven demo pages through the UI (spec 17); together they use every block type and every mechanism the other seven use. The other seven come in through the configuration import. Building all eleven by clicking would add an estimated 10 to 15 minutes and much selector upkeep without testing anything new. The operator checks the rest by building one of the seven by hand on the test stand.
 
 D1–D12 approved on 2026-11-12, D13–D16 on 2026-11-14, D17 on 2026-11-22. Rationale for D1–D12 for each is in [`docs/architecture.md` §28](docs/architecture.md#28-decisions-requiring-approval).
 
@@ -440,3 +442,12 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Checked in the browser on the rebuilt test stand: configuration page, permission overview, about dialog, the new icon, and the overview with the demo data. The stand's database now holds the demo data (`scripts/seed-demo.sh --name stashley-test-db`); the stand's configuration is unchanged: its connection keeps the time zone Europe/Berlin and `current_event_id` is 1 (2012 in the new data). For the 2026 scenario set the time zone to UTC and the variable to 13, or import the demo configuration after removing the M5 test pages, roles and queries that clash with it by name.
   - Not verified: the CI jobs `e2e`, `docs.yml` and `release.yml` (they need a push and a tag); the load test is not in CI and runs on demand.
   - Open for the final review: the manager criterion is met for four representative pages through the UI, the other seven come from the configuration import.
+- 2026-11-23: M9 final review: 1 blocking finding, 5 should-fix, 12 nice-to-have, and the manager criterion to decide. The import cannot raise rights above the target's ceilings (the runtime clips every grant to them); the findings concern completeness, concurrency and usability. The operator approved every fix as recommended and accepted the manager criterion as a deviation.
+  - B1 and S4: the preview compiles every page against the target, with the file's relations, display templates, query versions and roles in place. Columns or relations missing or excluded there block as `column_missing` (the operator's M9 decision); other errors, such as grants above a lower ceiling, are notes that do not block.
+  - S1: a page deleted on the target comes back instead of blocking every later import of it.
+  - S2: the fingerprint holds the target state of every item, every update is guarded by it, and a change or constraint clash since the preview answers `409 preview_outdated`; positions of new items are taken in the transaction.
+  - S3: IDs, names, slugs, relations and templates a file has twice are `duplicate` conflicts instead of a 500.
+  - S5: `release.yml` runs the check stage and the critical Trivy scan before it publishes; `latest` and the GitHub release mark only for final versions (0.1.0 is a full release), without the unused `attestations` permission.
+  - Nice-to-have: old and new values in the `config.imported` audit event; builder versions that give other SQL on the target are noted; published documents of another page type and links to missing pages are conflicts; the admin check runs before the body is read; scrolling tables are named regions and follow replaced content; `docs.yml` triggers on `docs/` only and spec 13 fails when the documentation's OpenAPI example is out of date; e2e, load test and seed script images pinned by digest (Dependabot for the compose file).
+  - Noted for M8: the import keeps a page's `mcp.available` from the file; M8 should reset it on import or show it as its own item in the preview, so a file cannot expose pages to AI assistants unnoticed.
+  - Verified: `pnpm check` green (636 server, 116 shared, 6 demo and 67 web unit tests); 336 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7, among them hidden columns and a lower ceiling on the target; 34 end-to-end tests. All test containers, networks and volumes are removed. actionlint did not run (its image is not pinned); the workflow files parse.
