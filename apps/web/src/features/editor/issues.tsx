@@ -52,6 +52,7 @@ const issueTexts: Record<string, MessageId> = {
   record_missing: 'issue.record_missing',
   inline_without_update: 'issue.inline_without_update',
   invalid_expression: 'issue.invalid_expression',
+  builder_differs: 'issue.builder_differs',
 }
 
 export function useIssueText(): (issue: Pick<PageIssue, 'code' | 'params'>) => string {

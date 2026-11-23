@@ -15,6 +15,7 @@ import { useErrorText } from '../../i18n/errors.ts'
 import { useFormatDateTime } from '../../i18n/format.ts'
 import type { MessageId } from '../../i18n/locale.ts'
 import { useT } from '../../i18n/use-t.ts'
+import { useIssueText } from '../editor/issues.tsx'
 import {
   Actions,
   Badge,
@@ -62,6 +63,8 @@ const conflictLabels: Record<ConfigConflictCode, MessageId> = {
   relation_differs: 'config.conflict.relationDiffers',
   template_invalid: 'config.conflict.templateInvalid',
   reference_missing: 'config.conflict.referenceMissing',
+  column_missing: 'config.conflict.columnMissing',
+  duplicate: 'config.conflict.duplicate',
 }
 
 const unmapped = '__none'
@@ -103,6 +106,7 @@ function ImportSection() {
   const t = useT()
   const errors = useErrorText()
   const formatDate = useFormatDateTime()
+  const issueText = useIssueText()
   const client = useQueryClient()
   const input = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<{ name: string; content: ConfigFile } | null>(null)
@@ -244,14 +248,17 @@ function ImportSection() {
         <>
           <p aria-live="polite">{t('config.import.summary', plan.counts)}</p>
           {plan.counts.conflict > 0 && <Notice tone="info">{t('config.import.blocked')}</Notice>}
-          <ScrollArea>
+          {plan.items.some((item) => item.issues !== undefined) && (
+            <Notice tone="info">{t('config.import.issues')}</Notice>
+          )}
+          <ScrollArea label={t('config.import.title')}>
             <table className={table.table}>
               <thead>
                 <tr>
                   <th scope="col">{t('config.column.kind')}</th>
                   <th scope="col">{t('config.column.item')}</th>
                   <th scope="col">{t('config.column.status')}</th>
-                  <th scope="col">{t('config.column.conflicts')}</th>
+                  <th scope="col">{t('config.column.notes')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -263,6 +270,9 @@ function ImportSection() {
                       <Badge tone={statusLabels[item.status].tone}>
                         {t(statusLabels[item.status].id)}
                       </Badge>
+                      {item.restored === true && (
+                        <span className={table.muted}> {t('config.status.restored')}</span>
+                      )}
                     </td>
                     <td>
                       {item.conflicts.map((conflict) => (
@@ -271,6 +281,12 @@ function ImportSection() {
                           {conflict.detail !== undefined && (
                             <span className={table.mono}> {conflict.detail}</span>
                           )}
+                        </div>
+                      ))}
+                      {item.issues?.map((issue) => (
+                        <div key={`${issue.code}:${issue.path}`} className={table.muted}>
+                          {issueText(issue)}
+                          <span className={table.mono}> {issue.path}</span>
                         </div>
                       ))}
                     </td>

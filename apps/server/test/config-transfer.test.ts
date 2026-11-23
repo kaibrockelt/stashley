@@ -314,5 +314,56 @@ describe.skipIf(targets.length === 0).each(targets)(
       ])
       expect(conflicts('query')).toEqual([{ code: 'version_differs', detail: '2' }])
     })
+
+    const putAccess = async (name: string, changes: Partial<TableAccess>) => {
+      const current = (
+        await b.admin.request('GET', `/internal/admin/table-access?connectionId=${b.connection.id}`)
+      )
+        .json<{ data: TableAccess[] }>()
+        .data.find((entry) => entry.objectName === name) as TableAccess
+      const merged = { ...current, ...changes }
+      const response = await b.admin.send('PUT', `/internal/admin/table-access/${current.id}`, {
+        ops: merged.ops,
+        keyColumn: merged.keyColumn,
+        displayTemplate: merged.displayTemplate,
+        apiResource: merged.apiResource,
+        mcpEnabled: merged.mcpEnabled,
+        exclusions: merged.exclusions,
+      })
+      expect(response.statusCode, JSON.stringify(response.json())).toBe(200)
+    }
+
+    it('blocks a page whose columns are hidden on the target', async () => {
+      const connections = { Wanderverein: b.connection.id }
+      await putAccess('hotelbuchung', { exclusions: [{ column: 'anreise', scope: 'all' }] })
+      try {
+        const plan = (await preview(b, file, connections)).json<ConfigImportPlan>()
+        const page = plan.items.find((item) => item.kind === 'page')
+        expect(page?.status).toBe('conflict')
+        expect(page?.conflicts.map((conflict) => conflict.code)).toContain('column_missing')
+        expect(JSON.stringify(page?.conflicts)).toContain('anreise')
+      } finally {
+        await putAccess('hotelbuchung', { exclusions: [] })
+      }
+    })
+
+    it('shows rights above a lower ceiling on the target without blocking', async () => {
+      const connections = { Wanderverein: b.connection.id }
+      const changed = structuredClone(file)
+      const page = changed.pages[0] as ConfigFile['pages'][number]
+      for (const document of [page.draft, page.published]) {
+        const grant = document?.access.grants[0]
+        if (grant !== undefined) grant.ops = ['read', 'delete']
+      }
+      await putAccess('hotelbuchung', { ops: ['read', 'create', 'update'] })
+      try {
+        const plan = (await preview(b, changed, connections)).json<ConfigImportPlan>()
+        const item = plan.items.find((entry) => entry.kind === 'page')
+        expect(item?.status).toBe('changed')
+        expect(item?.issues?.map((issue) => issue.code)).toContain('exceeds_ceiling')
+      } finally {
+        await putAccess('hotelbuchung', { ops: ['read', 'create', 'update', 'delete'] })
+      }
+    })
   },
 )

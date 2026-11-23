@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { ConfigFile, ConfigImportPlan, Role } from '@stashley/shared'
+import type { ConfigFile, ConfigImportPlan, PageDetail, Role } from '@stashley/shared'
+import { v7 as uuidv7 } from 'uuid'
 import { describe, expect, it } from 'vitest'
 import { createUser, problem, setupServer } from '../../test/setup.ts'
 
@@ -20,6 +21,13 @@ describe('configuration transfer', () => {
         }),
       ).code,
     ).toBe('forbidden')
+    // Refused before the body is read: a body above the limit is not even measured.
+    const large = await manager.send('POST', '/internal/admin/config/import', {
+      file: { padding: 'x'.repeat(21 * 1024 * 1024) },
+      connections: {},
+      fingerprint: '0'.repeat(64),
+    })
+    expect(problem(large).code).toBe('forbidden')
   })
 
   it('rejects files of another format', async () => {
@@ -97,5 +105,97 @@ describe('configuration transfer', () => {
     expect(variables.data).toEqual([
       expect.objectContaining({ name: 'current_event_id', value: 13 }),
     ])
+  })
+
+  const importFile = async (
+    s: Awaited<ReturnType<typeof setupServer>>,
+    file: ConfigFile,
+    fingerprint?: string,
+  ) => {
+    const plan = (
+      await s.admin.send('POST', '/internal/admin/config/import/preview', { file, connections: {} })
+    ).json<ConfigImportPlan>()
+    const applied = await s.admin.send('POST', '/internal/admin/config/import', {
+      file,
+      connections: {},
+      fingerprint: fingerprint ?? plan.fingerprint,
+    })
+    return { plan, applied }
+  }
+
+  it('reports what a file has twice instead of failing', async () => {
+    const s = await setupServer()
+    const file = (await s.admin.request('GET', '/internal/admin/config/export')).json<ConfigFile>()
+    file.roles = [
+      { id: uuidv7(), name: 'Kasse', description: '', homePageId: null },
+      { id: uuidv7(), name: 'kasse', description: '', homePageId: null },
+    ]
+    const { plan, applied } = await importFile(s, file)
+    expect(plan.counts.conflict).toBe(2)
+    expect(plan.items.flatMap((item) => item.conflicts.map((conflict) => conflict.code))).toEqual([
+      'duplicate',
+      'duplicate',
+    ])
+    expect(problem(applied).code).toBe('conflict')
+  })
+
+  it('brings back a page deleted on the target', async () => {
+    const s = await setupServer()
+    const page = (
+      await s.admin.send('POST', '/internal/design/pages', {
+        sectionId: null,
+        kind: 'dashboard',
+        slug: 'station',
+        title: 'Station',
+      })
+    ).json<PageDetail>()
+    const file = (await s.admin.request('GET', '/internal/admin/config/export')).json<ConfigFile>()
+    expect((await s.admin.request('DELETE', `/internal/design/pages/${page.id}`)).statusCode).toBe(
+      204,
+    )
+    const { plan, applied } = await importFile(s, file)
+    expect(plan.items).toEqual([
+      expect.objectContaining({ kind: 'page', status: 'new', restored: true, conflicts: [] }),
+    ])
+    expect(applied.statusCode, applied.body).toBe(200)
+    const detail = (
+      await s.admin.request('GET', `/internal/design/pages/${page.id}`)
+    ).json<PageDetail>()
+    expect(detail.slug).toBe('station')
+    const again = (
+      await s.admin.send('POST', '/internal/admin/config/import/preview', { file, connections: {} })
+    ).json<ConfigImportPlan>()
+    expect(again.counts).toEqual({ new: 0, changed: 0, unchanged: 1, conflict: 0 })
+  })
+
+  it('refuses a preview that no longer matches the target', async () => {
+    const source = await setupServer()
+    await source.admin.send('POST', '/internal/design/roles', {
+      name: 'Kasse',
+      description: 'Zahlungen',
+      homePageId: null,
+    })
+    const file = (
+      await source.admin.request('GET', '/internal/admin/config/export')
+    ).json<ConfigFile>()
+    const target = await setupServer()
+    await importFile(target, file)
+    const role = file.roles[0] as ConfigFile['roles'][number]
+    const changed = structuredClone(file)
+    ;(changed.roles[0] as ConfigFile['roles'][number]).description = 'Aus der Datei'
+    const plan = (
+      await target.admin.send('POST', '/internal/admin/config/import/preview', {
+        file: changed,
+        connections: {},
+      })
+    ).json<ConfigImportPlan>()
+    expect(plan.counts.changed).toBe(1)
+    // A manager edits the role after the preview; the status stays "changed".
+    await target.admin.send('PATCH', `/internal/design/roles/${role.id}`, {
+      description: 'Von Hand',
+    })
+    const { applied } = await importFile(target, changed, plan.fingerprint)
+    expect(problem(applied).code).toBe('conflict')
+    expect(applied.json<{ detail: string }>().detail).toBe('preview_outdated')
   })
 })

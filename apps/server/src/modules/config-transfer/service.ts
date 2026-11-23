@@ -12,7 +12,7 @@ import {
   type PageDocument,
   type QueryAnalysis,
 } from '@stashley/shared'
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 import { v7 as uuidv7 } from 'uuid'
 import { writeTransaction } from '../../metastore/db.ts'
 import type { Database } from '../../metastore/schema.ts'
@@ -20,10 +20,14 @@ import { systemClock, type Clock } from '../../platform/clock.ts'
 import type { EventBus } from '../../platform/events.ts'
 import { AppError } from '../../platform/http/problem.ts'
 import { parse } from '../../platform/http/validation.ts'
+import type { CompileDeps } from '../access/compile.ts'
+import type { AccessService } from '../access/service.ts'
+import type { ConnectionFacts } from '../access/facts.ts'
 import type { Actor, AuditLog } from '../audit/audit-log.ts'
+import type { ModelRelation } from '../execution/sql/table-model.ts'
 import { keptVersions } from '../pages/service.ts'
 import type { Executable } from '../queries/sql-guard/executable.ts'
-import type { QueriesService } from '../queries/service.ts'
+import type { QueriesService, StoredVersion } from '../queries/service.ts'
 import type { TableAccessService } from '../table-access/service.ts'
 import type { VariablesService } from '../variables/service.ts'
 
@@ -32,6 +36,9 @@ export interface ConfigTransferDeps {
   audit: AuditLog
   events: EventBus
   tableAccess: TableAccessService
+  /** Access facts and checks, for the imported pages as they will be on this instance. */
+  facts: CompileDeps['facts']
+  access: Pick<AccessService, 'checkWith'>
   queries: QueriesService
   variables: VariablesService
   appVersion: string
@@ -43,7 +50,134 @@ export interface ImportInput {
   connections: Record<string, string>
 }
 
-type Item = ConfigImportItem & { write?: (trx: Kysely<Database>) => Promise<void> }
+type Item = ConfigImportItem & {
+  write?: (trx: Kysely<Database>) => Promise<void>
+  /** What the item met on this instance; part of the fingerprint, so changes since count. */
+  state?: unknown
+  /** Old and new values for the audit event. */
+  change?: Record<string, unknown>
+}
+
+/** A row changed since the plan read it; the import stops and asks for a new preview. */
+class Outdated extends Error {}
+
+function guard(result: { numUpdatedRows: bigint }): void {
+  if (Number(result.numUpdatedRows) === 0) throw new Outdated()
+}
+
+const isConstraintError = (error: unknown) =>
+  typeof (error as { code?: unknown }).code === 'string' &&
+  (error as { code: string }).code.startsWith('SQLITE_CONSTRAINT')
+
+/** The next free position, read in the import's transaction. */
+async function nextPosition(
+  trx: Kysely<Database>,
+  table: 'sections' | 'pages' | 'roles',
+): Promise<number> {
+  const result = await sql<{
+    next: number
+  }>`SELECT COALESCE(MAX(position), -1) + 1 AS next FROM ${sql.table(table)}`.execute(trx)
+  return result.rows[0]?.next ?? 0
+}
+
+/** Keys that occur more than once. */
+function repeated<T>(entries: readonly T[], keyOf: (entry: T) => string): Set<string> {
+  const seen = new Set<string>()
+  const twice = new Set<string>()
+  for (const entry of entries) {
+    const key = keyOf(entry)
+    if (seen.has(key)) twice.add(key)
+    seen.add(key)
+  }
+  return twice
+}
+
+/**
+ * Page issues that mean the target's schema or table access does not fit the page: a column
+ * or relation is missing or hidden there. They block the import; other issues are shown.
+ */
+const schemaIssueCodes = new Set([
+  'unknown_column',
+  'excluded_column',
+  'unsupported_column',
+  'unknown_relation',
+  'relation_ambiguous',
+  'template_unknown_relation',
+  'object_not_readable',
+  'object_not_exposed',
+])
+
+/**
+ * Access facts as they will be after the import: relations and display templates of the file
+ * added to those of the target.
+ */
+function pendingFacts(
+  base: CompileDeps['facts'],
+  relations: ReadonlyMap<string, ModelRelation[]>,
+  templates: ReadonlyMap<string, ReadonlyMap<string, string>>,
+): CompileDeps['facts'] {
+  const views = new Map<string, ConnectionFacts>()
+  const view = (connection: ConnectionFacts): ConnectionFacts => {
+    let result = views.get(connection.connectionId)
+    if (result === undefined) {
+      const own = templates.get(connection.connectionId)
+      const objects = new Map(
+        [...connection.objects].map(([name, object]) => {
+          const template = own?.get(name)
+          return [
+            name,
+            template === undefined ? object : { ...object, effectiveTemplate: template },
+          ]
+        }),
+      )
+      result = {
+        ...connection,
+        relations: [...connection.relations, ...(relations.get(connection.connectionId) ?? [])],
+        objects,
+        access: (name) => objects.get(name),
+      }
+      views.set(connection.connectionId, result)
+    }
+    return result
+  }
+  return {
+    connection: async (connectionId) => view(await base.connection(connectionId)),
+    table: async (tableAccessId) => {
+      const found = await base.table(tableAccessId)
+      if (found === undefined) return undefined
+      const connection = view(found.connection)
+      const object = connection.objects.get(found.object.objectName)
+      return object === undefined ? undefined : { connection, object }
+    },
+  }
+}
+
+/** The column or object name at a document path, e.g. `table.table.columns.0.column`. */
+function nameAt(document: unknown, path: string): string | undefined {
+  let value = document
+  for (const key of path.split('.')) {
+    if (value === null || typeof value !== 'object') return undefined
+    value = (value as Record<string, unknown>)[key]
+  }
+  if (typeof value === 'string') return value
+  if (value === null || typeof value !== 'object') return undefined
+  const record = value as Record<string, unknown>
+  for (const key of ['column', 'target', 'name']) {
+    if (typeof record[key] === 'string') return record[key]
+  }
+  return undefined
+}
+
+/** Pages a document links to, e.g. "open a page after saving". */
+function pageRefsOf(value: unknown, refs: string[] = []): string[] {
+  if (Array.isArray(value)) for (const entry of value) pageRefsOf(entry, refs)
+  else if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    if (record.action === 'navigate' && typeof record.pageId === 'string') refs.push(record.pageId)
+    for (const entry of Object.values(record)) pageRefsOf(entry, refs)
+  }
+  return refs
+}
 
 const tableRefPattern = /^table:([0-9a-f-]{36})$/
 
@@ -284,9 +418,17 @@ export class ConfigTransferService {
       throw new AppError('conflict', { detail: 'preview_outdated' })
     }
     if (plan.counts.conflict > 0) throw new AppError('conflict', { detail: 'import_conflicts' })
-    await writeTransaction(this.deps.db, async (trx) => {
-      for (const item of items) if (item.write !== undefined) await item.write(trx)
-    })
+    try {
+      await writeTransaction(this.deps.db, async (trx) => {
+        for (const item of items) if (item.write !== undefined) await item.write(trx)
+      })
+    } catch (error) {
+      // Something changed between the plan and the transaction.
+      if (error instanceof Outdated || isConstraintError(error)) {
+        throw new AppError('conflict', { detail: 'preview_outdated' })
+      }
+      throw error
+    }
     after()
     await this.deps.audit.record(actor, {
       action: 'config.imported',
@@ -298,9 +440,16 @@ export class ConfigTransferService {
         new: plan.counts.new,
         changed: plan.counts.changed,
         unchanged: plan.counts.unchanged,
-        items: plan.items
+        items: items
           .filter((item) => item.status !== 'unchanged')
-          .map((item) => ({ kind: item.kind, key: item.key, status: item.status })),
+          .map((item) => ({
+            kind: item.kind,
+            key: item.key,
+            status: item.status,
+            ...(item.restored === true && { restored: true }),
+            ...(item.change !== undefined && { change: item.change }),
+            ...(item.issues !== undefined && { issues: item.issues.length }),
+          })),
       },
     })
     return plan
@@ -317,11 +466,15 @@ export class ConfigTransferService {
       item: Omit<Item, 'conflicts' | 'status'> & { conflicts?: Item['conflicts'] },
       status: Item['status'],
     ) => {
-      const conflicts = item.conflicts ?? []
+      const conflicts = dedupe(item.conflicts ?? [])
       const entry: Item = { ...item, conflicts, status: conflicts.length > 0 ? 'conflict' : status }
-      if (entry.status === 'unchanged' || entry.status === 'conflict') delete entry.write
+      if (entry.status === 'unchanged' || entry.status === 'conflict') {
+        delete entry.write
+        delete entry.change
+      }
       items.push(entry)
     }
+    const duplicate = (detail: string) => ({ code: 'duplicate' as const, detail })
 
     // Connections, mapped by the admin.
     const connectionRows = await db.selectFrom('connections').select(['id', 'name']).execute()
@@ -342,6 +495,7 @@ export class ConfigTransferService {
         (row) => row.connection_id === connectionId && row.object_name === object,
       )
     }
+    const repeatedTables = repeated(file.tables, (table) => table.id)
     const tableTarget = new Map<string, { id?: string; detail: string }>()
     for (const table of file.tables) {
       const access = accessOf(table.connectionRef, table.object)
@@ -353,15 +507,17 @@ export class ConfigTransferService {
 
     // Sections.
     const sectionRows = await db.selectFrom('sections').selectAll().execute()
-    let sectionPosition = Math.max(-1, ...sectionRows.map((row) => row.position))
+    const repeatedSections = repeated(file.sections, (section) => section.id)
     for (const section of file.sections) {
       const existing = sectionRows.find((row) => row.id === section.id)
-      const position = existing?.position ?? ++sectionPosition
       add(
         {
           kind: 'section',
           key: section.id,
           label: section.name,
+          conflicts: repeatedSections.has(section.id) ? [duplicate(section.id)] : [],
+          state: existing?.updated_at ?? null,
+          ...(existing !== undefined && { change: { name: [existing.name, section.name] } }),
           write: async (trx) => {
             if (existing === undefined) {
               await trx
@@ -369,17 +525,20 @@ export class ConfigTransferService {
                 .values({
                   id: section.id,
                   name: section.name,
-                  position,
+                  position: await nextPosition(trx, 'sections'),
                   created_at: now,
                   updated_at: now,
                 })
                 .execute()
             } else {
-              await trx
-                .updateTable('sections')
-                .set({ name: section.name, updated_at: now })
-                .where('id', '=', section.id)
-                .execute()
+              guard(
+                await trx
+                  .updateTable('sections')
+                  .set({ name: section.name, updated_at: now })
+                  .where('id', '=', section.id)
+                  .where('updated_at', '=', existing.updated_at)
+                  .executeTakeFirst(),
+              )
             }
           },
         },
@@ -389,10 +548,12 @@ export class ConfigTransferService {
 
     // Instance variables, by name.
     const variableRows = await db.selectFrom('instance_variables').selectAll().execute()
+    const repeatedVariables = repeated(file.variables, (variable) => variable.name)
     const changedVariables: string[] = []
     for (const variable of file.variables) {
       const existing = variableRows.find((row) => row.name === variable.name)
       const conflicts: Item['conflicts'] = []
+      if (repeatedVariables.has(variable.name)) conflicts.push(duplicate(variable.name))
       if (existing !== undefined && existing.type !== variable.type) {
         conflicts.push({ code: 'type_differs', detail: `${existing.type} → ${variable.type}` })
       }
@@ -411,6 +572,13 @@ export class ConfigTransferService {
           key: variable.name,
           label: variable.name,
           conflicts,
+          state: existing?.updated_at ?? null,
+          change: {
+            value: [
+              existing === undefined ? null : (JSON.parse(existing.value) as unknown),
+              JSON.parse(value) as unknown,
+            ],
+          },
           write: async (trx) => {
             changedVariables.push(variable.name)
             if (existing === undefined) {
@@ -428,11 +596,14 @@ export class ConfigTransferService {
                 })
                 .execute()
             } else {
-              await trx
-                .updateTable('instance_variables')
-                .set({ value, description: variable.description, updated_at: now })
-                .where('id', '=', existing.id)
-                .execute()
+              guard(
+                await trx
+                  .updateTable('instance_variables')
+                  .set({ value, description: variable.description, updated_at: now })
+                  .where('id', '=', existing.id)
+                  .where('updated_at', '=', existing.updated_at)
+                  .executeTakeFirst(),
+              )
             }
           },
         },
@@ -449,6 +620,10 @@ export class ConfigTransferService {
 
     // Virtual relations, by source column and target object.
     const changedConnections = new Set<string>()
+    const pendingRelations = new Map<string, ModelRelation[]>()
+    const relationKey = (relation: ConfigFile['relations'][number]) =>
+      `${relation.connectionRef}/${relation.sourceObject}.${relation.sourceColumn}/${relation.targetObject}`
+    const repeatedRelations = repeated(file.relations, relationKey)
     const relationsByConnection = new Map<
       string,
       Awaited<ReturnType<TableAccessService['relations']>>
@@ -456,9 +631,18 @@ export class ConfigTransferService {
     for (const relation of file.relations) {
       const connectionId = connectionOf(relation.connectionRef)
       const label = `${relation.sourceObject}.${relation.sourceColumn} → ${relation.targetObject}.${relation.targetColumn}`
-      const key = `${relation.connectionRef}/${relation.sourceObject}.${relation.sourceColumn}/${relation.targetObject}`
+      const key = relationKey(relation)
+      const conflicts: Item['conflicts'] = repeatedRelations.has(key) ? [duplicate(label)] : []
       if (connectionId === undefined) {
-        add({ kind: 'relation', key, label, conflicts: unmapped(relation.connectionRef) }, 'new')
+        add(
+          {
+            kind: 'relation',
+            key,
+            label,
+            conflicts: [...conflicts, ...unmapped(relation.connectionRef)],
+          },
+          'new',
+        )
         continue
       }
       let existing = relationsByConnection.get(connectionId)
@@ -475,29 +659,29 @@ export class ConfigTransferService {
       if (match !== undefined) {
         const identical =
           match.targetColumn === relation.targetColumn && match.kind === relation.kind
-        add(
-          {
-            kind: 'relation',
-            key,
-            label,
-            conflicts: identical
-              ? []
-              : [
-                  {
-                    code: 'relation_differs',
-                    detail: `${match.targetObject}.${match.targetColumn}`,
-                  },
-                ],
-          },
-          'unchanged',
-        )
+        if (!identical) {
+          conflicts.push({
+            code: 'relation_differs',
+            detail: `${match.targetObject}.${match.targetColumn}`,
+          })
+        }
+        add({ kind: 'relation', key, label, conflicts }, 'unchanged')
         continue
       }
-      const conflicts: Item['conflicts'] = []
       try {
         await this.deps.tableAccess.checkRelation({ ...relation, connectionId })
       } catch (error) {
         conflicts.push({ code: 'relation_invalid', detail: conflictOf(error) })
+      }
+      if (conflicts.length === 0) {
+        const list = pendingRelations.get(connectionId) ?? []
+        list.push({
+          sourceObject: relation.sourceObject,
+          sourceColumn: relation.sourceColumn,
+          targetObject: relation.targetObject,
+          targetColumn: relation.targetColumn,
+        })
+        pendingRelations.set(connectionId, list)
       }
       add(
         {
@@ -505,6 +689,7 @@ export class ConfigTransferService {
           key,
           label,
           conflicts,
+          state: null,
           write: async (trx) => {
             changedConnections.add(connectionId)
             await trx
@@ -528,12 +713,23 @@ export class ConfigTransferService {
 
     // Display templates on the target's table access. A template that does not fit shows
     // as `template_invalid` on the table access and falls back to the default.
+    const pendingTemplates = new Map<string, Map<string, string>>()
+    const repeatedTemplates = repeated(
+      file.displayTemplates,
+      (entry) => `${entry.connectionRef}/${entry.object}`,
+    )
     for (const entry of file.displayTemplates) {
       const key = `${entry.connectionRef}/${entry.object}`
       const access = accessOf(entry.connectionRef, entry.object)
       const conflicts: Item['conflicts'] = unmapped(entry.connectionRef)
+      if (repeatedTemplates.has(key)) conflicts.push(duplicate(key))
       if (conflicts.length === 0 && access === undefined) {
         conflicts.push({ code: 'table_access_missing', detail: key })
+      }
+      if (conflicts.length === 0 && access !== undefined) {
+        const own = pendingTemplates.get(access.connection_id) ?? new Map<string, string>()
+        own.set(access.object_name, entry.template)
+        pendingTemplates.set(access.connection_id, own)
       }
       add(
         {
@@ -541,14 +737,19 @@ export class ConfigTransferService {
           key,
           label: entry.object,
           conflicts,
+          state: access?.updated_at ?? null,
+          change: { template: [access?.display_template ?? null, entry.template] },
           write: async (trx) => {
             if (access === undefined) return
             changedConnections.add(access.connection_id)
-            await trx
-              .updateTable('table_access')
-              .set({ display_template: entry.template, updated_at: now })
-              .where('id', '=', access.id)
-              .execute()
+            guard(
+              await trx
+                .updateTable('table_access')
+                .set({ display_template: entry.template, updated_at: now })
+                .where('id', '=', access.id)
+                .where('updated_at', '=', access.updated_at)
+                .executeTakeFirst(),
+            )
           },
         },
         access?.display_template === entry.template ? 'unchanged' : 'changed',
@@ -566,11 +767,21 @@ export class ConfigTransferService {
       .selectFrom('query_versions')
       .select(['query_id', 'version', 'sql_text', 'builder_spec', 'parameters'])
       .execute()
+    const repeatedQueryIds = repeated(file.queries, (query) => query.id)
+    const repeatedQueryNames = repeated(file.queries, (query) => query.name)
+    /** Versions the import adds, as page checks will find them. */
+    const pendingQueries = new Map<
+      string,
+      { connectionId: string; latest: number; versions: Map<number, StoredVersion> }
+    >()
     const changedQueries: string[] = []
     for (const query of file.queries) {
       const connectionId = connectionOf(query.connectionRef)
       const existing = queryRows.find((row) => row.id === query.id)
       const conflicts: Item['conflicts'] = unmapped(query.connectionRef)
+      const issues: NonNullable<ConfigImportItem['issues']> = []
+      if (repeatedQueryIds.has(query.id)) conflicts.push(duplicate(query.id))
+      if (repeatedQueryNames.has(query.name)) conflicts.push(duplicate(query.name))
       if (existing?.archived_at != null) conflicts.push({ code: 'archived' })
       if (
         existing !== undefined &&
@@ -582,12 +793,15 @@ export class ConfigTransferService {
       if (queryRows.some((row) => row.name === query.name && row.id !== query.id)) {
         conflicts.push({ code: 'name_taken', detail: query.name })
       }
+      if (repeated(query.versions, (version) => String(version.version)).size > 0) {
+        conflicts.push(duplicate(`${query.name} versions`))
+      }
       const additions: {
         version: (typeof query.versions)[number]
         analysis: QueryAnalysis
         executable: Executable
       }[] = []
-      for (const version of query.versions) {
+      for (const [index, version] of query.versions.entries()) {
         const stored = versionRows.find(
           (row) => row.query_id === query.id && row.version === version.version,
         )
@@ -617,12 +831,49 @@ export class ConfigTransferService {
             code: 'query_invalid',
             detail: `${String(version.version)}: ${conflictOf(error)}`,
           })
+          continue
+        }
+        // A builder version whose spec gives other SQL here runs the file's SQL, while the
+        // editor shows the spec (e.g. another time zone of the connection).
+        if (version.builder !== null) {
+          const at = `versions.${String(index)}.builder`
+          try {
+            const built = await this.deps.queries.toSql(
+              connectionId,
+              { builder: version.builder.spec },
+              version.parameters,
+            )
+            if (built.sql !== version.sql) issues.push({ path: at, code: 'builder_differs' })
+          } catch (error) {
+            issues.push({ path: at, code: conflictOf(error) })
+          }
         }
       }
       const latest = Math.max(
         existing?.latest_version ?? 0,
         ...query.versions.map((v) => v.version),
       )
+      if (connectionId !== undefined && additions.length > 0) {
+        pendingQueries.set(query.id, {
+          connectionId,
+          latest,
+          versions: new Map(
+            additions.map((addition) => [
+              addition.version.version,
+              {
+                queryId: query.id,
+                connectionId,
+                version: addition.version.version,
+                cacheTtlSeconds: query.cacheTtlSeconds,
+                parameters: addition.version.parameters,
+                analysis: addition.analysis,
+                executable: addition.executable,
+                resultColumns: null,
+              },
+            ]),
+          ),
+        })
+      }
       const latestFile = query.versions[query.versions.length - 1]
       const mode = (latestFile?.builder ?? null) === null ? 'sql' : 'builder'
       const fieldsChanged =
@@ -636,6 +887,16 @@ export class ConfigTransferService {
           key: query.id,
           label: query.name,
           conflicts,
+          ...(issues.length > 0 && { issues }),
+          state:
+            existing === undefined
+              ? null
+              : { latest: existing.latest_version, updated: existing.updated_at },
+          change: {
+            latestVersion: [existing?.latest_version ?? null, latest],
+            ...(existing !== undefined &&
+              existing.name !== query.name && { name: [existing.name, query.name] }),
+          },
           write: async (trx) => {
             if (connectionId === undefined) return
             changedQueries.push(query.id)
@@ -657,18 +918,22 @@ export class ConfigTransferService {
                 })
                 .execute()
             } else {
-              await trx
-                .updateTable('queries')
-                .set({
-                  name: query.name,
-                  description: query.description,
-                  cache_ttl_seconds: query.cacheTtlSeconds,
-                  latest_version: latest,
-                  ...(latest > existing.latest_version && { mode }),
-                  updated_at: now,
-                })
-                .where('id', '=', query.id)
-                .execute()
+              guard(
+                await trx
+                  .updateTable('queries')
+                  .set({
+                    name: query.name,
+                    description: query.description,
+                    cache_ttl_seconds: query.cacheTtlSeconds,
+                    latest_version: latest,
+                    ...(latest > existing.latest_version && { mode }),
+                    updated_at: now,
+                  })
+                  .where('id', '=', query.id)
+                  .where('latest_version', '=', existing.latest_version)
+                  .where('updated_at', '=', existing.updated_at)
+                  .executeTakeFirst(),
+              )
             }
             for (const addition of additions) {
               await trx
@@ -703,6 +968,22 @@ export class ConfigTransferService {
       for (const queryId of changedQueries) this.deps.events.emit('query.changed', { queryId })
     })
 
+    // Pages are checked as they will be: the file's relations, templates, queries and roles
+    // added to this instance's.
+    const roleRows = await db.selectFrom('roles').selectAll().execute()
+    const compileDeps: CompileDeps = {
+      facts: pendingFacts(this.deps.facts, pendingRelations, pendingTemplates),
+      queries: {
+        stored: async (queryId, version) => {
+          const pending = pendingQueries.get(queryId)
+          const added = pending?.versions.get(version ?? pending.latest)
+          if (added !== undefined) return added
+          return this.deps.queries.stored(queryId, version ?? pending?.latest)
+        },
+      },
+      roleIds: new Set([...roleRows.map((row) => row.id), ...file.roles.map((role) => role.id)]),
+    }
+
     // Pages, by ID; their slugs are unique.
     const pageRows = await db.selectFrom('pages').selectAll().execute()
     const publishedRows = await db
@@ -728,14 +1009,24 @@ export class ConfigTransferService {
         query.versions.map((v) => `${query.id}@${String(v.version)}`),
       ),
     ])
-    let pagePosition = Math.max(-1, ...pageRows.map((row) => row.position))
+    const pageIds = new Set([
+      ...pageRows.filter((row) => row.archived_at === null).map((row) => row.id),
+      ...file.pages.map((page) => page.id),
+    ])
+    const repeatedPageIds = repeated(file.pages, (page) => page.id)
+    const repeatedSlugs = repeated(file.pages, (page) => page.slug)
     const pageEvents: { pageId: string; published: boolean }[] = []
     for (const page of file.pages) {
       const existing = pageRows.find((row) => row.id === page.id)
+      // A page deleted here comes back (§24): deleting only archives it.
+      const restored = existing?.archived_at != null
       const conflicts: Item['conflicts'] = []
-      if (existing?.archived_at != null) conflicts.push({ code: 'archived' })
-      if (existing !== undefined && existing.kind !== page.draft.kind)
+      if (repeatedPageIds.has(page.id)) conflicts.push(duplicate(page.id))
+      if (repeatedSlugs.has(page.slug)) conflicts.push(duplicate(page.slug))
+      if (existing !== undefined && !restored && existing.kind !== page.draft.kind)
         conflicts.push({ code: 'kind_differs' })
+      if (page.published !== null && page.published.kind !== page.draft.kind)
+        conflicts.push({ code: 'kind_differs', detail: 'published' })
       if (pageRows.some((row) => row.slug === page.slug && row.id !== page.id)) {
         conflicts.push({ code: 'name_taken', detail: page.slug })
       }
@@ -744,10 +1035,12 @@ export class ConfigTransferService {
       }
       const missingTables = new Set<string>()
       const unknownTables = new Set<string>()
+      const doubledTables = new Set<string>()
       const mapDocument = (document: unknown) =>
         mapTableIds(document, (id) => {
           const target = tableTarget.get(id)
           if (target === undefined) unknownTables.add(id)
+          else if (repeatedTables.has(id)) doubledTables.add(id)
           else if (target.id === undefined) missingTables.add(target.detail)
           return target?.id ?? id
         }) as PageDocument
@@ -762,6 +1055,7 @@ export class ConfigTransferService {
         )
       }
       for (const id of unknownTables) conflicts.push({ code: 'table_unknown', detail: id })
+      for (const id of doubledTables) conflicts.push(duplicate(`table ${id}`))
       for (const queryRef of queryRefsOf(draft)) {
         if (!queryIds.has(queryRef.queryId)) {
           conflicts.push({ code: 'reference_missing', detail: `query ${queryRef.queryId}` })
@@ -778,6 +1072,56 @@ export class ConfigTransferService {
           })
         }
       }
+      for (const pageId of pageRefsOf([draft, published])) {
+        if (!pageIds.has(pageId)) {
+          conflicts.push({ code: 'reference_missing', detail: `page ${pageId}` })
+        }
+      }
+
+      // Checked against this instance as the editor would check it: columns and relations
+      // missing here block; other problems are shown and stay visible in the editor.
+      const issues: NonNullable<ConfigImportItem['issues']> = []
+      if (conflicts.length === 0) {
+        const documents = [
+          { document: draft, version: null, prefix: 'draft' },
+          ...(published === null ? [] : [{ document: published, version: 1, prefix: 'published' }]),
+        ]
+        for (const { document, version, prefix } of documents) {
+          const found = await this.deps.access.checkWith(
+            {
+              pageId: page.id,
+              slug: page.slug,
+              sectionId: page.sectionId,
+              position: 0,
+              version,
+              revision: 0,
+              document,
+            },
+            compileDeps,
+          )
+          for (const issue of found) {
+            if (issue.severity !== 'error') continue
+            if (schemaIssueCodes.has(issue.code)) {
+              const name = nameAt(document, issue.path) ?? issue.params?.column
+              conflicts.push({
+                code: 'column_missing',
+                detail: `${name === undefined ? issue.path : String(name)} (${issue.code})`,
+              })
+            } else if (
+              !issues.some(
+                (entry) => entry.code === issue.code && entry.path.endsWith(`.${issue.path}`),
+              )
+            ) {
+              issues.push({
+                path: `${prefix}.${issue.path}`,
+                code: issue.code,
+                ...(issue.params !== undefined && { params: issue.params }),
+              })
+            }
+          }
+        }
+      }
+
       const currentDraft =
         existing === undefined ? undefined : (JSON.parse(existing.draft) as unknown)
       const currentPublished = publishedRows.find((row) => row.page_id === page.id)
@@ -788,57 +1132,92 @@ export class ConfigTransferService {
       const moved =
         existing !== undefined &&
         (existing.slug !== page.slug || existing.section_id !== page.sectionId)
-      const position = existing?.position ?? ++pagePosition
+      const nextVersion = (existing?.published_version ?? 0) + (publishChanged ? 1 : 0)
+      const nextPublished = publishChanged
+        ? nextVersion
+        : restored && published === null
+          ? null
+          : (existing?.published_version ?? null)
       add(
         {
           kind: 'page',
           key: page.id,
           label: page.draft.title,
-          conflicts: dedupe(conflicts),
+          conflicts,
+          ...(restored && { restored: true as const }),
+          ...(issues.length > 0 && { issues: issues.slice(0, 20) }),
+          state:
+            existing === undefined
+              ? null
+              : {
+                  revision: existing.draft_revision,
+                  published: existing.published_version,
+                  archived: existing.archived_at !== null,
+                },
+          change: {
+            draftRevision: [
+              existing?.draft_revision ?? null,
+              existing === undefined ? 1 : existing.draft_revision + (draftChanged ? 1 : 0),
+            ],
+            publishedVersion: [existing?.published_version ?? null, nextPublished],
+            ...(existing !== undefined && moved && { slug: [existing.slug, page.slug] }),
+          },
           write: async (trx) => {
-            pageEvents.push({ pageId: page.id, published: publishChanged })
-            const version = (existing?.published_version ?? 0) + (publishChanged ? 1 : 0)
+            pageEvents.push({ pageId: page.id, published: publishChanged || restored })
             if (existing === undefined) {
               await trx
                 .insertInto('pages')
                 .values({
                   id: page.id,
                   section_id: page.sectionId,
-                  position,
+                  position: await nextPosition(trx, 'pages'),
                   kind: page.draft.kind,
                   slug: page.slug,
                   draft: JSON.stringify(draft),
                   draft_revision: 1,
                   draft_updated_by: null,
                   draft_updated_at: now,
-                  published_version: publishChanged ? version : null,
+                  published_version: publishChanged ? nextVersion : null,
                   created_at: now,
                   archived_at: null,
                 })
                 .execute()
             } else {
-              await trx
+              let update = trx
                 .updateTable('pages')
                 .set({
                   section_id: page.sectionId,
                   slug: page.slug,
+                  ...(restored && {
+                    archived_at: null,
+                    kind: page.draft.kind,
+                    position: await nextPosition(trx, 'pages'),
+                  }),
                   ...(draftChanged && {
                     draft: JSON.stringify(draft),
                     draft_revision: existing.draft_revision + 1,
                     draft_updated_by: null,
                     draft_updated_at: now,
                   }),
-                  ...(publishChanged && { published_version: version }),
+                  published_version: nextPublished,
                 })
                 .where('id', '=', page.id)
-                .execute()
+                .where('draft_revision', '=', existing.draft_revision)
+              update =
+                existing.published_version === null
+                  ? update.where('published_version', 'is', null)
+                  : update.where('published_version', '=', existing.published_version)
+              update = restored
+                ? update.where('archived_at', 'is not', null)
+                : update.where('archived_at', 'is', null)
+              guard(await update.executeTakeFirst())
             }
             if (publishChanged) {
               await trx
                 .insertInto('page_versions')
                 .values({
                   page_id: page.id,
-                  version,
+                  version: nextVersion,
                   document: JSON.stringify(published),
                   source_revision:
                     existing === undefined ? 1 : existing.draft_revision + (draftChanged ? 1 : 0),
@@ -849,12 +1228,12 @@ export class ConfigTransferService {
               await trx
                 .deleteFrom('page_versions')
                 .where('page_id', '=', page.id)
-                .where('version', '<=', version - keptVersions)
+                .where('version', '<=', nextVersion - keptVersions)
                 .execute()
             }
           },
         },
-        existing === undefined
+        existing === undefined || restored
           ? 'new'
           : draftChanged || publishChanged || moved
             ? 'changed'
@@ -869,16 +1248,14 @@ export class ConfigTransferService {
     })
 
     // Roles, by ID; their names are unique. They come after pages for their home pages.
-    const roleRows = await db.selectFrom('roles').selectAll().execute()
-    const pageIds = new Set([
-      ...pageRows.filter((row) => row.archived_at === null).map((row) => row.id),
-      ...file.pages.map((page) => page.id),
-    ])
-    let rolePosition = Math.max(-1, ...roleRows.map((row) => row.position))
+    const repeatedRoleIds = repeated(file.roles, (role) => role.id)
+    const repeatedRoleNames = repeated(file.roles, (role) => role.name.toLowerCase())
     let rolesChanged = false
     for (const role of file.roles) {
       const existing = roleRows.find((row) => row.id === role.id)
       const conflicts: Item['conflicts'] = []
+      if (repeatedRoleIds.has(role.id)) conflicts.push(duplicate(role.id))
+      if (repeatedRoleNames.has(role.name.toLowerCase())) conflicts.push(duplicate(role.name))
       if (
         roleRows.some(
           (row) => row.name.toLowerCase() === role.name.toLowerCase() && row.id !== role.id,
@@ -889,13 +1266,15 @@ export class ConfigTransferService {
       if (role.homePageId !== null && !pageIds.has(role.homePageId)) {
         conflicts.push({ code: 'reference_missing', detail: `page ${role.homePageId}` })
       }
-      const position = existing?.position ?? ++rolePosition
       add(
         {
           kind: 'role',
           key: role.id,
           label: role.name,
           conflicts,
+          state: existing?.updated_at ?? null,
+          ...(existing !== undefined &&
+            existing.name !== role.name && { change: { name: [existing.name, role.name] } }),
           write: async (trx) => {
             rolesChanged = true
             if (existing === undefined) {
@@ -906,22 +1285,25 @@ export class ConfigTransferService {
                   name: role.name,
                   description: role.description,
                   home_page_id: role.homePageId,
-                  position,
+                  position: await nextPosition(trx, 'roles'),
                   created_at: now,
                   updated_at: now,
                 })
                 .execute()
             } else {
-              await trx
-                .updateTable('roles')
-                .set({
-                  name: role.name,
-                  description: role.description,
-                  home_page_id: role.homePageId,
-                  updated_at: now,
-                })
-                .where('id', '=', role.id)
-                .execute()
+              guard(
+                await trx
+                  .updateTable('roles')
+                  .set({
+                    name: role.name,
+                    description: role.description,
+                    home_page_id: role.homePageId,
+                    updated_at: now,
+                  })
+                  .where('id', '=', role.id)
+                  .where('updated_at', '=', existing.updated_at)
+                  .executeTakeFirst(),
+              )
             }
           },
         },
@@ -942,12 +1324,22 @@ export class ConfigTransferService {
     // roles; that is the order they were planned in.
     const counts = { new: 0, changed: 0, unchanged: 0, conflict: 0 }
     for (const item of items) counts[item.status] += 1
-    const visible = items.map(({ write: _write, ...item }) => item)
+    const visible = items.map(
+      ({ write: _write, state: _state, change: _change, ...item }): ConfigImportItem => item,
+    )
     const connections = file.connections.map(({ ref }) => ({
       ref,
       connectionId: connectionOf(ref) ?? null,
     }))
-    const fingerprint = sha256(JSON.stringify({ hash, connections, items: visible }))
+    // The target's state belongs in it, so a change here since the preview stops the import.
+    const fingerprint = sha256(
+      JSON.stringify({
+        hash,
+        connections,
+        items: visible,
+        state: items.map((item) => item.state ?? null),
+      }),
+    )
     const plan: ConfigImportPlan = {
       fingerprint,
       appVersion: file.appVersion,

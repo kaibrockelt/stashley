@@ -176,8 +176,12 @@ export const configConflictCodes = [
   'relation_differs',
   /** The display template does not fit the target. */
   'template_invalid',
-  /** A page refers to a section, role or query the file and the target lack. */
+  /** A page refers to a section, role, query or page the file and the target lack. */
   'reference_missing',
+  /** A column or relation a page uses is missing on the target or hidden there. */
+  'column_missing',
+  /** The file has this ID, name or address more than once. */
+  'duplicate',
 ] as const
 export type ConfigConflictCode = (typeof configConflictCodes)[number]
 
@@ -188,6 +192,13 @@ export interface ConfigImportItem {
   label: string
   status: 'new' | 'changed' | 'unchanged' | 'conflict'
   conflicts: { code: ConfigConflictCode; detail?: string }[]
+  /** A page deleted on the target that the import brings back. */
+  restored?: true
+  /**
+   * Problems a page will have on the target that do not block the import, e.g. rights above
+   * a lower ceiling there; the editor shows them after the import (§8.6).
+   */
+  issues?: { path: string; code: string; params?: Record<string, string | number> }[]
 }
 
 export interface ConfigImportPlan {

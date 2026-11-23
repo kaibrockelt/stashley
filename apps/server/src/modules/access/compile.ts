@@ -116,8 +116,9 @@ export interface PageInput {
 }
 
 export interface CompileDeps {
-  facts: AccessFacts
-  queries: QueriesService
+  /** The access facts; the configuration import passes a view with its pending changes. */
+  facts: Pick<AccessFacts, 'connection' | 'table'>
+  queries: Pick<QueriesService, 'stored'>
   roleIds: ReadonlySet<string>
 }
 

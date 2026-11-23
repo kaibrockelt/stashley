@@ -41,6 +41,7 @@ import {
   compilePage,
   type CompiledComponent,
   type CompiledPage,
+  type CompileDeps,
   type PageInput,
 } from './compile.ts'
 import type { AccessFacts } from './facts.ts'
@@ -196,6 +197,14 @@ export class AccessService {
   /** The configuration issues of a document, against the current state (§8.6). */
   async check(input: PageInput): Promise<PageIssue[]> {
     return (await compilePage(input, await this.compileDeps())).issues
+  }
+
+  /**
+   * The configuration issues of a document against facts, queries and roles the caller
+   * supplies: the configuration import checks pages as they will be after it (§24).
+   */
+  async checkWith(input: PageInput, deps: CompileDeps): Promise<PageIssue[]> {
+    return (await compilePage(input, deps)).issues
   }
 
   private async compileDeps() {

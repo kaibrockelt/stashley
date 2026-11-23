@@ -194,6 +194,8 @@ export function createServices(
     audit,
     events,
     tableAccess,
+    facts,
+    access,
     queries,
     variables,
     appVersion: process.env.STASHLEY_VERSION ?? 'dev',
