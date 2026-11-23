@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Stashley contributors
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Releases (§25.3): a tag vX.Y.Z builds the image for amd64 and arm64, pushes it to the GitHub
-# Container Registry with SBOM and provenance attestations, signs it with cosign (keyless) and
-# creates the GitHub release with the changelog section of the version.
+# Releases (§25.3): a tag vX.Y.Z first runs the checks and the critical vulnerability scan,
+# then builds the image for amd64 and arm64, pushes it to the GitHub Container Registry with
+# SBOM and provenance attestations, signs it with cosign (keyless) and creates the GitHub
+# release with the changelog section of the version.
 name: Release
 
 on:
@@ -14,15 +15,47 @@ permissions:
   contents: read
 
 jobs:
+  # Nothing is published from a commit whose checks fail or whose image has a critical finding,
+  # whatever state its CI run is in.
+  verify:
+    name: Checks and scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Typecheck, lint, SPDX, i18n, unit tests and bundle budget
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: check
+          cache-from: type=gha
+      - name: Load linux/amd64 for scanning
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64
+          load: true
+          tags: stashley:release
+          cache-from: type=gha
+      - name: Scan for critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: stashley:release
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
   release:
     name: Release ${{ github.ref_name }}
+    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: write
       packages: write
       id-token: write
-      attestations: write
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/stashley
     steps:
@@ -31,10 +64,12 @@ jobs:
           fetch-depth: 0
       - name: Release notes from the changelog
         run: node scripts/changelog-section.mjs "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
-      - name: Tag on main?
+      # `latest` only for a final version (no suffix such as -rc.1) on main.
+      - name: Final version on main?
         id: main
         run: |
-          if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "latest=true" >> "$GITHUB_OUTPUT"
           else
             echo "latest=false" >> "$GITHUB_OUTPUT"
@@ -80,7 +115,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # A version with a suffix (e.g. v0.2.0-rc.1) is a pre-release; v0.1.0 is the MVP.
           prerelease=()
-          if [[ "$GITHUB_REF_NAME" == v0.* ]]; then prerelease=(--prerelease); fi
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then prerelease=(--prerelease); fi
           gh release create "$GITHUB_REF_NAME" --title "Stashley ${GITHUB_REF_NAME#v}" \
             --notes-file "$RUNNER_TEMP/notes.md" "${prerelease[@]}"
