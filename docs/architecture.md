@@ -1434,8 +1434,8 @@ The image installs a `stashley` wrapper. The library is commander.
 - **Import** (admins only):
   1. Validate the file.
   2. Map each connection reference to a target connection.
-  3. Preview every item as new, changed, unchanged or in conflict. Conflicts: an unmapped connection, an object without table access on the target, a name or slug used by another ID, a query version that differs on the target, SQL that does not validate against the target, a variable of another type, an item deleted on the target, a reference the file and the target lack. Conflicts block the import; they are resolved by hand.
-  4. Apply everything in one metadata store transaction, only if the preview's fingerprint still holds, with one `config.imported` audit event. Published documents are imported as new published versions on the target; new query versions keep their numbers.
+  3. Preview every item as new, changed, unchanged or in conflict. Conflicts: an unmapped connection, an object without table access on the target, a column or relation a page uses that is missing or excluded on the target, a name or slug used by another ID, a query version that differs on the target, SQL that does not validate against the target, a variable of another type, a page of another type, a reference the file and the target lack (sections, queries, versions, pages, roles' home pages), an ID, name or slug the file has twice. Conflicts block the import; they are resolved by hand. Pages are compiled (§13.3) against the target's access facts with the file's relations, display templates, query versions and roles added; their schema problems are the column conflicts, every other error is listed as a note that does not block (e.g. a grant above a lower ceiling, which the runtime clips). A page deleted on the target is restored.
+  4. Apply everything in one metadata store transaction, only if the preview's fingerprint still holds; it covers the file, the mapping, every item's status and the target state each item met (revisions, versions, update times). Every update is guarded by that state, and a change or constraint clash since the preview answers `409 preview_outdated`. One `config.imported` audit event names old and new values. Published documents are imported as new published versions on the target; new query versions keep their numbers.
 
 ## 25. Build, container and release
 
@@ -1469,7 +1469,7 @@ Multi-stage, with digest-pinned `node:26-slim` base images:
 | Workflow | Trigger | Jobs |
 | --- | --- | --- |
 | `ci.yml` | Pull request, push to `main` | **checks:** lint, typecheck, unit tests with coverage thresholds, i18n catalog check, SPDX header check, dependency license check, `pnpm audit --audit-level=critical`. **integration:** matrix of MariaDB 10.11 and 12.3, MySQL 8.4 and 9.7 as service containers. **e2e:** image plus seed database plus mock OIDC provider, Playwright with axe. **image:** buildx for amd64 and arm64, Trivy scan that fails on critical findings. |
-| `release.yml` | Tag `v*` | Multi-arch build and push to `ghcr.io/kaibrockelt/stashley` (`X.Y.Z`, `X.Y`, `X`, and `latest` for tags on `main`), SBOM and provenance attestations, keyless cosign signature, GitHub release with the changelog section |
+| `release.yml` | Tag `v*` | **verify:** the Dockerfile's `check` stage and the Trivy scan for critical findings. **release:** multi-arch build and push to `ghcr.io/kaibrockelt/stashley` (`X.Y.Z`, `X.Y`, `X` from 1.0 on, and `latest` for final versions on `main`), SBOM and provenance attestations, keyless cosign signature, GitHub release with the changelog section (a pre-release for versions with a suffix such as `-rc.1`) |
 | `docs.yml` | Push to `main` (`docs/**`) | Build the documentation site and publish it to GitHub Pages |
 
 - **Rollout:** M1 adds the `checks` and `image` jobs. The `integration` job follows in M3, `e2e` in M9, and `release.yml` and `docs.yml` in M9.
