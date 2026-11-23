@@ -2,7 +2,7 @@
 
 **Current milestone:** M9 – Demo scenario and acceptance (in review); M8 moved after the MVP (D17)
 
-**Next step:** Once CI on main is green (including the e2e job), rename the changelog's `[Unreleased]` to `[0.1.0]` and tag `v0.1.0`; then M8 (MCP) after the MVP (D17).
+**Next step:** Tag `v0.1.0` on main (CI is green, the changelog section `[0.1.0]` is in place); then M8 (MCP) after the MVP (D17).
 
 **Recommended model strength:** M9: medium (final review: high).
 
