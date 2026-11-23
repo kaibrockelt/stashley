@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import { writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { expect, request, test } from '@playwright/test'
 import { expectAccessible } from '../support/axe.ts'
@@ -70,10 +70,19 @@ test('a create-only token writes payments and cannot list them', async ({ browse
   // The full OpenAPI document of this instance, the example the API reference is built from.
   const openapi = await page.request.get('/internal/admin/api/openapi')
   expect(openapi.status()).toBe(200)
-  writeFileSync(
-    path.join(runDirectory, 'openapi.json'),
-    `${JSON.stringify(await openapi.json(), null, 2)}\n`,
+  const document: unknown = await openapi.json()
+  writeFileSync(path.join(runDirectory, 'openapi.json'), `${JSON.stringify(document, null, 2)}\n`)
+  // The documentation site renders its API reference from this example; keep it current.
+  const example: unknown = JSON.parse(
+    readFileSync(
+      path.join(import.meta.dirname, '..', '..', 'docs', 'api', 'openapi.example.json'),
+      'utf8',
+    ),
   )
+  expect(
+    document,
+    'docs/api/openapi.example.json is out of date; copy e2e/.tmp/openapi.json over it',
+  ).toEqual(example)
 
   await page.goto('/admin/audit')
   await page.getByRole('textbox', { name: 'Action', exact: true }).fill('row.created')

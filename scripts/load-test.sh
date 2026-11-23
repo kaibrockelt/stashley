@@ -9,6 +9,9 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+# Pinned like the Dockerfile; update together with it.
+node_image=node:26-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc
+k6_image=grafana/k6:1.4.2@sha256:3656673de3f30424e8ebcfa46acd9558d83b6a43612d0f668ffeac953950c6c7
 container=stashley-e2e-stashley-a-1
 network_owner=stashley-e2e-oidc-1
 
@@ -19,7 +22,7 @@ fi
 
 docker update --cpus 2 --memory 2g --memory-swap 2g "$container" >/dev/null
 
-ids=$(docker run --rm -v "$root/packages/demo:/demo:ro" -w /demo node:26-slim node --input-type=module -e "
+ids=$(docker run --rm -v "$root/packages/demo:/demo:ro" -w /demo "$node_image" node --input-type=module -e "
 import { demoId } from './src/scenario.ts'
 for (const slug of ['uebersicht', 'kasse', 'anmeldungen', 'teilnehmer', 'station'])
   console.log('-e ID_' + slug.toUpperCase() + '=' + demoId('page:' + slug))
@@ -31,4 +34,4 @@ docker run --rm --network "container:$network_owner" \
   -e BASE_URL=http://localhost:8080 \
   -e USER_PASSWORD='e2e user passphrase' \
   $ids \
-  grafana/k6:1.4.2 run /load/scenario.js
+  "$k6_image" run /load/scenario.js

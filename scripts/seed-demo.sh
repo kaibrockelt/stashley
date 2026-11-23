@@ -50,6 +50,8 @@ while [ $# -gt 0 ]; do
 done
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+# Pinned like the Dockerfile; update together with it.
+node_image=node:26-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc
 demo="$root/packages/demo"
 
 if [ "$remove" = 1 ]; then
@@ -67,7 +69,7 @@ generate() {
     [ "$(node -p 'Number(process.versions.node.split(".")[0])')" -ge 24 ]; then
     node "$demo/src/cli.ts" "${args[@]}"
   else
-    docker run --rm -v "$demo:/demo:ro" -w /demo node:26-slim node src/cli.ts "${args[@]}"
+    docker run --rm -v "$demo:/demo:ro" -w /demo "$node_image" node src/cli.ts "${args[@]}"
   fi
 }
 
