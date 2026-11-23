@@ -2,7 +2,7 @@
 
 **Current milestone:** M9 – Demo scenario and acceptance (in review); M8 moved after the MVP (D17)
 
-**Next step:** Operator acceptance of M9 (the final review's findings are fixed); then push, let CI run the e2e job, rename the changelog's `[Unreleased]` to `[0.1.0]` and tag `v0.1.0`.
+**Next step:** Once CI on main is green (including the e2e job), rename the changelog's `[Unreleased]` to `[0.1.0]` and tag `v0.1.0`; then M8 (MCP) after the MVP (D17).
 
 **Recommended model strength:** M9: medium (final review: high).
 
@@ -21,7 +21,7 @@ The SQL validation of M4 is tested externally; that does not block M6.
 | M6 | Forms and table pages: forms, generated fields, default values, foreign key selects, inline editing, deletion, optimistic locking, error translation, CSV export; column limits for the write user's `INSERT` and `UPDATE` (review first, see log 2026-11-15) | Medium (write path and base filters: high) | Done |
 | M7 | Public REST API and CSV import: endpoints, tokens, OpenAPI, imports including new tables | High (new tables, review: extra high) | Done |
 | M8 | MCP server: authorization server, metadata, tools, MCP exposure, privacy notice, call log | High (authorization server and its review: extra high) | After the MVP (D17) |
-| M9 | Demo scenario and acceptance: seed script, configuration export and import, end-to-end suite, accessibility, performance, documentation, release pipeline; MCP controls hidden until M8 (D17) | Medium (final review: high) | In review |
+| M9 | Demo scenario and acceptance: seed script, configuration export and import, end-to-end suite, accessibility, performance, documentation, release pipeline; MCP controls hidden until M8 (D17) | Medium (final review: high) | Done |
 
 Status values: open, in progress, in review, done, after the MVP.
 
@@ -451,3 +451,4 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Nice-to-have: old and new values in the `config.imported` audit event; builder versions that give other SQL on the target are noted; published documents of another page type and links to missing pages are conflicts; the admin check runs before the body is read; scrolling tables are named regions and follow replaced content; `docs.yml` triggers on `docs/` only and spec 13 fails when the documentation's OpenAPI example is out of date; e2e, load test and seed script images pinned by digest (Dependabot for the compose file).
   - Noted for M8: the import keeps a page's `mcp.available` from the file; M8 should reset it on import or show it as its own item in the preview, so a file cannot expose pages to AI assistants unnoticed.
   - Verified: `pnpm check` green (636 server, 116 shared, 6 demo and 67 web unit tests); 336 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7, among them hidden columns and a lower ceiling on the target; 34 end-to-end tests. All test containers, networks and volumes are removed. actionlint is clean (run by the operator).
+- 2026-11-23: M9 accepted by the operator and pushed; CI on main is running.
