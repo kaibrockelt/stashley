@@ -19,7 +19,18 @@ test('the first admin signs in', async ({ page }) => {
   await expect(page.getByRole('navigation', { name: /./ })).toContainText('Databases')
   await expectAccessible(page, 'home of the first admin')
 
-  await page.getByRole('button', { name: 'About' }).click()
+  // The account footer opens a menu with the profile, the about dialog and sign-out.
+  const account = page.locator('aside button[aria-haspopup="true"]')
+  await account.click()
+  await expect(account).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByRole('menuitem')).toHaveText(['Profile', 'About', 'Sign out'])
+  await expectAccessible(page, 'account menu')
+  await page.keyboard.press('Escape')
+  await expect(account).toHaveAttribute('aria-expanded', 'false')
+  await expect(account).toBeFocused()
+
+  await account.click()
+  await page.getByRole('menuitem', { name: 'About' }).click()
   await expect(page.getByRole('dialog')).toContainText('GNU Affero General Public License')
   await expectAccessible(page, 'about dialog')
 })

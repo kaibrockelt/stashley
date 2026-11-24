@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
-import { Link, Outlet } from '@tanstack/react-router'
+import { Link, Outlet, useNavigate } from '@tanstack/react-router'
 import { useState, type ReactNode } from 'react'
+import { Button as AriaButton, Menu, MenuItem, MenuTrigger, Popover } from 'react-aria-components'
 import { useSession, useUser } from '../api/session.ts'
 import { Logo, Mascot } from '../brand/logo.tsx'
 import { useSignOut } from '../features/auth/mfa.tsx'
@@ -84,10 +85,48 @@ function About(props: { onClose: () => void }) {
   )
 }
 
-export function Shell() {
+/**
+ * The sticky account footer: the user's name opens a menu with the profile, the about dialog
+ * (with the AGPL source link) and sign-out. React Aria supplies the menu-button pattern.
+ */
+function AccountMenu(props: { onAbout: () => void }) {
   const t = useT()
   const user = useUser()
   const signOut = useSignOut()
+  const navigate = useNavigate()
+  const act = (key: string | number) => {
+    if (key === 'profile') void navigate({ to: '/profile' })
+    else if (key === 'about') props.onAbout()
+    else if (key === 'sign-out') signOut()
+  }
+  return (
+    <MenuTrigger>
+      <AriaButton className={styles.accountButton}>
+        <span className={styles.accountName}>{user.displayName}</span>
+        <span aria-hidden="true" className={styles.accountChevron}>
+          ▴
+        </span>
+      </AriaButton>
+      <Popover placement="top start" offset={6} className={styles.accountPopover}>
+        <Menu className={styles.accountMenu} aria-label={user.displayName} onAction={act}>
+          <MenuItem id="profile" className={styles.accountItem}>
+            {t('profile.title')}
+          </MenuItem>
+          <MenuItem id="about" className={styles.accountItem}>
+            {t('about.action')}
+          </MenuItem>
+          <MenuItem id="sign-out" className={styles.accountItem}>
+            {t('action.signOut')}
+          </MenuItem>
+        </Menu>
+      </Popover>
+    </MenuTrigger>
+  )
+}
+
+export function Shell() {
+  const t = useT()
+  const user = useUser()
   const [about, setAbout] = useState(false)
   return (
     <div className={styles.shell}>
@@ -125,13 +164,7 @@ export function Shell() {
           )}
         </nav>
         <div className={styles.account}>
-          <NavLink to="/profile">{user.displayName}</NavLink>
-          <Button variant="ghost" onPress={() => setAbout(true)}>
-            {t('about.action')}
-          </Button>
-          <Button variant="ghost" onPress={signOut}>
-            {t('action.signOut')}
-          </Button>
+          <AccountMenu onAbout={() => setAbout(true)} />
         </div>
         {about && <About onClose={() => setAbout(false)} />}
       </aside>

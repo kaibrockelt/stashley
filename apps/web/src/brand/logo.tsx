@@ -8,10 +8,11 @@ import styles from './logo.module.css'
  */
 const icon = '/brand/stashley-icon.svg'
 
+/** The sidebar brand and the sign-in card share the same size. */
 export function Logo() {
   return (
     <span className={styles.logo}>
-      <img className={styles.mark} src={icon} alt="" width={28} height={28} />
+      <img className={styles.mark} src={icon} alt="" width={40} height={40} />
       <span className={styles.wordmark}>Stashley</span>
     </span>
   )
