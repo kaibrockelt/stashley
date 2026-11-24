@@ -16,7 +16,7 @@ If two people save the same draft, the second sees the differences and decides w
 ## Page settings
 
 - **Who sees the page**: roles, or everyone signed in. Seeing a page does not yet allow reading its data; that is a right per data source (see [Rights](/manager/rights)).
-- **Page filters**: a date or date range, a selection from a query, or a text search. They act on every block — as named parameters of queries, or on a column of a table source.
+- **Page filters**: a date or date range, a selection from a query, or a text search. They act on the blocks bound to them — as named parameters of queries, on a column of a table source, or as a form's default or record. Users see only the filters that feed a block they can see.
 - **URL parameters**, for example the record a row link opens.
 
 ## Charts
