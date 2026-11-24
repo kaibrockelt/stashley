@@ -150,6 +150,7 @@ export const allowedStatements: string[] = [
   'SELECT p.id AS id FROM person p JOIN anmeldung a ON a.person_id = p.id ORDER BY ID DESC, a.status',
   'SELECT x.id FROM (SELECT p.id AS id FROM person p JOIN anmeldung a ON a.person_id = p.id ORDER BY id) AS x',
   'SELECT p.id AS id FROM person p JOIN anmeldung a ON a.person_id = p.id UNION SELECT id FROM event ORDER BY id',
+  'SELECT p.id AS id FROM person p JOIN anmeldung a ON a.person_id = p.id ORDER BY (id)',
 ]
 
 /** Statements rejected on both engines, with their code. */
@@ -283,6 +284,19 @@ export const rejectedStatements: [string, SqlProblemCode][] = [
   ['SELECT id AS `2fa_secret` FROM `1fa_codes` ORDER BY `2fa_secret`', 'excluded_column'],
   ['SELECT nachname AS id FROM person ORDER BY person.telefon', 'excluded_column'],
   ['SELECT p.id AS id FROM person p ORDER BY telefon', 'excluded_column'],
+  // `name COLLATE x` is an expression to the database: FROM columns first (review 0.1.1).
+  [
+    'SELECT p.id AS id FROM person p JOIN anmeldung a ON a.person_id = p.id ORDER BY id COLLATE utf8mb4_bin',
+    'ambiguous_column',
+  ],
+  [
+    'SELECT p.id AS id FROM person p JOIN anmeldung a ON a.person_id = p.id ORDER BY (id COLLATE utf8mb4_bin) DESC',
+    'ambiguous_column',
+  ],
+  [
+    'SELECT nachname AS telefon FROM person ORDER BY telefon COLLATE utf8mb4_bin',
+    'excluded_column',
+  ],
 ]
 
 export const engines: GuardContext['engine'][] = ['mariadb', 'mysql']

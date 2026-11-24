@@ -108,6 +108,17 @@ describe('analysis', () => {
     ).toEqual([])
   })
 
+  it('records what an ORDER BY name reads: the alias, or with COLLATE the column', () => {
+    const columns = (sql: string) =>
+      guardSql(sql, ctx).analysis.columns.map((entry) => `${entry.object}.${entry.column}`)
+    expect(columns('SELECT nachname AS vorname FROM person ORDER BY vorname')).toEqual([
+      'person.nachname',
+    ])
+    expect(
+      columns('SELECT nachname AS vorname FROM person ORDER BY vorname COLLATE utf8mb4_bin DESC'),
+    ).toEqual(['person.nachname', 'person.vorname'])
+  })
+
   it('wraps statements that bring their own LIMIT', () => {
     expect(guardSql('SELECT id FROM event LIMIT 3', ctx).limit).toBe('wrap')
     expect(guardSql('SELECT id FROM event UNION SELECT id FROM event LIMIT 3', ctx).limit).toBe(

@@ -180,6 +180,19 @@ function ident(value: unknown): string | null {
   return null
 }
 
+/** Keys a plain column name carries; COLLATE or any future parser field makes it an expression. */
+const bareNameKeys = new Set(['type', 'table', 'column', 'collate', 'parentheses'])
+
+/**
+ * A bare name such as `id` or `(id)`, which the database looks up among the select aliases
+ * first. `id COLLATE x` is an expression to the database even though the parser keeps it a
+ * column reference.
+ */
+function isBareName(expr: unknown): expr is Node {
+  if (!isNode(expr) || expr.type !== 'column_ref' || present(expr.collate)) return false
+  return Object.entries(expr).every(([key, value]) => bareNameKeys.has(key) || !present(value))
+}
+
 function unsupported(detail: string): SqlGuardError {
   return new SqlGuardError('unsupported_syntax', { detail })
 }
@@ -323,7 +336,7 @@ export class Walker {
         if (!isNode(item)) throw unsupported('orderby')
         // A bare name in ORDER BY means a select-list alias first (MySQL and MariaDB alike);
         // names inside an expression, GROUP BY and HAVING search the FROM clause first.
-        if (isNode(item.expr) && item.expr.type === 'column_ref') {
+        if (isBareName(item.expr)) {
           this.column(item.expr, scope, true, unionAliases, true)
         } else this.expr(item.expr, scope, true, unionAliases)
       }
