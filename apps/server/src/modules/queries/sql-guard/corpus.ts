@@ -145,6 +145,11 @@ export const allowedStatements: string[] = [
   'SELECT x.* FROM (SELECT id FROM event) AS x',
   'SELECT ROW_NUMBER() OVER (PARTITION BY event_id) FROM anmeldung',
   'SELECT x FROM v_ohne',
+  // A bare ORDER BY name takes the select alias first, like the database (bug 0.1.1).
+  'SELECT p.id AS id, a.status FROM person p LEFT JOIN anmeldung a ON a.person_id = p.id ORDER BY id',
+  'SELECT p.id AS id FROM person p JOIN anmeldung a ON a.person_id = p.id ORDER BY ID DESC, a.status',
+  'SELECT x.id FROM (SELECT p.id AS id FROM person p JOIN anmeldung a ON a.person_id = p.id ORDER BY id) AS x',
+  'SELECT p.id AS id FROM person p JOIN anmeldung a ON a.person_id = p.id UNION SELECT id FROM event ORDER BY id',
 ]
 
 /** Statements rejected on both engines, with their code. */
@@ -246,6 +251,38 @@ export const rejectedStatements: [string, SqlProblemCode][] = [
   ['SELECT p.nope FROM person p', 'unknown_column'],
   ['SELECT a.id FROM anmeldung a JOIN zahlung z USING (nope)', 'unknown_column'],
   ['SELECT 1; :x', 'multiple_statements'],
+  // ORDER BY prefers a select alias only for a bare name of the same SELECT.
+  [
+    'SELECT p.nachname, a.status FROM person p JOIN anmeldung a ON a.person_id = p.id ORDER BY id',
+    'ambiguous_column',
+  ],
+  [
+    'SELECT p.id AS pid FROM person p JOIN anmeldung a ON a.person_id = p.id ORDER BY id',
+    'ambiguous_column',
+  ],
+  [
+    'SELECT p.id AS id FROM person p JOIN anmeldung a ON a.person_id = p.id ORDER BY id + 0',
+    'ambiguous_column',
+  ],
+  [
+    'SELECT p.id AS id FROM person p JOIN anmeldung a ON a.person_id = p.id GROUP BY id',
+    'ambiguous_column',
+  ],
+  [
+    'SELECT p.id AS id FROM person p JOIN anmeldung a ON a.person_id = p.id GROUP BY p.id HAVING id > 1',
+    'ambiguous_column',
+  ],
+  [
+    'SELECT p.id AS id FROM person p WHERE p.id IN (SELECT a.person_id FROM anmeldung a JOIN zahlung z ON z.anmeldung_id = a.id ORDER BY id)',
+    'ambiguous_column',
+  ],
+  [
+    'SELECT p.id AS telefon FROM person p JOIN anmeldung a ON a.person_id = p.id ORDER BY telefon',
+    'excluded_column',
+  ],
+  ['SELECT id AS `2fa_secret` FROM `1fa_codes` ORDER BY `2fa_secret`', 'excluded_column'],
+  ['SELECT nachname AS id FROM person ORDER BY person.telefon', 'excluded_column'],
+  ['SELECT p.id AS id FROM person p ORDER BY telefon', 'excluded_column'],
 ]
 
 export const engines: GuardContext['engine'][] = ['mariadb', 'mysql']

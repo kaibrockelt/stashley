@@ -321,7 +321,11 @@ export class Walker {
       if (!Array.isArray(node.orderby)) throw unsupported('orderby')
       for (const item of node.orderby) {
         if (!isNode(item)) throw unsupported('orderby')
-        this.expr(item.expr, scope, true, unionAliases)
+        // A bare name in ORDER BY means a select-list alias first (MySQL and MariaDB alike);
+        // names inside an expression, GROUP BY and HAVING search the FROM clause first.
+        if (isNode(item.expr) && item.expr.type === 'column_ref') {
+          this.column(item.expr, scope, true, unionAliases, true)
+        } else this.expr(item.expr, scope, true, unionAliases)
       }
     }
     this.limit(node.limit)
@@ -506,7 +510,17 @@ export class Walker {
     return undefined
   }
 
-  private column(node: Node, scope: Scope, aliases: boolean, unionAliases?: Set<string>): void {
+  /**
+   * Resolves a column reference. `preferAlias` is set for a bare ORDER BY item only: the
+   * database then takes a select alias of the same SELECT before any FROM column.
+   */
+  private column(
+    node: Node,
+    scope: Scope,
+    aliases: boolean,
+    unionAliases?: Set<string>,
+    preferAlias = false,
+  ): void {
     this.visited.add(node)
     // `schema.table.column` is not needed; the FROM clause names every object.
     if (present(node.db) || present(node.schema)) throw unsupported('column')
@@ -530,6 +544,8 @@ export class Walker {
         }
       }
     }
+    // The alias's own expression was checked in the select list; it reads nothing more here.
+    if (preferAlias && scope.aliases.has(lower)) return
     for (let current: Scope | undefined = scope; current !== undefined; current = current.parent) {
       const matches = current.sources.filter((source) => this.sourceHas(source, lower))
       if (matches.length > 1 && !current.using.has(lower)) {

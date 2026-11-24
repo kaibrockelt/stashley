@@ -52,13 +52,20 @@ function errors(over: Partial<QuerySpec>, context: BuilderContext = ctx): unknow
 }
 
 /** The compiled SQL must pass the validation like handwritten SQL. */
-function validates(text: string): void {
-  const read: ObjectAccess = { ceiling: toMask(['read']), excluded: new Set(), active: true }
+function validates(
+  text: string,
+  engine: 'mariadb' | 'mysql' = 'mariadb',
+  excluded: Record<string, string[]> = {},
+): void {
   guardSql(text, {
-    engine: 'mariadb',
+    engine,
     database: 'wanderverein',
     catalog,
-    access: () => read,
+    access: (object): ObjectAccess => ({
+      ceiling: toMask(['read']),
+      excluded: new Set(excluded[object] ?? []),
+      active: true,
+    }),
     variables: new Set(['current_event_id']),
   })
 }
@@ -386,6 +393,49 @@ describe('query builder compiler', () => {
     ])
     // Undefined names are left to the parameter check, instance variables to the server.
     expect(errors({ filters: [filter('eq', 'other')] }, context)).toEqual([])
+  })
+
+  it('sorts by a result column whose name several joined tables share', () => {
+    const joined = (over: Partial<QuerySpec>) =>
+      spec({
+        base: 'person',
+        joins: [
+          {
+            alias: 'a',
+            from: 'base',
+            column: 'id',
+            target: 'anmeldung',
+            targetColumn: 'person_id',
+            kind: 'left',
+          },
+        ],
+        ...over,
+      })
+    const compiled = compileSpec(
+      joined({
+        columns: [
+          { name: 'id', source: 'base', column: 'id' },
+          { name: 'status', source: 'a', column: 'status' },
+        ],
+        sort: [{ column: 'id', direction: 'asc' }],
+      }),
+      ctx,
+    )
+    expect(compiled.sql).toContain('ORDER BY `id` ASC')
+    validates(compiled.sql, 'mariadb')
+    validates(compiled.sql, 'mysql')
+
+    // A result name never opens up an excluded column of the same name.
+    const shadow = compileSpec(
+      joined({
+        columns: [{ name: 'telefon', source: 'base', column: 'nachname' }],
+        sort: [{ column: 'telefon', direction: 'desc' }],
+      }),
+      ctx,
+    )
+    expect(() => validates(shadow.sql, 'mariadb', { person: ['telefon'] })).toThrow(
+      expect.objectContaining({ code: 'excluded_column' }),
+    )
   })
 
   it('keeps hostile constants inside their literals', () => {
