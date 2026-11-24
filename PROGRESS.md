@@ -2,7 +2,7 @@
 
 **Current milestone:** M9 – Demo scenario and acceptance (in review); M8 moved after the MVP (D17)
 
-**Next step:** Move the tag `v0.1.0` to the fix of the release check (its first run published nothing) and let the release run; then M8 (MCP) after the MVP (D17).
+**Next step:** 0.1.0 is released. M8 (MCP) follows after the MVP (D17).
 
 **Recommended model strength:** M9: medium (final review: high).
 
@@ -453,3 +453,4 @@ Further decisions: QR codes for 2FA setup are rendered with `qrcode` (MIT), an a
   - Verified: `pnpm check` green (636 server, 116 shared, 6 demo and 67 web unit tests); 336 integration tests against MariaDB 10.11 and 12.3 and MySQL 8.4 and 9.7, among them hidden columns and a lower ceiling on the target; 34 end-to-end tests. All test containers, networks and volumes are removed. actionlint is clean (run by the operator).
 - 2026-11-23: M9 accepted by the operator and pushed; CI on main is running.
 - 2026-11-24: The first release run for `v0.1.0` stopped in its check stage, so nothing was published. Since the end-to-end suite, `pnpm typecheck` also checks `e2e/` and `docs/`, which `.dockerignore` keeps out of the image build (TS5058). CI runs the checks outside Docker and did not see it; `scripts/build.sh` had the same problem. The Dockerfile's check stage now runs `pnpm typecheck:app`, everything but those two folders; `pnpm typecheck` runs it plus them, and CI still checks them. ESLint uses only the TypeScript projects that are present.
+- 2026-11-24: `v0.1.0` moved to the fix and released: image on ghcr.io, GitHub release from the changelog, all checks green.
