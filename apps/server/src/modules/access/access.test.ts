@@ -707,6 +707,45 @@ describe('page and component rights', () => {
     ).toBe(404)
   })
 
+  it('deliver only the page filters that feed a delivered component', async () => {
+    const w = await world()
+    const base = guestPage(w, 1, w.roles.lindenhof.id, 'Lindenhof')
+    const table = base.table as NonNullable<PageDocumentInput['table']>
+    await createPage(w, 'lindenhof', {
+      ...base,
+      filters: [
+        { kind: 'date', id: 'anreise', label: 'Anreise', range: true, required: false },
+        { kind: 'text', id: 'frei', label: 'Ungebunden', required: false },
+      ],
+      table: {
+        ...table,
+        table: {
+          ...(table.type === 'table' ? table.table : null),
+          bindings: [
+            {
+              from: { kind: 'filter', filterId: 'anreise' },
+              column: { path: [], column: 'anreise' },
+              operator: 'range',
+            },
+          ],
+        },
+      } as NonNullable<PageDocumentInput['table']>,
+    })
+    const filters = async (client: TestClient, search = '') => {
+      const response = await client.request('GET', `/internal/pages/lindenhof${search}`)
+      expect(response.statusCode, response.body).toBe(200)
+      return response.json<RenderPage>().filters.map((filter) => filter.id)
+    }
+    expect(await filters(w.users.lindenhof)).toEqual(['anreise'])
+    // The manager without a matching role sees no block, so no filter either.
+    expect(await filters(w.manager)).toEqual([])
+    const preview = (roleId: string) => `?mode=preview&roles=${roleId}`
+    expect(await filters(w.manager, preview(w.roles.lindenhof.id))).toEqual(['anreise'])
+    expect(await filters(w.manager, preview(w.roles.adler.id))).toEqual([])
+    // The editor keeps every filter of the draft.
+    expect(await filters(w.manager, '?mode=edit')).toEqual(['anreise', 'frei'])
+  })
+
   it('preview and edit the draft with the rights of chosen roles', async () => {
     const w = await world()
     const page = await createPage(

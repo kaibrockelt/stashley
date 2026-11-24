@@ -306,10 +306,13 @@ export class AccessService {
       variable: (name) => variables.get(name)?.value,
       user: viewer.user,
     }
+    // Page filters that feed a delivered component; the others would change nothing (0.1.1).
+    const fed = new Set<string>()
     const render = (component: CompiledComponent): RenderComponent | undefined => {
       const ops = this.ops(page, component, mode, principals)
       const delivered = mode === 'edit' || (visible && isDelivered(component.kind, ops))
       if (!delivered) return undefined
+      for (const id of filterInputs(component)) fed.add(id)
       return this.renderComponent(page, component, ops, mode, context)
     }
     const rows: RenderPage['rows'] = []
@@ -331,6 +334,15 @@ export class AccessService {
       })
     }
     const table = document.table === null ? undefined : page.components.get(document.table.id)
+    const rendered = table === undefined ? null : (render(table) ?? null)
+    const detail = (document.detail?.tables ?? []).flatMap((entry) => {
+      const compiled = page.components.get(entry.id)
+      const out = compiled === undefined ? undefined : render(compiled)
+      return out === undefined ? [] : [out]
+    })
+    // The editor manages every filter of the draft.
+    const filters =
+      mode === 'edit' ? document.filters : document.filters.filter((filter) => fed.has(filter.id))
     return {
       id: page.pageId,
       slug: page.slug,
@@ -339,7 +351,7 @@ export class AccessService {
       ...(document.description !== undefined && { description: document.description }),
       mode,
       version: page.version,
-      filters: document.filters.map((filter) =>
+      filters: filters.map((filter) =>
         filter.kind === 'select'
           ? {
               kind: 'select',
@@ -352,12 +364,8 @@ export class AccessService {
       ),
       parameters: document.parameters.map((parameter) => ({ ...parameter })),
       rows,
-      table: table === undefined ? null : (render(table) ?? null),
-      detail: (document.detail?.tables ?? []).flatMap((entry) => {
-        const compiled = page.components.get(entry.id)
-        const rendered = compiled === undefined ? undefined : render(compiled)
-        return rendered === undefined ? [] : [rendered]
-      }),
+      table: rendered,
+      detail,
       ...(mode === 'preview' && { viewable: visible }),
     }
   }
@@ -639,6 +647,31 @@ export class AccessService {
     }
     return entries
   }
+}
+
+/** IDs of the page filters a component reads: bindings, the edited record, field defaults. */
+function filterInputs(component: CompiledComponent): string[] {
+  const ids: string[] = []
+  const source = component.source
+  const bindings =
+    source?.kind === 'query'
+      ? source.bindings
+      : source?.kind === 'table'
+        ? source.model?.bindings
+        : []
+  for (const binding of bindings ?? []) {
+    if (binding.from.kind === 'filter') ids.push(binding.from.filterId)
+  }
+  if (source?.kind === 'table') {
+    for (const field of source.write?.fields ?? []) {
+      if (field.default?.kind === 'filter') ids.push(field.default.filterId)
+    }
+  }
+  const block = component.block
+  if (block.type === 'form' && block.record?.from.kind === 'filter') {
+    ids.push(block.record.from.filterId)
+  }
+  return ids
 }
 
 /** What render needs to show visible defaults: instance variables and the viewer. */
