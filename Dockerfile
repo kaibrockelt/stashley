@@ -25,9 +25,10 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm-store \
 RUN pnpm build \
  && pnpm --filter @stashley/server deploy --prod --legacy /out
 
-# Typecheck, lint and unit tests; used by scripts/build.sh and CI.
+# Typecheck, lint and unit tests; used by scripts/build.sh and the release workflow. The end-to-end
+# suite and the documentation are not in the build context (.dockerignore); CI checks them.
 FROM build AS check
-RUN pnpm typecheck && pnpm lint && pnpm check:spdx && pnpm check:i18n && pnpm test && pnpm check:bundle
+RUN pnpm typecheck:app && pnpm lint && pnpm check:spdx && pnpm check:i18n && pnpm test && pnpm check:bundle
 
 FROM ${NODE_IMAGE} AS runtime
 ARG VERSION=dev

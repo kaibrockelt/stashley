@@ -1,9 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Stashley contributors
 // SPDX-License-Identifier: AGPL-3.0-only
+import { existsSync } from 'node:fs'
 import js from '@eslint/js'
 import reactHooks from 'eslint-plugin-react-hooks'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
+
+// The image build has no e2e/ or docs/ (.dockerignore), so only the projects present are used.
+const projects = [
+  './apps/server/tsconfig.test.json',
+  './packages/shared/tsconfig.test.json',
+  './packages/demo/tsconfig.test.json',
+  './e2e/tsconfig.json',
+  './docs/tsconfig.json',
+  './apps/web/tsconfig.json',
+].filter((project) => existsSync(new URL(project, import.meta.url)))
 
 const handlePattern = {
   group: ['**/access/handles.ts', '**/access/compile.ts'],
@@ -34,14 +45,7 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        project: [
-          './apps/server/tsconfig.test.json',
-          './packages/shared/tsconfig.test.json',
-          './packages/demo/tsconfig.test.json',
-          './e2e/tsconfig.json',
-          './docs/tsconfig.json',
-          './apps/web/tsconfig.json',
-        ],
+        project: projects,
         tsconfigRootDir: import.meta.dirname,
       },
     },
