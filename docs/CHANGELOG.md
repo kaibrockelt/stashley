@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-25
+
+### Fixed
+
+- The query builder can sort by a result column whose name several joined tables share (for example `id`): the SQL validation now looks a bare `ORDER BY` name up among the select aliases first, as MariaDB and MySQL do. Names inside `ORDER BY` expressions (including `COLLATE`), `GROUP BY` and `HAVING` still search the tables first, and a name that could mean an excluded column is still rejected.
+- Page filters show only when they feed a block the viewer sees; a page whose blocks a viewer cannot read shows no filters (runtime and preview as role; the editor keeps every filter).
+- The German account footer no longer overflows the sidebar.
+
+### Changed
+
+- The sidebar stays in view and its navigation scrolls on its own. The footer shows the user's name, which opens a menu with Profile, About and Sign out.
+- Larger Stashley logo in the sidebar and on the sign-in page.
+- README with the logo, a short introduction and pictures.
+
 ## [0.1.0] - 2026-11-23
 
 ### Added
